@@ -179,9 +179,14 @@ def _insert_after_nth_h2(html: str, index: int, block: str) -> str:
 
 
 def _inject_inline_images(html: str, image_entries: list[dict], focus_keyword: str) -> str:
-    html = re.sub(r"<img\b[^>]*\bsrc=[\"']\s*[\"'][^>]*>", "", html or "", flags=re.IGNORECASE)
+    html = _remove_invalid_inline_images(html or "")
     html = re.sub(r"<figure>\s*</figure>", "", html, flags=re.IGNORECASE)
-    if not image_entries or "content-forge-inline-gallery" in html or "<img " in html.lower():
+    if not image_entries:
+        return html
+    if _has_valid_inline_image(html):
+        return html
+    html = re.sub(r"<section\b[^>]*content-forge-inline-gallery[^>]*>\s*</section>\s*", "", html, flags=re.IGNORECASE | re.DOTALL)
+    if "<img " in html.lower():
         return html
     selected = image_entries[:5]
     placements = [
@@ -219,6 +224,30 @@ def _inject_inline_images(html: str, image_entries: list[dict], focus_keyword: s
             )
         return '<section class="content-forge-inline-gallery">' + "".join(figures) + "</section>\n" + html
     return updated
+
+
+def _has_valid_inline_image(html: str) -> bool:
+    for match in re.finditer(r"<img\b[^>]*>", html or "", flags=re.IGNORECASE | re.DOTALL):
+        src_match = re.search(r"""\bsrc\s*=\s*(['"])(.*?)\1""", match.group(0), flags=re.IGNORECASE | re.DOTALL)
+        if src_match and re.match(r"^https?://", src_match.group(2).strip(), flags=re.IGNORECASE):
+            return True
+    return False
+
+
+def _remove_invalid_inline_images(html: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        src_match = re.search(r"""\bsrc\s*=\s*(['"])(.*?)\1""", tag, flags=re.IGNORECASE | re.DOTALL)
+        if not src_match:
+            return ""
+        src = _clean_phrase(src_match.group(2))
+        if not re.match(r"^https?://", src, flags=re.IGNORECASE):
+            return ""
+        return tag
+
+    cleaned = re.sub(r"<img\b[^>]*>", replace, html or "", flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"<figure[^>]*>\s*(?:<figcaption[^>]*>.*?</figcaption>\s*)?</figure>\s*", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    return cleaned
 
 
 def _product_html_validation_error(html_text: str) -> str | None:

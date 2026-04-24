@@ -302,7 +302,13 @@ def _style_product_content(html: str, state: dict | None = None) -> str:
 
 
 def _inject_content_images(html: str, image_urls: list[str], alt_text: str) -> str:
-    if not image_urls or "content-forge-image-grid" in html or "<img " in html.lower():
+    html = _remove_invalid_content_images(html or "")
+    if not image_urls:
+        return html
+    if _has_valid_content_image(html):
+        return html
+    html = re.sub(r"<section\b[^>]*content-forge-image-grid[^>]*>\s*</section>\s*", "", html, flags=re.IGNORECASE | re.DOTALL)
+    if "<img " in html.lower():
         return html
     selected = image_urls[:4]
     figures = []
@@ -324,6 +330,30 @@ def _inject_content_images(html: str, image_urls: list[str], alt_text: str) -> s
         insert_pos = match.end()
         return html[:insert_pos] + "\n" + image_block + html[insert_pos:]
     return image_block + "\n" + html
+
+
+def _has_valid_content_image(html: str) -> bool:
+    for match in re.finditer(r"<img\b[^>]*>", html or "", flags=re.IGNORECASE | re.DOTALL):
+        src_match = re.search(r"""\bsrc\s*=\s*(['"])(.*?)\1""", match.group(0), flags=re.IGNORECASE | re.DOTALL)
+        if src_match and re.match(r"^https?://", src_match.group(2).strip(), flags=re.IGNORECASE):
+            return True
+    return False
+
+
+def _remove_invalid_content_images(html: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        src_match = re.search(r"""\bsrc\s*=\s*(['"])(.*?)\1""", tag, flags=re.IGNORECASE | re.DOTALL)
+        if not src_match:
+            return ""
+        src = src_match.group(2).strip()
+        if not re.match(r"^https?://", src, flags=re.IGNORECASE):
+            return ""
+        return tag
+
+    cleaned = re.sub(r"<img\b[^>]*>", replace, html or "", flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"<figure[^>]*>\s*(?:<figcaption[^>]*>.*?</figcaption>\s*)?</figure>\s*", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    return cleaned
 
 
 def _seo_title(state: dict) -> str:
@@ -530,21 +560,25 @@ def _publish_via_rest(state: dict, payload: dict) -> dict:
 
     base = site_config["woo_url"].rstrip("/")
     candidates = [
-        f"{base}/wp-json/wc/v3/products",
-        f"{base}/index.php?rest_route=/wc/v3/products",
+        (f"{base}/wp-json/wc/v3/products", None, False),
+        (f"{base}/index.php", {"rest_route": "/wc/v3/products"}, True),
     ]
-    params = {
-        "consumer_key": site_config["consumer_key"],
-        "consumer_secret": site_config["consumer_secret"],
-    }
+    auth = (site_config["consumer_key"], site_config["consumer_secret"])
 
     last_error: Exception | None = None
-    for url in candidates:
+    for url, params, local_index_route in candidates:
         try:
-            response = httpx.post(url, params=params, json=payload, timeout=60)
+            response = httpx.post(url, params=params, auth=auth, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
-            _create_variations_via_rest(base, int(data["id"]), payload, params=params, auth=None)
+            _create_variations_via_rest(
+                base,
+                int(data["id"]),
+                payload,
+                params={},
+                auth=auth,
+                local_index_route=local_index_route,
+            )
             return {
                 "woo_post_id": data["id"],
                 "woo_link": data.get("permalink") or data.get("link") or data.get("slug", ""),

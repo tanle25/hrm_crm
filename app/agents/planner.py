@@ -187,11 +187,23 @@ def _clean_title(value: str) -> str:
 
 
 def _short_product_focus_keyword(title: str, extracted: dict | None = None) -> str:
+    specs = extracted.get("product_specs") if isinstance(extracted, dict) else {}
+    if isinstance(specs, dict):
+        box_name = _clean_title(str(specs.get("box_name") or "")).lower()
+        if box_name and 2 <= len(box_name.split()) <= 6:
+            return box_name
+
     cleaned = _clean_title(title).lower()
+    for separator in [" – ", " - ", " | ", ":"]:
+        if separator in cleaned:
+            left, right = cleaned.split(separator, 1)
+            if right and any(term in left for term in ["quà", "tặng", "biếu", "người sành", "dành cho"]):
+                cleaned = right
+                break
     cleaned = re.sub(r"\s*[•|]\s*.*$", "", cleaned).strip()
     cleaned = re.sub(r"\b(cao cấp|chính hãng|giá tốt|quà tặng|làm quà tặng|dành cho|cao cap|hộp quà|set quà|combo quà)\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[,;/]+", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" -–|")
-    specs = extracted.get("product_specs") if isinstance(extracted, dict) else {}
     use_cases = extracted.get("product_use_cases") if isinstance(extracted, dict) else []
     if cleaned:
         words = cleaned.split()

@@ -182,6 +182,11 @@ def _run_humanizer(state: dict) -> dict:
         state.get("site_profile") or {},
         state.get("content_mode"),
     )
+    state["humanized"]["html"] = writer._inject_inline_images(
+        state["humanized"].get("html") or "",
+        writer._image_library(state),
+        state["plan"]["focus_keyword"],
+    )
     _update_metrics(state, "humanizer", tokens_delta=3500, cost_delta=0.028)
     return state
 
@@ -194,6 +199,11 @@ def _run_internal_linker(state: dict) -> dict:
         state.get("additional_sources"),
         state.get("plan", {}).get("title"),
         state.get("site_profile") or {},
+    )
+    state["linked_html"] = writer._inject_inline_images(
+        state["linked_html"],
+        writer._image_library(state),
+        state["plan"]["focus_keyword"],
     )
     return state
 

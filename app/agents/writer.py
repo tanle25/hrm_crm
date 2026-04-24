@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from html import escape, unescape
-from urllib.parse import urlparse
 
 from app.llm import call_json
+from app.source_cleaner import clean_source_object, clean_source_text, source_terms_from_metadata
 
 
 WRITER_SYSTEM_PROMPT = """
@@ -77,71 +76,19 @@ def _html_to_text(html: str) -> str:
     return re.sub(r"\s+", " ", unescape(text)).strip()
 
 
-def _strip_accents(value: str) -> str:
-    normalized = unicodedata.normalize("NFD", value or "")
-    return "".join(char for char in normalized if unicodedata.category(char) != "Mn")
-
-
 def _source_forbidden_terms(state: dict) -> list[str]:
     metadata = state.get("fetch_result", {}).get("metadata", {}) or {}
-    source_url = str(metadata.get("url") or state.get("url") or "")
-    parsed = urlparse(source_url)
-    host = parsed.netloc.lower()
-    host = host[4:] if host.startswith("www.") else host
-    candidates: list[str] = []
-    if host:
-        candidates.append(host)
-        candidates.extend(part for part in re.split(r"[^a-z0-9-]+", host) if part)
-    for key in ["sitename", "author", "site_name", "publisher"]:
-        value = metadata.get(key)
-        if isinstance(value, str):
-            candidates.append(value)
-    terms: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        term = _clean_phrase(str(candidate)).lower()
-        term = re.sub(r"\b(com|vn|net|org|www)\b", " ", term)
-        term = re.sub(r"\s+", " ", term).strip(" .,:;|-")
-        if len(term) < 4:
-            continue
-        compact = re.sub(r"[^a-z0-9à-ỹ]+", "", term)
-        ascii_compact = re.sub(r"[^a-z0-9]+", "", _strip_accents(term).lower())
-        for item in {term, compact, ascii_compact}:
-            if len(item) >= 4 and item not in seen:
-                seen.add(item)
-                terms.append(item)
-    return terms
+    return source_terms_from_metadata(metadata, str(state.get("url") or ""))
 
 
 def _replace_source_terms(text: str, state: dict, replacement: str = "thông tin sản phẩm") -> str:
-    cleaned = re.sub(r"https?://\S+", "", text or "", flags=re.IGNORECASE)
-    for term in _source_forbidden_terms(state):
-        if not term:
-            continue
-        if re.fullmatch(r"[a-z0-9-]+", term):
-            pattern = rf"\b{re.escape(term)}\b"
-        else:
-            pattern = re.escape(term)
-        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\b(website|url)\s+nguồn\b", replacement, cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\bnguồn\s+tham\s+khảo\b", "thông tin tham khảo", cleaned, flags=re.IGNORECASE)
-    return re.sub(r"\s+", " ", cleaned).strip()
+    metadata = state.get("fetch_result", {}).get("metadata", {}) or {}
+    return clean_source_text(text, metadata, str(state.get("url") or ""), replacement)
 
 
 def _clean_for_writer(value: object, state: dict) -> object:
-    if isinstance(value, str):
-        return _replace_source_terms(value, state)
-    if isinstance(value, list):
-        return [_clean_for_writer(item, state) for item in value]
-    if isinstance(value, dict):
-        blocked_keys = {"url", "canonical_url", "source_url", "sitename", "author", "publisher", "site_name"}
-        cleaned: dict = {}
-        for key, item in value.items():
-            if str(key).lower() in blocked_keys:
-                continue
-            cleaned[key] = _clean_for_writer(item, state)
-        return cleaned
-    return value
+    metadata = state.get("fetch_result", {}).get("metadata", {}) or {}
+    return clean_source_object(value, metadata, str(state.get("url") or ""))
 
 
 def _image_library(state: dict) -> list[dict]:
@@ -295,9 +242,6 @@ def _sanitize_product_terms(html_text: str) -> str:
         r"\bvariable\s+product\b": "sản phẩm",
         r"\bsimple\s+product\b": "một sản phẩm chính",
         r"\bproduct_kind\b": "loại sản phẩm",
-        r"\btraviet\b": "thương hiệu",
-        r"\btra\s*viet\b": "thương hiệu",
-        r"\btrà\s*việt\b": "thương hiệu",
         r"website\s+nguồn": "thông tin sản phẩm",
         r"nguồn\s+tham\s+khảo": "thông tin tham khảo",
         r"url\s+nguồn": "đường dẫn sản phẩm",

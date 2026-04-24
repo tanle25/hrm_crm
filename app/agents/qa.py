@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 from app.config import get_settings
 from app.llm import call_json
+from app.source_cleaner import source_terms_from_metadata
 
 
 QA_SYSTEM_PROMPT = """
@@ -49,16 +50,7 @@ def _html_to_text(html: str) -> str:
 
 def _source_terms(state: dict) -> list[str]:
     metadata = state["fetch_result"].get("metadata", {})
-    url = metadata.get("url", "")
-    netloc = urlparse(url).netloc.lower().replace("www.", "")
-    terms = []
-    if netloc:
-        terms.extend([netloc, netloc.split(".")[0]])
-    sitename = (metadata.get("sitename") or "").lower().strip()
-    if sitename:
-        terms.append(sitename.replace("www.", ""))
-        terms.append(sitename.split(".")[0])
-    return [term for term in set(terms) if len(term) >= 4]
+    return source_terms_from_metadata(metadata, str(state.get("url") or ""))
 
 
 def _strict_blocks(state: dict, similarity: float) -> list[str]:
@@ -80,7 +72,7 @@ def _strict_blocks(state: dict, similarity: float) -> list[str]:
     if similarity >= 0.35:
         blocks.append(f"Similarity quá cao ({similarity:.1%}); cần viết lại mạnh hơn.")
     if source_type == "product":
-        forbidden_terms = ["nguồn tham khảo", "website nguồn", "url nguồn", "traviet", "trà việt"]
+        forbidden_terms = ["nguồn tham khảo", "website nguồn", "url nguồn"]
         forbidden_terms.extend(_source_terms(state))
         for term in forbidden_terms:
             if term and term in text_lower:

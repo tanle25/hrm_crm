@@ -7,6 +7,7 @@ import subprocess
 from urllib.parse import urlparse, urlunparse
 
 from app.agents import classifier
+from app.source_cleaner import source_terms_from_metadata
 
 try:
     import httpx
@@ -228,7 +229,7 @@ def _llm_source_classification(page_html: str, url: str, wp_type: str | None, ti
     return merged
 
 
-def _extract_product_hints(page_html: str) -> dict:
+def _extract_product_hints(page_html: str, source_url: str = "") -> dict:
     product_schema = _find_product_schema(page_html)
     hints: dict[str, list[str] | str] = {
         "meta_description": _extract_meta(page_html, "description") or _extract_meta(page_html, "og:description") or _strip_html(str(product_schema.get("description") or "")),
@@ -244,11 +245,12 @@ def _extract_product_hints(page_html: str) -> dict:
     component_terms = re.findall(r"Trà\s+[A-ZÀ-Ỵa-zà-ỵ0-9]+(?:\s+[A-ZÀ-Ỵa-zà-ỵ0-9]+){0,3}", visible)
     components: list[str] = []
     seen: set[str] = set()
-    blocked = ("trà việt", "giỏ hàng", "đăng nhập", "yêu thích", "so sánh", "var ")
+    blocked = ("giỏ hàng", "đăng nhập", "yêu thích", "so sánh", "var ")
+    source_terms = source_terms_from_metadata({"url": source_url}, source_url)
     for term in component_terms:
         cleaned = re.sub(r"\s+", " ", term).strip(" .,:;|-")
         lowered = cleaned.lower()
-        if any(token in lowered for token in blocked):
+        if any(token in lowered for token in blocked) or any(source_term in lowered for source_term in source_terms):
             continue
         if len(cleaned) < 6 or cleaned.lower() in seen:
             continue
@@ -337,7 +339,7 @@ def _raw_html_fallback_result(downloaded: str, url: str, wp_type: str | None = N
     text = re.sub(r"\s+", " ", text).strip()
     if len(text.split()) < 35:
         raise RuntimeError(f"Trafilatura could not extract readable content from {url}")
-    product_hints = _extract_product_hints(downloaded)
+    product_hints = _extract_product_hints(downloaded, url)
     title = (
         _extract_meta(downloaded, "og:title")
         or _extract_html_title(downloaded)
@@ -515,7 +517,7 @@ def _fetch_wordpress_content(url: str) -> dict | None:
             featured_image_url = media_data.get("source_url", "")
             featured_image_alt = media_data.get("alt_text", "")
 
-    product_hints = _extract_product_hints(page_html)
+    product_hints = _extract_product_hints(page_html, url)
     product_schema = _find_product_schema(page_html)
     title = html.unescape(_strip_html(data.get("title", {}).get("rendered", ""))) or product_hints.get("og_title") or _strip_html(str(product_schema.get("name") or "")) or _title_from_url(url)
     heuristic_classification = _detect_source_classification(page_html, url, data.get("type", ""))
@@ -585,7 +587,7 @@ def run(url: str) -> dict:
     text = data.get("text", "") or data.get("raw_text", "")
     html = data.get("html", "") or f"<p>{text}</p>"
     image_urls = _extract_image_urls(downloaded)
-    product_hints = _extract_product_hints(downloaded)
+    product_hints = _extract_product_hints(downloaded, url)
     title = data.get("title") or product_hints.get("og_title") or _title_from_url(url)
     heuristic_classification = _detect_source_classification(downloaded, url, data.get("type", ""))
     classification = _llm_source_classification(downloaded, url, data.get("type", ""), title, product_hints, heuristic_classification)

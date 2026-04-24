@@ -4,6 +4,7 @@ import re
 from collections import Counter
 
 from app.llm import call_json
+from app.source_cleaner import clean_source_object, clean_source_text
 
 
 EXTRACTOR_SYSTEM_PROMPT = """
@@ -55,7 +56,7 @@ def _unique(values: list[str], limit: int) -> list[str]:
     for value in values:
         cleaned = re.sub(r"\s+", " ", value).strip(" .,:;|-")
         key = cleaned.lower()
-        if any(token in key for token in ["trà việt", "giỏ hàng", "đăng nhập", "var ", "yêu thích", "so sánh"]):
+        if any(token in key for token in ["giỏ hàng", "đăng nhập", "var ", "yêu thích", "so sánh"]):
             continue
         if len(cleaned) >= 4 and key not in seen:
             seen.add(key)
@@ -366,7 +367,9 @@ def _heuristic_extract(clean_content: str, metadata: dict | None = None) -> dict
 
 
 def run(clean_content: str, metadata: dict | None = None) -> dict:
-    metadata = metadata or {}
+    original_metadata = metadata or {}
+    clean_content = clean_source_text(clean_content, original_metadata)
+    metadata = clean_source_object(original_metadata, original_metadata)
     hints = metadata.get("product_hints") or {}
     is_single_tea = _infer_single_tea(metadata, clean_content)
     enriched_content = clean_content
@@ -415,4 +418,4 @@ def run(clean_content: str, metadata: dict | None = None) -> dict:
         data["steps"] = fallback["steps"]
     for key, value in fallback.items():
         data.setdefault(key, value)
-    return data
+    return clean_source_object(data, original_metadata)

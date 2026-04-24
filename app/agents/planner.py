@@ -5,6 +5,7 @@ import re
 from urllib.parse import urlparse
 
 from app.llm import call_json
+from app.source_cleaner import clean_source_object, contains_source_term
 
 
 PLANNER_SYSTEM_PROMPT = """
@@ -118,6 +119,11 @@ def _heuristic_plan(
     }
 
 def run(key_points: list[str], knowledge_facts: list[dict], metadata: dict, focus_keyword_override: str | None, extracted: dict | None = None) -> dict:
+    original_metadata = metadata
+    metadata = clean_source_object(metadata, original_metadata)
+    key_points = clean_source_object(key_points, original_metadata)
+    knowledge_facts = clean_source_object(knowledge_facts, original_metadata)
+    extracted = clean_source_object(extracted or {}, original_metadata)
     fallback = _heuristic_plan(key_points, knowledge_facts, metadata, focus_keyword_override, extracted)
     prompt = (
         f"Metadata: {metadata}\n"
@@ -142,7 +148,7 @@ def run(key_points: list[str], knowledge_facts: list[dict], metadata: dict, focu
 
         title_keyword = _short_product_focus_keyword(title, extracted)
         focus_keyword = _clean_title(str(data.get("focus_keyword") or fallback["focus_keyword"])).lower()
-        if any(term in focus_keyword for term in ["traviet", "trà việt", "http://", "https://"]):
+        if contains_source_term(focus_keyword, original_metadata) or any(term in focus_keyword for term in ["http://", "https://"]):
             focus_keyword = fallback["focus_keyword"]
         if len(focus_keyword.split()) < 2:
             focus_keyword = fallback["focus_keyword"]

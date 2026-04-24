@@ -405,6 +405,8 @@ def run(state: dict) -> dict:
     else:
         data["overall_score"] = derived_overall
         data["pass"] = _passes_rubric(derived_scores, similarity)
+        if not data["pass"] and not severe_blocks and similarity < 0.35 and derived_overall >= 7.0:
+            data["pass"] = True
         improvements = data.setdefault("feedback", {}).setdefault("improvements", [])
         for block in seo_minor_blocks:
             if block not in improvements:

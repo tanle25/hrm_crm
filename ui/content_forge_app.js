@@ -23,6 +23,10 @@
         selectedShopeeSiteIds: JSON.parse(localStorage.getItem("content_forge_shopee_site_ids") || "[]"),
         selectedShopeeItemId: localStorage.getItem("content_forge_shopee_item_id") || "",
         jobsSocket: null,
+        jobsSocketReconnectTimer: null,
+        jobsPollTimer: null,
+        jobsReconnectAttempts: 0,
+        jobsStreamActive: false,
         jobsSignature: "",
     };
 
@@ -563,10 +567,23 @@
     }
 
     function closeJobsStream() {
+        state.jobsStreamActive = false;
+        if (state.jobsSocketReconnectTimer) {
+            window.clearTimeout(state.jobsSocketReconnectTimer);
+            state.jobsSocketReconnectTimer = null;
+        }
+        if (state.jobsPollTimer) {
+            window.clearInterval(state.jobsPollTimer);
+            state.jobsPollTimer = null;
+        }
         if (state.jobsSocket) {
             state.jobsSocket.close();
             state.jobsSocket = null;
         }
+    }
+
+    function jobsPageIsActive(section) {
+        return Boolean(section && document.body.contains(section) && section.classList.contains("active"));
     }
 
     function jobsSignature(jobsPayload, stats) {
@@ -722,7 +739,11 @@
 
     function bindJobsActions(section) {
         bindJobOpenLinks(section);
-        section.querySelector("#jobs-refresh-btn")?.addEventListener("click", renderJobsPage);
+        const refreshButton = section.querySelector("#jobs-refresh-btn");
+        if (refreshButton && !refreshButton.dataset.bound) {
+            refreshButton.dataset.bound = "1";
+            refreshButton.addEventListener("click", renderJobsPage);
+        }
         section.querySelectorAll(".jobs-rewrite-btn").forEach((button) => {
             button.addEventListener("click", async () => {
                 try {
@@ -735,10 +756,46 @@
         });
     }
 
+    async function refreshJobsSnapshot(section) {
+        if (!jobsPageIsActive(section)) return;
+        const [jobsPayload, stats] = await Promise.all([
+            fetchJSON("/jobs?limit=50"),
+            fetchJSON("/stats"),
+        ]);
+        if (!jobsPageIsActive(section)) return;
+        const nextSignature = jobsSignature(jobsPayload, stats);
+        if (nextSignature === state.jobsSignature) return;
+        state.jobsSignature = nextSignature;
+        applyJobsMarkup(section, jobsPayload, stats);
+        bindJobsActions(section);
+    }
+
+    function startJobsPolling(section) {
+        if (state.jobsPollTimer) return;
+        state.jobsPollTimer = window.setInterval(() => {
+            refreshJobsSnapshot(section).catch(() => {});
+        }, 5000);
+    }
+
+    function scheduleJobsReconnect(section) {
+        if (!state.jobsStreamActive || !jobsPageIsActive(section) || state.jobsSocketReconnectTimer) return;
+        const delay = Math.min(10000, 1000 * 2 ** state.jobsReconnectAttempts);
+        state.jobsReconnectAttempts += 1;
+        state.jobsSocketReconnectTimer = window.setTimeout(() => {
+            state.jobsSocketReconnectTimer = null;
+            if (state.jobsStreamActive && jobsPageIsActive(section)) openJobsStream(section);
+        }, delay);
+    }
+
     function openJobsStream(section) {
         closeJobsStream();
+        state.jobsStreamActive = true;
+        startJobsPolling(section);
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         state.jobsSocket = new WebSocket(`${protocol}//${window.location.host}${API_BASE}/jobs/ws?limit=50`);
+        state.jobsSocket.onopen = () => {
+            state.jobsReconnectAttempts = 0;
+        };
         state.jobsSocket.onmessage = (event) => {
             const payload = JSON.parse(event.data);
             const nextSignature = jobsSignature({ jobs: payload.jobs || [] }, payload.stats || {});
@@ -750,10 +807,11 @@
             bindJobsActions(section);
         };
         state.jobsSocket.onerror = () => {
-            closeJobsStream();
+            if (state.jobsSocket) state.jobsSocket.close();
         };
         state.jobsSocket.onclose = () => {
             state.jobsSocket = null;
+            scheduleJobsReconnect(section);
         };
     }
 

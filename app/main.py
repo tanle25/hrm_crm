@@ -18,7 +18,7 @@ from app.job_store import delete_dlq_entry, get_dlq_entry, get_job, get_jobs_ver
 from app.logging import get_logger
 from app.metrics import dlq_size, jobs_submitted, start_metrics_server_once
 from app.postgres import init_schema as init_postgres_schema, migrate_local_state as migrate_local_postgres_state
-from app.queue import create_job_id, enqueue_job, init_job_state, queue_is_full, update_job
+from app.queue import create_job_id, enqueue_job, enqueue_saved_state, init_job_state, queue_is_full, update_job
 from app.rag_categories import create_category, list_categories
 from app.rag import delete_source_documents, get_source_documents, get_taxonomy_summary, ingest_url, list_rag_sources, search_knowledge
 from app.shopee import get_shopee_product, import_legacy_sample, list_shopee_products, upsert_shopee_product
@@ -273,9 +273,9 @@ async def _enqueue_multi_site_batch(
         master_state["site_name"] = ""
         master_state["child_job_ids"] = []
         update_job(master_job_id, master_state)
-        queue_name = enqueue_job(master_job_id, master_payload)
+        queue_name = enqueue_saved_state(master_job_id, master_state)
         if queue_name == "inline":
-            asyncio.create_task(run_pipeline_async(master_job_id, master_payload.model_dump(by_alias=True)))
+            asyncio.create_task(run_pipeline_async(master_job_id, master_state))
         jobs_submitted.inc()
         master_job_ids.append(master_job_id)
 

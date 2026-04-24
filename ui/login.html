@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMNI-FORGE // ACCESS TERMINAL</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['JetBrains Mono', 'monospace'],
+                        display: ['Orbitron', 'sans-serif'],
+                    },
+                    colors: {
+                        hud: {
+                            bg: '#02050a',
+                            panel: '#0a121d',
+                            cyan: '#00f0ff',
+                            amber: '#ffaa00',
+                            red: '#ff003c',
+                            green: '#00ff88',
+                            muted: '#8a9bb3'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #02050a;
+            background-image: 
+                linear-gradient(rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+                radial-gradient(ellipse at center, rgba(0, 240, 255, 0.15) 0%, transparent 65%);
+            background-size: 40px 40px, 40px 40px, 100% 100%;
+            color: #d8e6f7;
+            letter-spacing: 0.02em;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 1;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+            opacity: 0.03;
+            mix-blend-mode: overlay;
+        }
+        .uppercase-wide { text-transform: uppercase; letter-spacing: 0.1em; }
+        .uppercase-widest { text-transform: uppercase; letter-spacing: 0.2em; }
+
+        .hud-card {
+            background: linear-gradient(135deg, rgba(10, 18, 29, 0.95) 0%, rgba(13, 23, 38, 0.92) 100%);
+            border: 1px solid rgba(0, 240, 255, 0.5);
+            position: relative;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 0 40px rgba(0, 240, 255, 0.15), inset 0 0 40px rgba(0, 240, 255, 0.02);
+        }
+        .hud-card::before, .hud-card::after,
+        .hud-card > .corner-tl, .hud-card > .corner-br {
+            content: ''; position: absolute; width: 24px; height: 24px; pointer-events: none;
+        }
+        .hud-card::before {
+            top: -2px; left: -2px;
+            border-top: 3px solid #00f0ff; border-left: 3px solid #00f0ff;
+            filter: drop-shadow(0 0 8px #00f0ff);
+        }
+        .hud-card::after {
+            top: -2px; right: -2px;
+            border-top: 3px solid #00f0ff; border-right: 3px solid #00f0ff;
+            filter: drop-shadow(0 0 8px #00f0ff);
+        }
+        .hud-card .corner-tl {
+            bottom: -2px; left: -2px;
+            border-bottom: 3px solid #00f0ff; border-left: 3px solid #00f0ff;
+            filter: drop-shadow(0 0 8px #00f0ff);
+        }
+        .hud-card .corner-br {
+            bottom: -2px; right: -2px;
+            border-bottom: 3px solid #00f0ff; border-right: 3px solid #00f0ff;
+            filter: drop-shadow(0 0 8px #00f0ff);
+        }
+
+        .card-header-strip {
+            background: linear-gradient(90deg, rgba(0, 240, 255, 0.2) 0%, rgba(0, 240, 255, 0.05) 50%, rgba(0, 240, 255, 0.2) 100%);
+            border-bottom: 1px solid #00f0ff;
+            position: relative;
+        }
+        .card-header-strip::before {
+            content: ''; position: absolute;
+            bottom: -1px; left: 0; right: 0;
+            height: 1px; background: #00f0ff;
+            box-shadow: 0 0 8px #00f0ff;
+        }
+
+        .hud-input {
+            background: rgba(0, 10, 20, 0.8);
+            border: 1.5px solid rgba(0, 240, 255, 0.4);
+            color: #ffffff;
+            transition: all 0.25s;
+            position: relative;
+            font-family: 'JetBrains Mono', monospace;
+            letter-spacing: 0.05em;
+            font-weight: 500;
+        }
+        .hud-input:hover {
+            border-color: rgba(0, 240, 255, 0.7);
+            background: rgba(0, 20, 30, 0.8);
+        }
+        .hud-input:focus {
+            outline: none;
+            border-color: #00f0ff;
+            background: rgba(0, 240, 255, 0.08);
+            box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.3), 0 0 25px rgba(0, 240, 255, 0.4), inset 0 0 15px rgba(0, 240, 255, 0.08);
+            color: #00f0ff;
+            text-shadow: 0 0 4px rgba(0, 240, 255, 0.5);
+        }
+        .hud-input::placeholder {
+            color: rgba(138, 155, 179, 0.5);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            font-size: 11px;
+        }
+        
+        .input-wrap { position: relative; }
+        .input-wrap::before, .input-wrap::after {
+            content: ''; position: absolute;
+            width: 10px; height: 10px;
+            border: 1.5px solid #00f0ff;
+            transition: all 0.25s;
+            opacity: 0.7;
+        }
+        .input-wrap::before { top: -2px; left: -2px; border-right: 0; border-bottom: 0; }
+        .input-wrap::after { bottom: -2px; right: -2px; border-left: 0; border-top: 0; }
+        .input-wrap:focus-within::before, .input-wrap:focus-within::after {
+            opacity: 1;
+            width: 14px; height: 14px;
+            filter: drop-shadow(0 0 6px #00f0ff);
+            border-width: 2px;
+        }
+
+        .input-indicator {
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 3px;
+            background: #00f0ff;
+            box-shadow: 0 0 8px #00f0ff;
+            transform: scaleY(0);
+            transform-origin: center;
+            transition: transform 0.25s;
+            z-index: 2;
+        }
+        .input-wrap:focus-within .input-indicator { transform: scaleY(1); }
+
+        .field-label {
+            color: #00f0ff;
+            font-weight: 700;
+            text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+        }
+
+        .hud-checkbox {
+            appearance: none;
+            width: 16px; height: 16px;
+            border: 1.5px solid rgba(0, 240, 255, 0.6);
+            background: rgba(0, 0, 0, 0.5);
+            position: relative;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .hud-checkbox:hover { border-color: #00f0ff; box-shadow: 0 0 6px rgba(0, 240, 255, 0.4); }
+        .hud-checkbox:checked {
+            border-color: #00f0ff;
+            background: rgba(0, 240, 255, 0.2);
+            box-shadow: 0 0 12px rgba(0, 240, 255, 0.6);
+        }
+        .hud-checkbox:checked::after {
+            content: ''; position: absolute; inset: 3px;
+            background: #00f0ff;
+            box-shadow: 0 0 8px #00f0ff;
+        }
+
+        .btn-login {
+            position: relative;
+            background: linear-gradient(135deg, #00f0ff 0%, #0099cc 100%);
+            border: 2px solid #00f0ff;
+            color: #000;
+            font-weight: 900;
+            transition: all 0.3s;
+            overflow: hidden;
+            font-family: 'Orbitron', sans-serif;
+            box-shadow: 0 0 30px rgba(0, 240, 255, 0.5), inset 0 0 20px rgba(255, 255, 255, 0.2);
+            text-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+        }
+        .btn-login::before {
+            content: ''; position: absolute;
+            top: 0; left: -100%;
+            width: 100%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+            transition: left 0.6s;
+        }
+        .btn-login:hover::before { left: 100%; }
+        .btn-login:hover {
+            background: #00f0ff;
+            box-shadow: 0 0 50px rgba(0, 240, 255, 0.9), inset 0 0 30px rgba(255, 255, 255, 0.3);
+            letter-spacing: 0.35em;
+            transform: translateY(-1px);
+        }
+        .btn-login:active { transform: scale(0.98); }
+        .btn-login:disabled { background: rgba(0, 240, 255, 0.3); cursor: not-allowed; }
+
+        .btn-login-wrap { position: relative; }
+        .btn-login-wrap::before, .btn-login-wrap::after,
+        .btn-login-wrap > .btn-corner-tr, .btn-login-wrap > .btn-corner-bl {
+            content: ''; position: absolute;
+            width: 12px; height: 12px;
+            border: 2px solid #00f0ff;
+            filter: drop-shadow(0 0 4px #00f0ff);
+            pointer-events: none;
+        }
+        .btn-login-wrap::before { top: -6px; left: -6px; border-right: 0; border-bottom: 0; }
+        .btn-login-wrap::after { bottom: -6px; right: -6px; border-left: 0; border-top: 0; }
+        .btn-login-wrap > .btn-corner-tr { top: -6px; right: -6px; border-left: 0; border-bottom: 0; }
+        .btn-login-wrap > .btn-corner-bl { bottom: -6px; left: -6px; border-right: 0; border-top: 0; }
+
+        .scanline-horiz {
+            width: 100%; height: 2px;
+            background: linear-gradient(90deg, transparent 0%, rgba(0, 240, 255, 0.7) 50%, transparent 100%);
+            position: absolute; top: 0;
+            animation: scan-h 5s linear infinite;
+            pointer-events: none;
+            z-index: 5;
+            box-shadow: 0 0 8px #00f0ff;
+        }
+        @keyframes scan-h { from { top: 0; opacity: 1; } 95% { opacity: 1; } 100% { top: 100%; opacity: 0; } }
+
+        .blink { animation: blink 1.2s ease-in-out infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        .glitch {
+            text-shadow: 
+                0 0 10px rgba(0, 240, 255, 0.8),
+                1px 0 0 rgba(255, 0, 60, 0.5),
+                -1px 0 0 rgba(0, 240, 255, 0.5);
+        }
+
+        .ring-rotate { animation: rotate 20s linear infinite; }
+        .ring-rotate-rev { animation: rotate 30s linear infinite reverse; }
+        @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        .status-dot {
+            display: inline-block;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            position: relative;
+        }
+        .status-dot::after {
+            content: ''; position: absolute;
+            inset: -4px; border-radius: 50%;
+            border: 1.5px solid currentColor;
+            opacity: 0.6;
+            animation: pulse-ring 2s ease-out infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.8; }
+            100% { transform: scale(2); opacity: 0; }
+        }
+        .status-dot.green { background: #00ff88; color: #00ff88; box-shadow: 0 0 10px #00ff88; }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in { animation: fadeInUp 0.6s ease-out forwards; opacity: 0; }
+        .delay-1 { animation-delay: 0.1s; }
+        .delay-2 { animation-delay: 0.2s; }
+        .delay-3 { animation-delay: 0.3s; }
+        .delay-4 { animation-delay: 0.4s; }
+        .delay-5 { animation-delay: 0.5s; }
+        .delay-6 { animation-delay: 0.6s; }
+        .delay-7 { animation-delay: 0.7s; }
+
+        .clock-digits { font-variant-numeric: tabular-nums; letter-spacing: 0.05em; }
+
+        .cursor-blink::after {
+            content: '█';
+            animation: blink 1s step-end infinite;
+            color: #00f0ff;
+            margin-left: 2px;
+        }
+
+        .page-corner {
+            position: fixed;
+            width: 60px; height: 60px;
+            pointer-events: none;
+            z-index: 5;
+        }
+        .page-corner.tl { top: 24px; left: 24px; border-top: 2px solid #00f0ff; border-left: 2px solid #00f0ff; filter: drop-shadow(0 0 4px #00f0ff); }
+        .page-corner.tr { top: 24px; right: 24px; border-top: 2px solid #00f0ff; border-right: 2px solid #00f0ff; filter: drop-shadow(0 0 4px #00f0ff); }
+        .page-corner.bl { bottom: 24px; left: 24px; border-bottom: 2px solid #00f0ff; border-left: 2px solid #00f0ff; filter: drop-shadow(0 0 4px #00f0ff); }
+        .page-corner.br { bottom: 24px; right: 24px; border-bottom: 2px solid #00f0ff; border-right: 2px solid #00f0ff; filter: drop-shadow(0 0 4px #00f0ff); }
+
+        .hud-divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, #00f0ff 50%, transparent 100%);
+            box-shadow: 0 0 6px rgba(0, 240, 255, 0.5);
+        }
+
+        .alt-btn {
+            border: 1.5px solid rgba(0, 240, 255, 0.4);
+            background: rgba(0, 240, 255, 0.05);
+            color: #00f0ff;
+            transition: all 0.25s;
+        }
+        .alt-btn:hover {
+            border-color: #00f0ff;
+            background: rgba(0, 240, 255, 0.15);
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+            transform: translateY(-1px);
+        }
+
+        /* ========== STARFIELD BACKGROUND ========== */
+        .starfield {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            overflow: hidden;
+        }
+        .star {
+            position: absolute;
+            border-radius: 50%;
+            background: #ffffff;
+            animation: twinkle ease-in-out infinite;
+        }
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.2; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.3); }
+        }
+        .star-accent {
+            background: #00f0ff;
+            box-shadow: 0 0 6px #00f0ff, 0 0 12px rgba(0, 240, 255, 0.5);
+            animation: twinkle-accent ease-in-out infinite;
+        }
+        @keyframes twinkle-accent {
+            0%, 100% { opacity: 0.4; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.5); box-shadow: 0 0 10px #00f0ff, 0 0 20px rgba(0, 240, 255, 0.8); }
+        }
+        .star-drift { animation: drift linear infinite; }
+        @keyframes drift {
+            from { transform: translateY(0); }
+            to { transform: translateY(-100vh); }
+        }
+
+        /* ========== CONSTELLATION LINES (hướng 4) ========== */
+        .constellation {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.5;
+        }
+        .constellation svg { width: 100%; height: 100%; }
+        .constellation circle {
+            fill: #00f0ff;
+            filter: drop-shadow(0 0 4px #00f0ff);
+            animation: node-pulse 4s ease-in-out infinite;
+        }
+        .constellation line {
+            stroke: #00f0ff;
+            stroke-width: 0.5;
+            opacity: 0.3;
+            animation: line-fade 6s ease-in-out infinite;
+        }
+        @keyframes node-pulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+        @keyframes line-fade {
+            0%, 100% { opacity: 0.15; }
+            50% { opacity: 0.4; }
+        }
+
+        /* ========== FLOATING ORB (hướng 5) ========== */
+        .orb {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 0;
+            background: radial-gradient(circle, rgba(0, 240, 255, 0.15) 0%, rgba(0, 240, 255, 0.05) 30%, transparent 70%);
+            filter: blur(40px);
+            animation: orb-float 20s ease-in-out infinite;
+        }
+        .orb-1 {
+            top: -200px;
+            left: -200px;
+            animation-delay: 0s;
+        }
+        .orb-2 {
+            bottom: -250px;
+            right: -250px;
+            width: 700px; height: 700px;
+            background: radial-gradient(circle, rgba(0, 240, 255, 0.12) 0%, rgba(0, 180, 255, 0.04) 40%, transparent 70%);
+            animation: orb-float-2 25s ease-in-out infinite;
+            animation-delay: -5s;
+        }
+        @keyframes orb-float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(100px, 50px) scale(1.1); }
+            66% { transform: translate(-50px, 100px) scale(0.95); }
+        }
+        @keyframes orb-float-2 {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            50% { transform: translate(-120px, -80px) scale(1.15); }
+        }
+
+        /* ========== CORNER ARCS (hướng 6) ========== */
+        .corner-arc {
+            position: fixed;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.3;
+        }
+        .corner-arc svg {
+            width: 100%;
+            height: 100%;
+        }
+        .corner-arc-tl { top: -80px; left: -80px; width: 280px; height: 280px; }
+        .corner-arc-tr { top: -60px; right: -60px; width: 220px; height: 220px; transform: rotate(90deg); }
+        .corner-arc-bl { bottom: -60px; left: -60px; width: 220px; height: 220px; transform: rotate(-90deg); }
+        .corner-arc-br { bottom: -80px; right: -80px; width: 280px; height: 280px; transform: rotate(180deg); }
+
+        .arc-rotate { animation: rotate 40s linear infinite; transform-origin: center; }
+        .arc-rotate-rev { animation: rotate 50s linear infinite reverse; transform-origin: center; }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center font-sans relative overflow-hidden py-12">
+
+    <!-- FLOATING ORBS (depth / atmosphere) -->
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+
+    <!-- CORNER ARCS -->
+    <div class="corner-arc corner-arc-tl">
+        <svg viewBox="0 0 200 200" class="arc-rotate">
+            <circle cx="100" cy="100" r="90" fill="none" stroke="#00f0ff" stroke-width="0.8" stroke-dasharray="2 6"/>
+            <circle cx="100" cy="100" r="70" fill="none" stroke="#00f0ff" stroke-width="0.5" stroke-dasharray="4 12" opacity="0.6"/>
+            <circle cx="100" cy="10" r="2" fill="#00f0ff" style="filter: drop-shadow(0 0 4px #00f0ff);"/>
+        </svg>
+    </div>
+    <div class="corner-arc corner-arc-tr">
+        <svg viewBox="0 0 200 200" class="arc-rotate-rev">
+            <circle cx="100" cy="100" r="85" fill="none" stroke="#00f0ff" stroke-width="0.6" stroke-dasharray="1 4"/>
+            <circle cx="100" cy="15" r="1.5" fill="#00f0ff"/>
+        </svg>
+    </div>
+    <div class="corner-arc corner-arc-bl">
+        <svg viewBox="0 0 200 200" class="arc-rotate-rev">
+            <circle cx="100" cy="100" r="85" fill="none" stroke="#00f0ff" stroke-width="0.6" stroke-dasharray="1 4"/>
+            <circle cx="100" cy="15" r="1.5" fill="#00f0ff"/>
+        </svg>
+    </div>
+    <div class="corner-arc corner-arc-br">
+        <svg viewBox="0 0 200 200" class="arc-rotate">
+            <circle cx="100" cy="100" r="90" fill="none" stroke="#00f0ff" stroke-width="0.8" stroke-dasharray="2 6"/>
+            <circle cx="100" cy="100" r="70" fill="none" stroke="#00f0ff" stroke-width="0.5" stroke-dasharray="4 12" opacity="0.6"/>
+            <circle cx="100" cy="10" r="2" fill="#00f0ff" style="filter: drop-shadow(0 0 4px #00f0ff);"/>
+        </svg>
+    </div>
+
+    <!-- CONSTELLATION NETWORK -->
+    <svg class="constellation" id="constellation" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice"></svg>
+
+    <!-- STARFIELD BACKGROUND -->
+    <div class="starfield" id="starfield"></div>
+
+    <!-- MAIN LOGIN -->
+    <div class="relative z-10 w-full max-w-md mx-auto px-6">
+
+        <!-- Rings -->
+        <div class="absolute -inset-20 pointer-events-none opacity-40">
+            <svg viewBox="0 0 400 400" class="w-full h-full ring-rotate">
+                <circle cx="200" cy="200" r="180" fill="none" stroke="#00f0ff" stroke-width="1" stroke-dasharray="3 10"/>
+                <circle cx="200" cy="20" r="4" fill="#00f0ff" style="filter: drop-shadow(0 0 6px #00f0ff);"/>
+                <circle cx="380" cy="200" r="3" fill="#00f0ff" opacity="0.7"/>
+            </svg>
+        </div>
+        <div class="absolute -inset-12 pointer-events-none opacity-25">
+            <svg viewBox="0 0 400 400" class="w-full h-full ring-rotate-rev">
+                <circle cx="200" cy="200" r="180" fill="none" stroke="#00f0ff" stroke-width="0.8" stroke-dasharray="1 5"/>
+                <circle cx="200" cy="20" r="3" fill="#00f0ff"/>
+            </svg>
+        </div>
+
+        <!-- CARD -->
+        <div class="hud-card relative overflow-hidden fade-in delay-2">
+            <span class="corner-tl"></span>
+            <span class="corner-br"></span>
+            <div class="scanline-horiz"></div>
+
+            <!-- HIGHLIGHTED header -->
+            <div class="card-header-strip px-6 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <i class="fa-solid fa-shield-halved text-hud-cyan" style="filter: drop-shadow(0 0 4px #00f0ff);"></i>
+                        <h2 class="font-display font-black text-base text-white uppercase-widest">AUTHORIZE</h2>
+                    </div>
+                    <span class="text-[10px] text-hud-green font-bold uppercase-wide flex items-center gap-1.5 bg-hud-green/10 px-2.5 py-1 border border-hud-green/50" style="box-shadow: 0 0 8px rgba(0, 255, 136, 0.3);">
+                        <span class="w-1.5 h-1.5 bg-hud-green rounded-full blink" style="box-shadow: 0 0 6px #00ff88;"></span>
+                        SECURED
+                    </span>
+                </div>
+                <p class="text-[10px] text-hud-cyan/80 uppercase-wide mt-1.5 font-bold">&gt; Enter credentials to access mission control</p>
+            </div>
+
+            <div class="p-8">
+                <form id="login-form" class="space-y-6">
+                    
+                    <div class="fade-in delay-3">
+                        <label class="field-label text-[10px] uppercase-widest mb-2 flex items-center gap-2">
+                            <i class="fa-solid fa-user-astronaut"></i>
+                            <span>Operator ID</span>
+                            <span class="ml-auto text-hud-red text-xs">*</span>
+                        </label>
+                        <div class="input-wrap">
+                            <span class="input-indicator"></span>
+                            <input 
+                                type="text" 
+                                name="username"
+                                placeholder="user@forge.system"
+                                autocomplete="username"
+                                class="hud-input w-full pl-4 pr-4 py-3.5 text-sm"
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div class="fade-in delay-4">
+                        <label class="field-label text-[10px] uppercase-widest mb-2 flex items-center gap-2">
+                            <i class="fa-solid fa-key"></i>
+                            <span>Access Key</span>
+                            <span class="ml-auto text-hud-red text-xs">*</span>
+                        </label>
+                        <div class="input-wrap relative">
+                            <span class="input-indicator"></span>
+                            <input 
+                                type="password" 
+                                name="password"
+                                id="password-input"
+                                placeholder="Enter passphrase"
+                                autocomplete="current-password"
+                                class="hud-input w-full pl-4 pr-12 py-3.5 text-sm"
+                                required
+                            />
+                            <button 
+                                type="button" 
+                                id="toggle-password"
+                                class="absolute right-3 top-1/2 -translate-y-1/2 text-hud-cyan/70 hover:text-hud-cyan transition p-1 z-10"
+                                aria-label="Toggle password visibility"
+                            >
+                                <i class="fa-solid fa-eye text-sm" id="eye-icon"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between text-[10px] uppercase-wide fade-in delay-5">
+                        <label class="flex items-center gap-2.5 cursor-pointer group">
+                            <input type="checkbox" class="hud-checkbox" name="remember"/>
+                            <span class="text-hud-muted group-hover:text-hud-cyan transition font-bold">Remember Session</span>
+                        </label>
+                        <a href="#" class="text-hud-amber hover:text-hud-cyan transition relative group font-bold" style="text-shadow: 0 0 4px rgba(255, 170, 0, 0.4);">
+                            Forgot Key?
+                            <span class="absolute -bottom-0.5 left-0 w-0 h-[1.5px] bg-hud-cyan group-hover:w-full transition-all" style="box-shadow: 0 0 4px #00f0ff;"></span>
+                        </a>
+                    </div>
+
+                    <div id="error-slot" class="hidden bg-hud-red/15 border-2 border-hud-red/60 px-4 py-3 text-[11px] text-hud-red uppercase-wide items-center gap-3 font-bold" style="box-shadow: 0 0 15px rgba(255, 0, 60, 0.3);">
+                        <i class="fa-solid fa-triangle-exclamation blink text-base"></i>
+                        <span id="error-text">Authentication failed · retry</span>
+                    </div>
+
+                    <div class="pt-2 fade-in delay-6">
+                        <div class="btn-login-wrap">
+                            <span class="btn-corner-tr"></span>
+                            <span class="btn-corner-bl"></span>
+                            <button 
+                                type="submit" 
+                                id="submit-btn"
+                                class="btn-login w-full py-4 text-sm uppercase tracking-[0.3em] flex items-center justify-center gap-3"
+                            >
+                                <i class="fa-solid fa-arrow-right-to-bracket text-base" id="btn-icon"></i>
+                                <span id="btn-text">LOGIN</span>
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <div class="border-t border-hud-cyan/30 bg-black/40 px-6 py-3 flex items-center justify-between text-[10px] uppercase-widest">
+                <span class="flex items-center gap-2 text-hud-green font-bold">
+                    <span class="w-1.5 h-1.5 bg-hud-green rounded-full blink" style="box-shadow: 0 0 6px #00ff88;"></span>
+                    Server Online
+                </span>
+                <span class="text-hud-cyan font-bold clock-digits">LATENCY: 12MS</span>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ===== Generate constellation network =====
+        (function generateConstellation() {
+            const svg = document.getElementById('constellation');
+            if (!svg) return;
+            
+            const W = 1920, H = 1080;
+            const nodeCount = 25;
+            const maxDistance = 280; // max distance to draw line
+            const nodes = [];
+            
+            // Create nodes, avoid center area (where form is)
+            const centerX = W / 2, centerY = H / 2;
+            const formAvoidRadius = 320;
+            
+            for (let i = 0; i < nodeCount; i++) {
+                let x, y, attempts = 0;
+                do {
+                    x = Math.random() * W;
+                    y = Math.random() * H;
+                    attempts++;
+                } while (
+                    Math.hypot(x - centerX, y - centerY) < formAvoidRadius && 
+                    attempts < 20
+                );
+                nodes.push({ x, y });
+            }
+            
+            // Draw lines between nearby nodes
+            nodes.forEach((n1, i) => {
+                nodes.slice(i + 1).forEach(n2 => {
+                    const d = Math.hypot(n1.x - n2.x, n1.y - n2.y);
+                    if (d < maxDistance) {
+                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        line.setAttribute('x1', n1.x);
+                        line.setAttribute('y1', n1.y);
+                        line.setAttribute('x2', n2.x);
+                        line.setAttribute('y2', n2.y);
+                        line.style.animationDelay = (Math.random() * 6) + 's';
+                        svg.appendChild(line);
+                    }
+                });
+            });
+            
+            // Draw nodes on top
+            nodes.forEach(n => {
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', n.x);
+                circle.setAttribute('cy', n.y);
+                circle.setAttribute('r', Math.random() * 1.5 + 1);
+                circle.style.animationDelay = (Math.random() * 4) + 's';
+                svg.appendChild(circle);
+            });
+        })();
+
+        // ===== Generate starfield =====
+        (function generateStars() {
+            const field = document.getElementById('starfield');
+            if (!field) return;
+            
+            // Small twinkling stars (white, many)
+            for (let i = 0; i < 80; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                const size = Math.random() * 1.5 + 0.5;
+                star.style.width = size + 'px';
+                star.style.height = size + 'px';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 100 + '%';
+                star.style.opacity = Math.random() * 0.6 + 0.2;
+                star.style.animationDuration = (Math.random() * 3 + 2) + 's';
+                star.style.animationDelay = Math.random() * 3 + 's';
+                field.appendChild(star);
+            }
+            
+            // Accent cyan stars (bigger, glowing, fewer)
+            for (let i = 0; i < 15; i++) {
+                const star = document.createElement('div');
+                star.className = 'star star-accent';
+                const size = Math.random() * 2 + 1.5;
+                star.style.width = size + 'px';
+                star.style.height = size + 'px';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 100 + '%';
+                star.style.animationDuration = (Math.random() * 4 + 3) + 's';
+                star.style.animationDelay = Math.random() * 4 + 's';
+                field.appendChild(star);
+            }
+
+            // Very small drifting stars (depth layer)
+            for (let i = 0; i < 30; i++) {
+                const wrap = document.createElement('div');
+                wrap.style.position = 'absolute';
+                wrap.style.left = Math.random() * 100 + '%';
+                wrap.style.top = Math.random() * 100 + '%';
+                wrap.className = 'star-drift';
+                wrap.style.animationDuration = (Math.random() * 60 + 40) + 's';
+                wrap.style.animationDelay = -Math.random() * 60 + 's';
+                
+                const star = document.createElement('div');
+                star.className = 'star';
+                star.style.width = '1px';
+                star.style.height = '1px';
+                star.style.opacity = Math.random() * 0.4 + 0.1;
+                star.style.animationDuration = (Math.random() * 4 + 2) + 's';
+                wrap.appendChild(star);
+                field.appendChild(wrap);
+            }
+        })();
+
+        const toggleBtn = document.getElementById('toggle-password');
+        const pwInput = document.getElementById('password-input');
+        const eyeIcon = document.getElementById('eye-icon');
+        toggleBtn.addEventListener('click', () => {
+            if (pwInput.type === 'password') {
+                pwInput.type = 'text';
+                eyeIcon.classList.remove('fa-eye');
+                eyeIcon.classList.add('fa-eye-slash');
+            } else {
+                pwInput.type = 'password';
+                eyeIcon.classList.remove('fa-eye-slash');
+                eyeIcon.classList.add('fa-eye');
+            }
+        });
+
+        const form = document.getElementById('login-form');
+        const submitBtn = document.getElementById('submit-btn');
+        const btnText = document.getElementById('btn-text');
+        const btnIcon = document.getElementById('btn-icon');
+        const errorSlot = document.getElementById('error-slot');
+
+        async function api(path, options) {
+            const response = await fetch(path, {
+                headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
+                credentials: 'same-origin',
+                ...options,
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.detail || `${response.status} ${response.statusText}`);
+            }
+            return data;
+        }
+
+        (async function checkAuth() {
+            try {
+                const me = await api('/api/auth/me');
+                if (me.authenticated) {
+                    window.location.replace('/');
+                }
+            } catch (_) {}
+        })();
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorSlot.classList.add('hidden');
+            errorSlot.classList.remove('flex');
+            btnText.textContent = 'AUTHENTICATING...';
+            btnIcon.className = 'fa-solid fa-spinner fa-spin text-base';
+            submitBtn.disabled = true;
+
+            const formData = new FormData(form);
+            try {
+                const payload = await api('/api/auth/login', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        username: String(formData.get('username') || ''),
+                        password: String(formData.get('password') || ''),
+                        remember: Boolean(formData.get('remember')),
+                    }),
+                });
+                window.location.replace(payload.redirect_url || '/');
+            } catch (error) {
+                document.getElementById('error-text').textContent = error.message || 'Authentication failed';
+                errorSlot.classList.remove('hidden');
+                errorSlot.classList.add('flex');
+                btnText.textContent = 'LOGIN';
+                btnIcon.className = 'fa-solid fa-arrow-right-to-bracket text-base';
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

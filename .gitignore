@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.local
+.env.*.local
+
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+data/chroma/
+data/job_store.json
+data/sites.json
+
+tmp/
+
+*.sqlite3

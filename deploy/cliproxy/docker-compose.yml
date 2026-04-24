@@ -1,0 +1,17 @@
+services:
+  cliproxy:
+    image: eceasy/cli-proxy-api:latest
+    container_name: cliproxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8317:8317"
+    volumes:
+      - ./config.yaml:/CLIProxyAPI/config.yaml:ro
+      - ./auth:/root/.cli-proxy-api
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8317/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+

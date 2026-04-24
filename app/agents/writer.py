@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+import re
+from html import escape, unescape
+
+from app.llm import call_json
+
+
+WRITER_SYSTEM_PROMPT = """
+Bạn là biên tập viên thương mại điện tử tiếng Việt.
+Viết tự nhiên, có dấu tiếng Việt đầy đủ, câu rõ ý, không dùng giọng máy móc.
+Trả về JSON hợp lệ với một trường duy nhất:
+html.
+
+Nếu nguồn là product:
+- Viết như trang sản phẩm bán hàng chất lượng, không chép lại nguồn.
+- Hãy tự chọn bố cục phù hợp với chính sản phẩm đang có, không áp template cứng cho mọi sản phẩm.
+- Chỉ dùng những gì đã có trong metadata, extracted data, knowledge facts và image library.
+- Phải phân biệt nguồn article/product; nếu là product thì phân biệt product_kind simple/variable trong metadata.
+- Với product variable, hãy giải thích các biến thể/quy cách và cách chọn tự nhiên theo dữ liệu thật.
+- Với product simple, không tự bịa biến thể hay bảng so sánh biến thể.
+- Không được ghi các nhãn kỹ thuật như "product variable", "product_kind", "simple product" trong nội dung; hãy diễn đạt tự nhiên như "sản phẩm có nhiều quy cách" hoặc "một sản phẩm chính".
+- Văn phong phải cuốn hút như một landing page bán hàng cao cấp:
+  mở bài có chất kể chuyện nhẹ, chạm đúng bối cảnh mua hoặc chọn sản phẩm; thân bài mềm mại, tránh cảm giác checklist máy móc; kết lại có đoạn kêu gọi hành động tinh tế.
+- Khi viết lợi ích, không chỉ liệt kê thông số mà phải diễn giải lợi ích mua hàng thực tế đúng với sản phẩm đang có.
+- Nếu phù hợp với dữ liệu và loại sản phẩm, nên có bảng hoặc bullet block để giúp người đọc quét thông tin nhanh; không được chèn cho có nếu làm bài gượng.
+- Nếu extracted data có faq_items hoặc buyer_objections, nội dung product nên có phần FAQ rõ ràng ở nửa sau bài.
+- Không bịa giá, trọng lượng, khuyến mãi, chứng nhận hoặc cam kết nếu nguồn không có.
+- Ưu tiên từ khóa tự nhiên, không nhồi keyword.
+- Không nhắc tên website nguồn, thương hiệu nguồn, URL nguồn, "nguồn tham khảo".
+- Viết như người bán/biên tập viên độc lập, không viết như bản tóm tắt dữ liệu.
+- Nếu input có site_profile và content_mode = per-site, hãy điều chỉnh giọng văn, ví dụ, nhịp mô tả và cảm giác thương hiệu để hợp với site đó.
+- Nếu input có primary_color của site và content_mode = per-site, xem đó là định hướng thẩm mỹ ngầm cho cách diễn đạt, không được nhắc mã màu trong nội dung.
+
+Nếu không phải product:
+- Có TL;DR, ít nhất 3 H2, 1 bảng so sánh, FAQ, kết bài có tác giả/ngày/nguồn.
+
+HTML phải sạch, semantic, dùng các thẻ như: p, h2, h3, ul, li, table, tr, th, td, section, figure, figcaption.
+Không thêm giải thích ngoài JSON.
+""".strip()
+
+def _clean_phrase(value: str) -> str:
+    return re.sub(r"\s+", " ", unescape(value or "")).strip(" .,:;|-")
+
+
+def _as_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ["summary", "description", "note", "text", "profile"]:
+            if isinstance(value.get(key), str):
+                return value[key]
+        return " ".join(str(item) for item in value.values() if isinstance(item, (str, int, float)))
+    if isinstance(value, list):
+        return " ".join(str(item) for item in value if isinstance(item, (str, int, float)))
+    return "" if value is None else str(value)
+
+
+def _coerce_text_field(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ["markdown", "html", "content", "text", "body", "value"]:
+            if isinstance(value.get(key), str):
+                return value[key]
+        return _as_text(value)
+    if isinstance(value, list):
+        parts = [_as_text(item) for item in value]
+        return "\n".join(part for part in parts if part)
+    return _as_text(value)
+
+
+def _html_to_text(html: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", html or "")
+    return re.sub(r"\s+", " ", unescape(text)).strip()
+
+
+def _image_library(state: dict) -> list[dict]:
+    image_data = state.get("image_data") or {}
+    uploaded = image_data.get("uploaded") or []
+    images: list[dict] = []
+    if uploaded:
+        for index, item in enumerate(uploaded[:5], start=1):
+            url = _clean_phrase(str(item.get("url", "")))
+            alt = _clean_phrase(str(item.get("alt", ""))) or f"{state['plan']['focus_keyword']} - hình {index}"
+            if url:
+                images.append({"url": url, "alt": alt})
+        return images
+    for index, url in enumerate((image_data.get("gallery") or [])[:5], start=1):
+        cleaned_url = _clean_phrase(str(url))
+        if cleaned_url:
+            images.append({"url": cleaned_url, "alt": f"{state['plan']['focus_keyword']} - hình {index}"})
+    return images
+
+
+def _insert_after_heading(html: str, heading: str, block: str) -> str:
+    pattern = re.compile(rf"(<h2[^>]*>\s*{re.escape(heading)}\s*</h2>\s*(?:<p[^>]*>.*?</p>)?)", re.IGNORECASE | re.DOTALL)
+    match = pattern.search(html)
+    if not match:
+        return html
+    return html[: match.end()] + "\n" + block + html[match.end() :]
+
+
+def _insert_after_nth_h2(html: str, index: int, block: str) -> str:
+    matches = list(re.finditer(r"(<h2[^>]*>.*?</h2>\s*(?:<p[^>]*>.*?</p>)?)", html, re.IGNORECASE | re.DOTALL))
+    if index < 0 or index >= len(matches):
+        return html
+    match = matches[index]
+    return html[: match.end()] + "\n" + block + html[match.end() :]
+
+
+def _inject_inline_images(html: str, image_entries: list[dict], focus_keyword: str) -> str:
+    if not image_entries or "content-forge-inline-gallery" in html or "<img " in html.lower():
+        return html
+    selected = image_entries[:5]
+    placements = [
+        ("Tổng quan sản phẩm", "Hình ảnh tổng quan sản phẩm"),
+        ("Thông số kỹ thuật", "Chi tiết hoàn thiện và cấu tạo sản phẩm"),
+        ("Hướng dẫn sử dụng", "Gợi ý sử dụng sản phẩm trong bối cảnh thực tế"),
+        ("Bảo quản", "Chi tiết bề mặt và tình trạng hoàn thiện"),
+    ]
+    updated = html
+    used = 0
+    for heading, caption in placements:
+        if used >= len(selected):
+            break
+        image = selected[used]
+        block = (
+            '<section class="content-forge-inline-gallery">'
+            f'<figure><img src="{escape(image["url"], quote=True)}" alt="{escape(image["alt"], quote=True)}" loading="lazy" '
+            'style="width:100%;height:auto;border-radius:14px;display:block" />'
+            f'<figcaption>{escape(caption)}. {escape(focus_keyword)}</figcaption></figure>'
+            "</section>"
+        )
+        injected = _insert_after_heading(updated, heading, block)
+        if injected == updated:
+            injected = _insert_after_nth_h2(updated, used, block)
+        if injected != updated:
+            updated = injected
+            used += 1
+    if used == 0:
+        figures = []
+        for index, image in enumerate(selected[:3], start=1):
+            figures.append(
+                f'<figure><img src="{escape(image["url"], quote=True)}" alt="{escape(image["alt"], quote=True)}" loading="lazy" '
+                'style="width:100%;height:auto;border-radius:14px;display:block" />'
+                f'<figcaption>Hình ảnh tham chiếu #{index} cho {escape(focus_keyword)}</figcaption></figure>'
+            )
+        return '<section class="content-forge-inline-gallery">' + "".join(figures) + "</section>\n" + html
+    return updated
+
+
+def _product_html_valid(html_text: str) -> bool:
+    lower = html_text.lower()
+    if "<section" not in lower and "<p" not in lower:
+        return False
+    if any(term in lower for term in ["traviet", "trà việt", "nguồn tham khảo", "website nguồn", "url nguồn"]):
+        return False
+    if any(term in lower for term in ["chưa xác nhận từ dữ liệu nguồn", "chưa thấy nêu rõ trong dữ liệu nguồn"]):
+        return False
+    if any(term in lower for term in ["product variable", "product_kind", "simple product", "variable product"]):
+        return False
+    return len(_html_to_text(html_text).split()) >= 350
+
+
+def _append_faq_if_missing(html_text: str, faq_items: list[dict]) -> str:
+    if not faq_items:
+        return html_text
+    lowered = html_text.lower()
+    if "câu hỏi thường gặp" in lowered or ">faq<" in lowered:
+        return html_text
+    blocks = []
+    for item in faq_items[:5]:
+        if not isinstance(item, dict):
+            continue
+        question = _clean_phrase(str(item.get("question") or ""))
+        answer = _clean_phrase(str(item.get("answer") or ""))
+        if question and answer:
+            blocks.append(f"<h3>{escape(question)}</h3><p>{escape(answer)}</p>")
+    if not blocks:
+        return html_text
+    return html_text + "\n<section><h2>Câu hỏi thường gặp</h2>" + "".join(blocks) + "</section>"
+
+
+def _sanitize_product_terms(html_text: str) -> str:
+    replacements = {
+        r"\bproduct\s+variable\b": "sản phẩm",
+        r"\bvariable\s+product\b": "sản phẩm",
+        r"\bsimple\s+product\b": "một sản phẩm chính",
+        r"\bproduct_kind\b": "loại sản phẩm",
+    }
+    sanitized = html_text
+    for pattern, replacement in replacements.items():
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    return sanitized
+
+
+def _infer_product_archetype(state: dict) -> str:
+    title = str(state.get("plan", {}).get("title") or state.get("fetch_result", {}).get("title") or "").lower()
+    if "trà" in title and not any(token in title for token in ["bộ", "ấm", "hộp", "set", "quà", "combo"]):
+        return "single_tea"
+    return "generic_product"
+
+
+def run(state: dict) -> dict:
+    fallback = {"html": ""}
+    extracted = state["extracted"]
+    image_library = _image_library(state)
+    concise_extracted = {
+        "product_components": extracted.get("product_components", []),
+        "product_specs": extracted.get("product_specs", {}),
+        "product_use_cases": extracted.get("product_use_cases", []),
+        "buyer_objections": extracted.get("buyer_objections", []),
+        "faq_items": extracted.get("faq_items", [])[:4],
+        "component_profiles": extracted.get("component_profiles", {}),
+    }
+    archetype = _infer_product_archetype(state)
+    concise_metadata = {
+        "title": state["fetch_result"].get("title"),
+        "source_type": state["fetch_result"].get("metadata", {}).get("source_type"),
+        "product_kind": state["fetch_result"].get("metadata", {}).get("product_kind"),
+        "url": state["fetch_result"].get("metadata", {}).get("url"),
+        "product_hints": {
+            key: state["fetch_result"].get("metadata", {}).get("product_hints", {}).get(key)
+            for key in ["meta_description", "price_text", "sku", "category", "weight_text"]
+            if state["fetch_result"].get("metadata", {}).get("product_hints", {}).get(key)
+        },
+    }
+    concise_plan = {
+        "title": state["plan"].get("title"),
+        "focus_keyword": state["plan"].get("focus_keyword"),
+        "meta_title": state["plan"].get("meta_title"),
+        "outline": state["plan"].get("outline"),
+        "article_type": state["plan"].get("article_type"),
+        "schema_type": state["plan"].get("schema_type"),
+        "product_kind": state["plan"].get("product_kind") or state["fetch_result"].get("metadata", {}).get("product_kind"),
+    }
+    prompt = (
+        f"Metadata: {concise_metadata}\n"
+        f"Plan: {concise_plan}\n"
+        f"Product archetype: {archetype}\n"
+        f"Content mode: {state.get('content_mode') or 'shared'}\n"
+        f"Site profile: {state.get('site_profile') or {}}\n"
+        f"Concise extracted data: {concise_extracted}\n"
+        f"Uploaded/local image library (3-5 ảnh để dùng tự nhiên trong bài): {image_library}\n"
+        f"Knowledge facts: {state.get('knowledge_facts', [])[:4]}\n"
+        f"Source excerpt: {state['fetch_result']['clean_content'][:1800]}\n"
+        "Yêu cầu: tiếng Việt tự nhiên, có quan sát thực tế, không sáo rỗng, không bịa dữ kiện.\n"
+        "Không nhắc website nguồn, URL nguồn hoặc thương hiệu nguồn trong nội dung cuối.\n"
+        "Không dùng blockquote mở đầu, không dùng heading kiểu 'Gợi ý nhanh' hay 'Mô tả ngắn'.\n"
+        "Mở bài đi thẳng vào bối cảnh mua hoặc dùng thực tế; thân bài mềm mại; kết bài có CTA tinh tế.\n"
+        "Không kéo toàn bộ câu chuyện sang quà biếu nếu dữ liệu không cho thấy đó là trung tâm.\n"
+        "Heading phải tự nhiên, không đều tay kiểu slogan; FAQ phải là băn khoăn mua hàng thật.\n"
+        "Dựa vào ảnh để mô tả hình thức sản phẩm; HTML cuối cần có 3-5 ảnh chèn tự nhiên trong thân bài.\n"
+        "Focus keyword rải tự nhiên ở mở bài, vài heading, bảng/bullet, FAQ, caption ảnh và kết bài; ưu tiên mật độ khoảng 1-1.5% tính trên toàn bài, dùng cả exact phrase và biến thể gần nhưng không nhồi máy móc.\n"
+        "Để tránh density thấp, exact focus keyword nên xuất hiện tối thiểu khoảng 0.8% số từ: bài 1500 từ cần ít nhất 12 lần, bài 2000 từ cần ít nhất 16 lần, bài 2500 từ cần ít nhất 20 lần; hãy rải đều và tự nhiên.\n"
+        "Độ dài mục tiêu cho product: 1500-2500 chữ. Nếu archetype là single_tea, ưu tiên nửa dưới của khoảng này và tập trung vào hương, vị, nước trà, cánh trà, cách pha, đối tượng hợp gu, lý do chọn loại trà này.\n"
+    )
+    max_tokens = 1800 if archetype == "single_tea" else 2200
+    data = call_json("writer", WRITER_SYSTEM_PROMPT, prompt, fallback=fallback, max_tokens=max_tokens)
+    data_html = _coerce_text_field(data.get("html"))
+    if not data_html:
+        raise RuntimeError("Writer returned empty html.")
+    if image_library:
+        data_html = _inject_inline_images(data_html, image_library, state["plan"]["focus_keyword"])
+    data_html = _append_faq_if_missing(data_html, extracted.get("faq_items", []))
+    data_html = _sanitize_product_terms(data_html)
+    is_product = (
+        (state["fetch_result"]["metadata"].get("source_type") or "").lower() == "product"
+        or (state.get("plan", {}).get("schema_type") == "Product")
+        or (state.get("plan", {}).get("article_type") == "Product Description")
+    )
+    if is_product and not _product_html_valid(data_html):
+        raise RuntimeError("Writer returned product html that did not pass structural validation.")
+    return {"html": data_html}

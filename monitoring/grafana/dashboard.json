@@ -1,0 +1,14 @@
+{
+  "title": "Content Forge",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Jobs Submitted",
+      "targets": [
+        {
+          "expr": "content_forge_jobs_submitted_total"
+        }
+      ]
+    }
+  ]
+}

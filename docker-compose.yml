@@ -1,0 +1,105 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "55432:5432"
+    environment:
+      - POSTGRES_DB=content_forge
+      - POSTGRES_USER=content_forge
+      - POSTGRES_PASSWORD=content_forge
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U content_forge -d content_forge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  fastapi:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_URL=postgresql://content_forge:content_forge@postgres:5432/content_forge
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_PATH=/data/chroma
+      - QUEUE_MODE=rq
+    env_file:
+      - .env
+    volumes:
+      - chroma_data:/data/chroma
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build: .
+    environment:
+      - POSTGRES_URL=postgresql://content_forge:content_forge@postgres:5432/content_forge
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_PATH=/data/chroma
+      - QUEUE_MODE=rq
+    env_file:
+      - .env
+    volumes:
+      - chroma_data:/data/chroma
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: rq worker high_priority content_pipeline --url redis://redis:6379/0 --with-scheduler
+
+  dlq_worker:
+    build: .
+    environment:
+      - POSTGRES_URL=postgresql://content_forge:content_forge@postgres:5432/content_forge
+      - REDIS_URL=redis://redis:6379/0
+      - QUEUE_MODE=rq
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: rq worker dlq --url redis://redis:6379/0
+
+  rq_dashboard:
+    image: eoranged/rq-dashboard
+    ports:
+      - "9181:9181"
+    environment:
+      - RQ_DASHBOARD_REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+
+volumes:
+  postgres_data:
+  redis_data:
+  chroma_data:
+  prometheus_data:

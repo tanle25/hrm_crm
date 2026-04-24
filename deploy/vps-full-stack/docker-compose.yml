@@ -1,0 +1,142 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: content-forge-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: content_forge
+      POSTGRES_USER: content_forge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U content_forge -d content_forge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: content-forge-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cliproxy:
+    image: eceasy/cli-proxy-api:latest
+    container_name: cliproxy
+    restart: unless-stopped
+    volumes:
+      - ./cliproxy/config.yaml:/CLIProxyAPI/config.yaml:ro
+      - ./cliproxy/auth:/root/.cli-proxy-api
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8317/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  fastapi:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: content-forge-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_URL: postgresql://content_forge:${POSTGRES_PASSWORD}@postgres:5432/content_forge
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_PATH: /data/chroma
+      QUEUE_MODE: rq
+      ROUTER_BASE: http://cliproxy:8317/v1
+    volumes:
+      - chroma_data:/data/chroma
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cliproxy:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: content-forge-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_URL: postgresql://content_forge:${POSTGRES_PASSWORD}@postgres:5432/content_forge
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_PATH: /data/chroma
+      QUEUE_MODE: rq
+      ROUTER_BASE: http://cliproxy:8317/v1
+    volumes:
+      - chroma_data:/data/chroma
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cliproxy:
+        condition: service_healthy
+    command: rq worker high_priority content_pipeline --url redis://redis:6379/0 --with-scheduler
+
+  dlq_worker:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: content-forge-dlq-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_URL: postgresql://content_forge:${POSTGRES_PASSWORD}@postgres:5432/content_forge
+      REDIS_URL: redis://redis:6379/0
+      QUEUE_MODE: rq
+      ROUTER_BASE: http://cliproxy:8317/v1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: rq worker dlq --url redis://redis:6379/0
+
+  rq_dashboard:
+    image: eoranged/rq-dashboard
+    container_name: content-forge-rq-dashboard
+    restart: unless-stopped
+    environment:
+      RQ_DASHBOARD_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: content-forge-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certbot/www:/var/www/certbot
+      - ./certbot/conf:/etc/letsencrypt
+    depends_on:
+      - fastapi
+
+volumes:
+  postgres_data:
+  redis_data:
+  chroma_data:

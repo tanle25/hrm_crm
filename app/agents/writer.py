@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from html import escape, unescape
+from urllib.parse import urlparse
 
 from app.llm import call_json
 
@@ -150,17 +151,24 @@ def _inject_inline_images(html: str, image_entries: list[dict], focus_keyword: s
     return updated
 
 
-def _product_html_valid(html_text: str) -> bool:
+def _product_html_validation_error(html_text: str) -> str | None:
     lower = html_text.lower()
     if "<section" not in lower and "<p" not in lower:
-        return False
+        return "missing semantic html blocks"
     if any(term in lower for term in ["traviet", "trà việt", "nguồn tham khảo", "website nguồn", "url nguồn"]):
-        return False
+        return "mentions source site"
     if any(term in lower for term in ["chưa xác nhận từ dữ liệu nguồn", "chưa thấy nêu rõ trong dữ liệu nguồn"]):
-        return False
+        return "contains uncertain-source disclaimer"
     if any(term in lower for term in ["product variable", "product_kind", "simple product", "variable product"]):
-        return False
-    return len(_html_to_text(html_text).split()) >= 350
+        return "contains technical product labels"
+    word_count = len(_html_to_text(html_text).split())
+    if word_count < 350:
+        return f"too short: {word_count} words"
+    return None
+
+
+def _product_html_valid(html_text: str) -> bool:
+    return _product_html_validation_error(html_text) is None
 
 
 def _append_faq_if_missing(html_text: str, faq_items: list[dict]) -> str:
@@ -188,10 +196,27 @@ def _sanitize_product_terms(html_text: str) -> str:
         r"\bvariable\s+product\b": "sản phẩm",
         r"\bsimple\s+product\b": "một sản phẩm chính",
         r"\bproduct_kind\b": "loại sản phẩm",
+        r"\btraviet\b": "thương hiệu",
+        r"trà\s+việt": "sản phẩm trà",
+        r"website\s+nguồn": "thông tin sản phẩm",
+        r"nguồn\s+tham\s+khảo": "thông tin tham khảo",
+        r"url\s+nguồn": "đường dẫn sản phẩm",
     }
     sanitized = html_text
     for pattern, replacement in replacements.items():
         sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    return sanitized
+
+
+def _sanitize_source_terms(html_text: str, state: dict) -> str:
+    sanitized = html_text
+    source_url = str(state.get("fetch_result", {}).get("metadata", {}).get("url") or state.get("url") or "")
+    host = urlparse(source_url).netloc.lower()
+    host = host[4:] if host.startswith("www.") else host
+    labels = [part for part in re.split(r"[^a-z0-9-]+", host) if part and part not in {"com", "vn", "net", "org"}]
+    for label in labels:
+        if len(label) >= 4:
+            sanitized = re.sub(rf"\b{re.escape(label)}\b", "thương hiệu", sanitized, flags=re.IGNORECASE)
     return sanitized
 
 
@@ -256,7 +281,7 @@ def run(state: dict) -> dict:
         "Để tránh density thấp, exact focus keyword nên xuất hiện tối thiểu khoảng 0.8% số từ: bài 1500 từ cần ít nhất 12 lần, bài 2000 từ cần ít nhất 16 lần, bài 2500 từ cần ít nhất 20 lần; hãy rải đều và tự nhiên.\n"
         "Độ dài mục tiêu cho product: 1500-2500 chữ. Nếu archetype là single_tea, ưu tiên nửa dưới của khoảng này và tập trung vào hương, vị, nước trà, cánh trà, cách pha, đối tượng hợp gu, lý do chọn loại trà này.\n"
     )
-    max_tokens = 1800 if archetype == "single_tea" else 2200
+    max_tokens = 2600 if archetype == "single_tea" else 3200
     data = call_json("writer", WRITER_SYSTEM_PROMPT, prompt, fallback=fallback, max_tokens=max_tokens)
     data_html = _coerce_text_field(data.get("html"))
     if not data_html:
@@ -265,11 +290,14 @@ def run(state: dict) -> dict:
         data_html = _inject_inline_images(data_html, image_library, state["plan"]["focus_keyword"])
     data_html = _append_faq_if_missing(data_html, extracted.get("faq_items", []))
     data_html = _sanitize_product_terms(data_html)
+    data_html = _sanitize_source_terms(data_html, state)
     is_product = (
         (state["fetch_result"]["metadata"].get("source_type") or "").lower() == "product"
         or (state.get("plan", {}).get("schema_type") == "Product")
         or (state.get("plan", {}).get("article_type") == "Product Description")
     )
-    if is_product and not _product_html_valid(data_html):
-        raise RuntimeError("Writer returned product html that did not pass structural validation.")
+    if is_product:
+        validation_error = _product_html_validation_error(data_html)
+        if validation_error:
+            raise RuntimeError(f"Writer returned product html that did not pass structural validation: {validation_error}")
     return {"html": data_html}

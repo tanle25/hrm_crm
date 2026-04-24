@@ -254,7 +254,7 @@ def _product_html_validation_error(html_text: str) -> str | None:
     lower = html_text.lower()
     if "<section" not in lower and "<p" not in lower:
         return "missing semantic html blocks"
-    if any(term in lower for term in ["traviet", "trà việt", "nguồn tham khảo", "website nguồn", "url nguồn"]):
+    if any(term in lower for term in ["nguồn tham khảo", "website nguồn", "url nguồn"]):
         return "mentions source site"
     if any(term in lower for term in ["chưa xác nhận từ dữ liệu nguồn", "chưa thấy nêu rõ trong dữ liệu nguồn"]):
         return "contains uncertain-source disclaimer"
@@ -295,6 +295,9 @@ def _sanitize_product_terms(html_text: str) -> str:
         r"\bvariable\s+product\b": "sản phẩm",
         r"\bsimple\s+product\b": "một sản phẩm chính",
         r"\bproduct_kind\b": "loại sản phẩm",
+        r"\btraviet\b": "thương hiệu",
+        r"\btra\s*viet\b": "thương hiệu",
+        r"\btrà\s*việt\b": "thương hiệu",
         r"website\s+nguồn": "thông tin sản phẩm",
         r"nguồn\s+tham\s+khảo": "thông tin tham khảo",
         r"url\s+nguồn": "đường dẫn sản phẩm",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from html import escape, unescape
 from urllib.parse import urlparse
 
@@ -74,6 +75,73 @@ def _coerce_text_field(value: object) -> str:
 def _html_to_text(html: str) -> str:
     text = re.sub(r"<[^>]+>", " ", html or "")
     return re.sub(r"\s+", " ", unescape(text)).strip()
+
+
+def _strip_accents(value: str) -> str:
+    normalized = unicodedata.normalize("NFD", value or "")
+    return "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+
+
+def _source_forbidden_terms(state: dict) -> list[str]:
+    metadata = state.get("fetch_result", {}).get("metadata", {}) or {}
+    source_url = str(metadata.get("url") or state.get("url") or "")
+    parsed = urlparse(source_url)
+    host = parsed.netloc.lower()
+    host = host[4:] if host.startswith("www.") else host
+    candidates: list[str] = []
+    if host:
+        candidates.append(host)
+        candidates.extend(part for part in re.split(r"[^a-z0-9-]+", host) if part)
+    for key in ["sitename", "author", "site_name", "publisher"]:
+        value = metadata.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+    terms: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        term = _clean_phrase(str(candidate)).lower()
+        term = re.sub(r"\b(com|vn|net|org|www)\b", " ", term)
+        term = re.sub(r"\s+", " ", term).strip(" .,:;|-")
+        if len(term) < 4:
+            continue
+        compact = re.sub(r"[^a-z0-9à-ỹ]+", "", term)
+        ascii_compact = re.sub(r"[^a-z0-9]+", "", _strip_accents(term).lower())
+        for item in {term, compact, ascii_compact}:
+            if len(item) >= 4 and item not in seen:
+                seen.add(item)
+                terms.append(item)
+    return terms
+
+
+def _replace_source_terms(text: str, state: dict, replacement: str = "thông tin sản phẩm") -> str:
+    cleaned = re.sub(r"https?://\S+", "", text or "", flags=re.IGNORECASE)
+    for term in _source_forbidden_terms(state):
+        if not term:
+            continue
+        if re.fullmatch(r"[a-z0-9-]+", term):
+            pattern = rf"\b{re.escape(term)}\b"
+        else:
+            pattern = re.escape(term)
+        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(website|url)\s+nguồn\b", replacement, cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bnguồn\s+tham\s+khảo\b", "thông tin tham khảo", cleaned, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _clean_for_writer(value: object, state: dict) -> object:
+    if isinstance(value, str):
+        return _replace_source_terms(value, state)
+    if isinstance(value, list):
+        return [_clean_for_writer(item, state) for item in value]
+    if isinstance(value, dict):
+        blocked_keys = {"url", "canonical_url", "source_url", "sitename", "author", "publisher", "site_name"}
+        cleaned: dict = {}
+        for key, item in value.items():
+            if str(key).lower() in blocked_keys:
+                continue
+            cleaned[key] = _clean_for_writer(item, state)
+        return cleaned
+    return value
 
 
 def _image_library(state: dict) -> list[dict]:
@@ -196,8 +264,6 @@ def _sanitize_product_terms(html_text: str) -> str:
         r"\bvariable\s+product\b": "sản phẩm",
         r"\bsimple\s+product\b": "một sản phẩm chính",
         r"\bproduct_kind\b": "loại sản phẩm",
-        r"\btraviet\b": "thương hiệu",
-        r"trà\s+việt": "sản phẩm trà",
         r"website\s+nguồn": "thông tin sản phẩm",
         r"nguồn\s+tham\s+khảo": "thông tin tham khảo",
         r"url\s+nguồn": "đường dẫn sản phẩm",
@@ -209,15 +275,7 @@ def _sanitize_product_terms(html_text: str) -> str:
 
 
 def _sanitize_source_terms(html_text: str, state: dict) -> str:
-    sanitized = html_text
-    source_url = str(state.get("fetch_result", {}).get("metadata", {}).get("url") or state.get("url") or "")
-    host = urlparse(source_url).netloc.lower()
-    host = host[4:] if host.startswith("www.") else host
-    labels = [part for part in re.split(r"[^a-z0-9-]+", host) if part and part not in {"com", "vn", "net", "org"}]
-    for label in labels:
-        if len(label) >= 4:
-            sanitized = re.sub(rf"\b{re.escape(label)}\b", "thương hiệu", sanitized, flags=re.IGNORECASE)
-    return sanitized
+    return _replace_source_terms(html_text, state, replacement="thương hiệu")
 
 
 def _infer_product_archetype(state: dict) -> str:
@@ -239,14 +297,14 @@ def run(state: dict) -> dict:
         "faq_items": extracted.get("faq_items", [])[:4],
         "component_profiles": extracted.get("component_profiles", {}),
     }
+    concise_extracted = _clean_for_writer(concise_extracted, state)
     archetype = _infer_product_archetype(state)
     concise_metadata = {
-        "title": state["fetch_result"].get("title"),
+        "title": _replace_source_terms(str(state["fetch_result"].get("title") or ""), state),
         "source_type": state["fetch_result"].get("metadata", {}).get("source_type"),
         "product_kind": state["fetch_result"].get("metadata", {}).get("product_kind"),
-        "url": state["fetch_result"].get("metadata", {}).get("url"),
         "product_hints": {
-            key: state["fetch_result"].get("metadata", {}).get("product_hints", {}).get(key)
+            key: _clean_for_writer(state["fetch_result"].get("metadata", {}).get("product_hints", {}).get(key), state)
             for key in ["meta_description", "price_text", "sku", "category", "weight_text"]
             if state["fetch_result"].get("metadata", {}).get("product_hints", {}).get(key)
         },
@@ -260,6 +318,9 @@ def run(state: dict) -> dict:
         "schema_type": state["plan"].get("schema_type"),
         "product_kind": state["plan"].get("product_kind") or state["fetch_result"].get("metadata", {}).get("product_kind"),
     }
+    concise_plan = _clean_for_writer(concise_plan, state)
+    source_excerpt = _replace_source_terms(str(state["fetch_result"].get("clean_content") or ""), state)[:1800]
+    knowledge_facts = _clean_for_writer(state.get("knowledge_facts", [])[:4], state)
     prompt = (
         f"Metadata: {concise_metadata}\n"
         f"Plan: {concise_plan}\n"
@@ -268,8 +329,8 @@ def run(state: dict) -> dict:
         f"Site profile: {state.get('site_profile') or {}}\n"
         f"Concise extracted data: {concise_extracted}\n"
         f"Uploaded/local image library (3-5 ảnh để dùng tự nhiên trong bài): {image_library}\n"
-        f"Knowledge facts: {state.get('knowledge_facts', [])[:4]}\n"
-        f"Source excerpt: {state['fetch_result']['clean_content'][:1800]}\n"
+        f"Knowledge facts: {knowledge_facts}\n"
+        f"Clean product excerpt: {source_excerpt}\n"
         "Yêu cầu: tiếng Việt tự nhiên, có quan sát thực tế, không sáo rỗng, không bịa dữ kiện.\n"
         "Không nhắc website nguồn, URL nguồn hoặc thương hiệu nguồn trong nội dung cuối.\n"
         "Không dùng blockquote mở đầu, không dùng heading kiểu 'Gợi ý nhanh' hay 'Mô tả ngắn'.\n"

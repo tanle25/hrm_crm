@@ -179,6 +179,8 @@ def _insert_after_nth_h2(html: str, index: int, block: str) -> str:
 
 
 def _inject_inline_images(html: str, image_entries: list[dict], focus_keyword: str) -> str:
+    html = re.sub(r"<img\b[^>]*\bsrc=[\"']\s*[\"'][^>]*>", "", html or "", flags=re.IGNORECASE)
+    html = re.sub(r"<figure>\s*</figure>", "", html, flags=re.IGNORECASE)
     if not image_entries or "content-forge-inline-gallery" in html or "<img " in html.lower():
         return html
     selected = image_entries[:5]

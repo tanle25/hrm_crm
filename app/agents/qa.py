@@ -96,7 +96,11 @@ def _strict_blocks(state: dict, similarity: float) -> list[str]:
         opening_lines = [line.strip() for line in text.split(".") if line.strip()][:4]
         if any("gợi ý nhanh" in line.lower() or "mô tả ngắn" in line.lower() for line in opening_lines):
             blocks.append("Mở bài còn dùng nhãn 'Gợi ý nhanh' hoặc heading 'Mô tả ngắn', chưa đúng yêu cầu hiện tại.")
-        if "<img " not in html_lower:
+        has_valid_inline_image = any(
+            src.strip()
+            for src in re.findall(r'<img\b[^>]*\bsrc=["\']([^"\']*)["\']', html, re.IGNORECASE)
+        )
+        if not has_valid_inline_image:
             blocks.append("Thiếu hình ảnh trong thân bài.")
         keyword_density = (text_lower.count(focus_keyword) / max(len(text.split()), 1)) * 100
         if keyword_density < 0.8:
@@ -124,7 +128,7 @@ def _strict_blocks(state: dict, similarity: float) -> list[str]:
         components = extracted.get("product_components") or []
         component_count = len(components)
         claimed_count_match = re.search(r"(?:gồm|bao gồm)\s+(\d+)\s+(?:thành phần|món|chi tiết|loại)", text_lower)
-        if claimed_count_match and component_count and int(claimed_count_match.group(1)) != component_count:
+        if claimed_count_match and component_count >= 2 and int(claimed_count_match.group(1)) != component_count:
             blocks.append("Nội dung đang mâu thuẫn giữa số lượng thành phần nêu trong bài và dữ liệu đã extract.")
         specs = extracted.get("product_specs") or {}
         if (specs.get("packets_per_box") or specs.get("grams_per_packet")) and any(

@@ -128,8 +128,13 @@ def _strict_blocks(state: dict, similarity: float) -> list[str]:
         components = extracted.get("product_components") or []
         component_count = len(components)
         claimed_count_match = re.search(r"(?:gồm|bao gồm)\s+(\d+)\s+(?:thành phần|món|chi tiết|loại)", text_lower)
-        if claimed_count_match and component_count >= 2 and int(claimed_count_match.group(1)) != component_count:
-            blocks.append("Nội dung đang mâu thuẫn giữa số lượng thành phần nêu trong bài và dữ liệu đã extract.")
+        if claimed_count_match and component_count >= 2:
+            claimed_count = int(claimed_count_match.group(1))
+            # Extracted product_components may include noisy partial phrases from source HTML.
+            # Only hard-fail when the extracted count is small enough to be reliable, or when
+            # the article claims more components than the extractor found.
+            if claimed_count > component_count or (component_count <= 5 and claimed_count != component_count):
+                blocks.append("Nội dung đang mâu thuẫn giữa số lượng thành phần nêu trong bài và dữ liệu đã extract.")
         specs = extracted.get("product_specs") or {}
         if (specs.get("packets_per_box") or specs.get("grams_per_packet")) and any(
             marker in text_lower for marker in ["chưa xác nhận từ dữ liệu nguồn", "chưa thấy nêu rõ trong dữ liệu nguồn"]
@@ -407,6 +412,9 @@ def run(state: dict) -> dict:
         data["pass"] = _passes_rubric(derived_scores, similarity)
         if not data["pass"] and not severe_blocks and similarity < 0.35 and derived_overall >= 7.0:
             data["pass"] = True
+        if data["pass"]:
+            data.setdefault("feedback", {})["issue_category"] = data.get("feedback", {}).get("issue_category") or "passed"
+            data["feedback"]["retry_target"] = data["feedback"].get("retry_target") or "humanizer"
         improvements = data.setdefault("feedback", {}).setdefault("improvements", [])
         for block in seo_minor_blocks:
             if block not in improvements:

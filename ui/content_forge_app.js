@@ -708,6 +708,76 @@
         `;
     }
 
+    function jobsMetricCards(metrics) {
+        return [
+            { key: "processing", label: "PROCESSING", value: metrics.processing, tone: "cyan", statusFilter: "processing" },
+            { key: "queued", label: "QUEUED", value: metrics.queued, tone: "amber", statusFilter: "pending" },
+            { key: "completed", label: "COMPLETED", value: metrics.completed, tone: "green", statusFilter: "completed" },
+            { key: "failed", label: "FAILED", value: metrics.failed, tone: "red", statusFilter: "failed" },
+            { key: "avg-time", label: "AVG TIME", value: `${formatNumber(metrics.avgTime, 2)}s`, tone: "white", statusFilter: "" },
+        ];
+    }
+
+    function jobsMetricCardClasses(card, active, includeFade) {
+        const toneClass = card.tone === "amber" ? "amber" : card.tone === "green" ? "green" : card.tone === "red" ? "danger" : "";
+        const clickable = card.statusFilter ? "cursor-pointer hover:border-hud-cyan/60 transition-colors jobs-status-filter" : "";
+        const activeClass = active ? "ring-1 ring-hud-cyan/70 shadow-[0_0_24px_rgba(34,211,238,0.18)]" : "";
+        const fadeClass = includeFade ? "fade-in" : "";
+        return `hud-card ${toneClass} ${clickable} ${activeClass} p-4 ${fadeClass}`.replace(/\s+/g, " ").trim();
+    }
+
+    function jobsMetricLabelClass(tone) {
+        return `text-[9px] ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : tone === "red" ? "text-hud-red" : "text-hud-cyan"} uppercase-widest mb-1`;
+    }
+
+    function jobsMetricValueClass(tone) {
+        return `metric-num text-2xl ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : tone === "red" ? "text-hud-red" : "text-white"}`;
+    }
+
+    function renderJobsMetricCard(card, includeFade = true) {
+        const active = card.statusFilter && normalizeJobsStatusFilter(state.jobsStatusFilter) === card.statusFilter;
+        return `
+            <div class="${jobsMetricCardClasses(card, active, includeFade)}" data-metric-key="${card.key}" ${card.statusFilter ? `data-status-filter="${card.statusFilter}" title="Click để lọc/bỏ lọc"` : ""}>
+                <span class="c-tl"></span><span class="c-br"></span>
+                <div class="jobs-metric-label ${jobsMetricLabelClass(card.tone)}">${card.label}${active ? " · FILTER" : ""}</div>
+                <div class="jobs-metric-value ${jobsMetricValueClass(card.tone)}">${card.value}</div>
+            </div>
+        `;
+    }
+
+    function updateJobsMetrics(metricsEl, metricCards) {
+        const existingCards = Array.from(metricsEl.querySelectorAll("[data-metric-key]"));
+        const keys = metricCards.map((card) => card.key).join("|");
+        const existingKeys = existingCards.map((card) => card.dataset.metricKey || "").join("|");
+        if (keys !== existingKeys) {
+            metricsEl.innerHTML = metricCards.map((card) => renderJobsMetricCard(card, true)).join("");
+            return;
+        }
+        for (const card of metricCards) {
+            const cardEl = metricsEl.querySelector(`[data-metric-key="${card.key}"]`);
+            if (!cardEl) continue;
+            const active = card.statusFilter && normalizeJobsStatusFilter(state.jobsStatusFilter) === card.statusFilter;
+            cardEl.className = jobsMetricCardClasses(card, active, false);
+            if (card.statusFilter) {
+                cardEl.dataset.statusFilter = card.statusFilter;
+                cardEl.title = "Click để lọc/bỏ lọc";
+            } else {
+                delete cardEl.dataset.statusFilter;
+                cardEl.removeAttribute("title");
+            }
+            const labelEl = cardEl.querySelector(".jobs-metric-label");
+            const valueEl = cardEl.querySelector(".jobs-metric-value");
+            if (labelEl) {
+                labelEl.className = `jobs-metric-label ${jobsMetricLabelClass(card.tone)}`;
+                labelEl.textContent = `${card.label}${active ? " · FILTER" : ""}`;
+            }
+            if (valueEl) {
+                valueEl.className = `jobs-metric-value ${jobsMetricValueClass(card.tone)}`;
+                valueEl.textContent = String(card.value);
+            }
+        }
+    }
+
     function renderJobsMarkup(jobsPayload, stats) {
         const jobs = jobsPayload.jobs || [];
         const metrics = jobsMetrics(jobs, stats);
@@ -742,24 +812,7 @@
             groupedRows.push({ job, depth: 0, groupLabel: job.batch_id ? `BATCH ${job.batch_id.slice(0, 8)}` : "" });
             consumed.add(job.job_id);
         }
-        const metricsHtml = [
-            ["PROCESSING", metrics.processing, "cyan", "processing"],
-            ["QUEUED", metrics.queued, "amber", "pending"],
-            ["COMPLETED", metrics.completed, "green", "completed"],
-            ["FAILED", metrics.failed, "red", "failed"],
-            ["AVG TIME", `${formatNumber(metrics.avgTime, 2)}s`, "white", ""],
-        ].map(([label, value, tone, statusFilter]) => {
-            const active = statusFilter && normalizeJobsStatusFilter(state.jobsStatusFilter) === statusFilter;
-            const clickable = statusFilter ? "cursor-pointer hover:border-hud-cyan/60 transition-colors jobs-status-filter" : "";
-            const activeClass = active ? "ring-1 ring-hud-cyan/70 shadow-[0_0_24px_rgba(34,211,238,0.18)]" : "";
-            return `
-            <div class="hud-card ${tone === "amber" ? "amber" : tone === "green" ? "green" : tone === "red" ? "danger" : ""} ${clickable} ${activeClass} p-4 fade-in" ${statusFilter ? `data-status-filter="${statusFilter}" title="Click để lọc/bỏ lọc"` : ""}>
-                <span class="c-tl"></span><span class="c-br"></span>
-                <div class="text-[9px] ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : tone === "red" ? "text-hud-red" : "text-hud-cyan"} uppercase-widest mb-1">${label}${active ? " · FILTER" : ""}</div>
-                <div class="metric-num text-2xl ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : tone === "red" ? "text-hud-red" : "text-white"}">${value}</div>
-            </div>
-        `;
-        }).join("");
+        const metricCards = jobsMetricCards(metrics);
         const rowsHtml = groupedRows.map(({ job, depth, groupLabel }) => {
             const [tone, label] = badge(job.status);
             const siteBadge = job.site_name ? `<span class="badge cyan">${escapeHtml(job.site_name)}</span>` : "";
@@ -796,15 +849,15 @@
                 </tr>
             `;
         }).join("") || `<tr><td colspan="5" class="text-hud-muted text-center py-6">No jobs found.</td></tr>`;
-        return { metricsHtml, rowsHtml, jobsCount: visibleJobs.length };
+        return { metricCards, rowsHtml, jobsCount: visibleJobs.length };
     }
 
     function applyJobsMarkup(section, jobsPayload, stats) {
-        const { metricsHtml, rowsHtml, jobsCount } = renderJobsMarkup(jobsPayload, stats);
+        const { metricCards, rowsHtml, jobsCount } = renderJobsMarkup(jobsPayload, stats);
         const metricsEl = section.querySelector("#jobs-metrics");
         const rowsEl = section.querySelector("#jobs-table-body");
         const countEl = section.querySelector("#jobs-loaded-count");
-        if (metricsEl) metricsEl.innerHTML = metricsHtml;
+        if (metricsEl) updateJobsMetrics(metricsEl, metricCards);
         if (rowsEl) rowsEl.innerHTML = rowsHtml;
         if (countEl) countEl.textContent = `${jobsCount} jobs loaded`;
         section.querySelectorAll(".jobs-sort-indicator").forEach((indicator) => {

@@ -65,6 +65,30 @@
         return `${text.slice(0, 2)}••••${text.slice(-2)}`;
     }
 
+    async function copyTextToClipboard(value, inputEl = null) {
+        const text = String(value || "");
+        if (!text) return false;
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+        const target = inputEl || document.createElement("textarea");
+        const temporary = !inputEl;
+        if (temporary) {
+            target.value = text;
+            target.setAttribute("readonly", "readonly");
+            target.style.position = "fixed";
+            target.style.top = "-1000px";
+            document.body.appendChild(target);
+        }
+        target.focus();
+        target.select();
+        target.setSelectionRange?.(0, text.length);
+        const copied = document.execCommand("copy");
+        if (temporary) target.remove();
+        return copied;
+    }
+
     function formatDate(value) {
         if (!value) return "-";
         const date = new Date(value);
@@ -1619,13 +1643,26 @@
                 feedback.classList.remove("hidden");
             }
             revealSlot?.querySelector("#copy-api-token")?.addEventListener("click", async () => {
-                const value = String(revealSlot.querySelector("#new-api-token")?.value || "");
+                const input = revealSlot.querySelector("#new-api-token");
+                const value = String(input?.value || "");
                 if (!value) return;
-                await navigator.clipboard.writeText(value);
-                if (feedback) {
-                    feedback.className = "text-[11px] border p-3 text-hud-cyan border-hud-cyan/30 bg-hud-cyan/10";
-                    feedback.textContent = "Token copied to clipboard.";
-                    feedback.classList.remove("hidden");
+                try {
+                    const copied = await copyTextToClipboard(value, input);
+                    if (feedback) {
+                        feedback.className = copied
+                            ? "text-[11px] border p-3 text-hud-cyan border-hud-cyan/30 bg-hud-cyan/10"
+                            : "text-[11px] border p-3 text-hud-amber border-hud-amber/30 bg-hud-amber/10";
+                        feedback.textContent = copied ? "Token copied to clipboard." : "Không copy tự động được. Token đã được chọn, nhấn Cmd/Ctrl+C.";
+                        feedback.classList.remove("hidden");
+                    }
+                } catch (error) {
+                    input?.focus();
+                    input?.select();
+                    if (feedback) {
+                        feedback.className = "text-[11px] border p-3 text-hud-amber border-hud-amber/30 bg-hud-amber/10";
+                        feedback.textContent = "Trình duyệt chặn clipboard. Token đã được chọn, nhấn Cmd/Ctrl+C.";
+                        feedback.classList.remove("hidden");
+                    }
                 }
             });
             section.querySelector("#api-token-create")?.addEventListener("click", async () => {

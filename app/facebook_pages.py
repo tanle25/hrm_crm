@@ -186,29 +186,24 @@ def _insight_values(payload: dict[str, Any], metric: str) -> list[dict[str, Any]
     return []
 
 
-def _fetch_metric_series(
-    client: httpx.Client,
-    base_url: str,
-    page: dict[str, Any],
-    metric: str,
-    since: datetime,
-    until: datetime,
-) -> tuple[list[dict[str, Any]], str | None]:
+def _graph_error_message(error: httpx.HTTPError, fallback: str = "Graph API request failed") -> str:
+    response = getattr(error, "response", None)
+    if response is None:
+        return fallback
     try:
-        response = client.get(
-            f"{base_url}/{page['page_id']}/insights",
-            params={
-                "metric": metric,
-                "period": "day",
-                "since": int(since.timestamp()),
-                "until": int(until.timestamp()),
-                "access_token": page["page_access_token"],
-            },
-        )
-        response.raise_for_status()
-        return _insight_values(response.json(), metric), None
-    except httpx.HTTPError as error:
-        return [], f"{page.get('name') or page.get('page_id')}: {metric} unavailable ({error})"
+        payload = response.json()
+    except ValueError:
+        return f"{fallback}: HTTP {response.status_code}"
+    graph_error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(graph_error, dict):
+        message = graph_error.get("message") or fallback
+        code = graph_error.get("code")
+        subcode = graph_error.get("error_subcode")
+        suffix = f"code={code}" if code else ""
+        if subcode:
+            suffix = f"{suffix}, subcode={subcode}" if suffix else f"subcode={subcode}"
+        return f"{message} ({suffix})" if suffix else str(message)
+    return f"{fallback}: HTTP {response.status_code}"
 
 
 def _fetch_metrics_payload(
@@ -218,23 +213,26 @@ def _fetch_metrics_payload(
     metrics: list[str],
     since: datetime,
     until: datetime,
-) -> tuple[dict[str, list[dict[str, Any]]], str | None]:
-    try:
-        response = client.get(
-            f"{base_url}/{page['page_id']}/insights",
-            params={
-                "metric": ",".join(metrics),
-                "period": "day",
-                "since": int(since.timestamp()),
-                "until": int(until.timestamp()),
-                "access_token": page["page_access_token"],
-            },
-        )
-        response.raise_for_status()
-        payload = response.json()
-        return {metric: _insight_values(payload, metric) for metric in metrics}, None
-    except httpx.HTTPError as error:
-        return {}, f"{page.get('name') or page.get('page_id')}: insights unavailable ({error})"
+) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+    values_by_metric: dict[str, list[dict[str, Any]]] = {}
+    warnings: list[str] = []
+    for metric in metrics:
+        try:
+            response = client.get(
+                f"{base_url}/{page['page_id']}/insights",
+                params={
+                    "metric": metric,
+                    "period": "day",
+                    "since": int(since.timestamp()),
+                    "until": int(until.timestamp()),
+                    "access_token": page["page_access_token"],
+                },
+            )
+            response.raise_for_status()
+            values_by_metric[metric] = _insight_values(response.json(), metric)
+        except httpx.HTTPError as error:
+            warnings.append(f"{page.get('name') or page.get('page_id')}: {metric} unavailable - {_graph_error_message(error)}")
+    return values_by_metric, warnings
 
 
 def _safe_int(value: Any) -> int:
@@ -286,7 +284,7 @@ def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, An
 
     with httpx.Client(timeout=httpx.Timeout(8.0, connect=3.0)) as client:
         for page in pages:
-            insight_values, warning = _fetch_metrics_payload(
+            insight_values, metric_warnings = _fetch_metrics_payload(
                 client,
                 base_url,
                 page,
@@ -294,8 +292,7 @@ def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, An
                 since,
                 now,
             )
-            if warning:
-                warnings.append(warning)
+            warnings.extend(metric_warnings)
             for metric, target in [
                 ("page_impressions_unique", reach_by_day),
                 ("page_post_engagements", engagement_by_day),
@@ -347,7 +344,7 @@ def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, An
                         }
                     )
             except httpx.HTTPError as error:
-                warnings.append(f"{page.get('name') or page.get('page_id')}: posts unavailable ({error})")
+                warnings.append(f"{page.get('name') or page.get('page_id')}: posts unavailable - {_graph_error_message(error)}")
 
     reach_total = sum(reach_by_day.values())
     engagement_total = sum(engagement_by_day.values())

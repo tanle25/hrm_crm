@@ -76,6 +76,10 @@
         return `${text.slice(0, 2)}••••${text.slice(-2)}`;
     }
 
+    function redactSensitiveText(value) {
+        return String(value ?? "").replace(/access_token=[^&\s"'<>]+/gi, "access_token=***");
+    }
+
     async function copyTextToClipboard(value, inputEl = null) {
         const text = String(value || "");
         if (!text) return false;
@@ -1871,7 +1875,7 @@
                         `).join("")}
                     </div>
 
-                    ${(stats.warnings || []).length ? `<div class="mb-5 border border-hud-amber/30 bg-hud-amber/10 text-hud-amber text-[11px] p-3">Một số metric không lấy được do quyền Meta API hoặc page không có dữ liệu: ${escapeHtml((stats.warnings || []).slice(0, 3).join(" | "))}</div>` : ""}
+                    ${(stats.warnings || []).length ? `<div class="mb-5 border border-hud-amber/30 bg-hud-amber/10 text-hud-amber text-[11px] p-3">Một số metric không lấy được do quyền Meta API hoặc page không có dữ liệu: ${escapeHtml(redactSensitiveText((stats.warnings || []).slice(0, 3).join(" | ")))}</div>` : ""}
 
                     <div class="grid grid-cols-3 gap-5 mb-6">
                         <div class="col-span-2 hud-card fade-in" style="border-color: rgba(74, 158, 255, 0.3);">

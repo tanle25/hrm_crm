@@ -2005,12 +2005,12 @@
             const unread = conversations.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
             section.dataset.hydrated = "1";
             section.innerHTML = `
-                <div class="max-w-7xl mx-auto h-full">
+                <div class="max-w-7xl mx-auto flex flex-col min-h-0" style="height: calc(100dvh - 120px);">
                     <div id="fb-messages-sync-status" class="${state.facebookMessagesSyncing ? "" : "hidden"} mb-4 border border-hud-cyan/30 bg-hud-cyan/10 text-hud-cyan text-[11px] p-3">
                         Đang đồng bộ inbox Facebook trong nền. Tin nhắn đã lưu vẫn hiển thị, sync xong sẽ tự cập nhật.
                     </div>
                     ${facebookWarningBanner(payload.warnings)}
-                    <div class="grid gap-4" style="grid-template-columns: 340px minmax(0, 1fr); height: calc(100vh - 210px); min-height: 560px;">
+                    <div id="fb-messages-grid" class="grid gap-4 flex-1 min-h-0" style="grid-template-columns: 320px minmax(0, 1fr); transition: grid-template-columns 0.3s ease;">
                         <div class="hud-card flex flex-col overflow-hidden fade-in min-h-0" style="border-color: rgba(74, 158, 255, 0.3);">
                             <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
                             <div class="header-strip px-4 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
@@ -2056,7 +2056,11 @@
                                         <div class="text-sm text-white font-bold truncate">${escapeHtml(selected.customer_name || "Facebook User")}</div>
                                         <div class="text-[9px] uppercase-wide" style="color:#4a9eff;">${escapeHtml(selected.page_name || "Facebook Page")} · ${escapeHtml(selected.customer_id || "")}</div>
                                     </div>
-                                    <span class="badge ${Number(selected.unread_count || 0) ? "amber" : "cyan"} ml-auto">${Number(selected.unread_count || 0) ? "UNREAD" : "OPEN"}</span>
+                                    <div class="ml-auto flex gap-2 items-center">
+                                        <span class="badge ${Number(selected.unread_count || 0) ? "amber" : "cyan"}">${Number(selected.unread_count || 0) ? "UNREAD" : "OPEN"}</span>
+                                        <button class="btn-ghost px-2.5 py-1.5 text-[10px]" title="Gắn thẻ"><i class="fa-solid fa-user-tag"></i> TAG</button>
+                                        <button class="btn-ghost px-2.5 py-1.5 text-[10px]" title="Báo cáo"><i class="fa-solid fa-flag"></i></button>
+                                    </div>
                                 </div>
                                 <div class="flex-1 min-h-0 overflow-y-auto p-5 space-y-3">
                                     ${messages.map((message) => `
@@ -2075,8 +2079,14 @@
                                 </div>
                                 <div class="border-t border-hud-fb/20 p-3 space-y-2">
                                     <div id="fb-message-feedback" class="hidden text-[11px] border p-2"></div>
+                                    <div class="bg-black/50 border-l-2 border-hud-cyan px-3 py-2 text-[11px]">
+                                        <div class="text-[9px] uppercase-widest font-bold mb-1 text-hud-cyan"><i class="fa-solid fa-robot"></i> AI SUGGEST</div>
+                                        <div class="text-white/90">Chọn một hội thoại để hệ thống gợi ý phản hồi theo ngữ cảnh. Bạn vẫn có thể chỉnh lại trước khi gửi.</div>
+                                    </div>
                                     <div class="flex gap-2">
                                         <input id="fb-message-input" type="text" placeholder="Gõ phản hồi của bạn..." class="hud-input flex-1 px-3 py-2 text-xs"/>
+                                        <button class="btn-ghost px-3 py-2 text-[10px]" title="Đính kèm"><i class="fa-solid fa-paperclip"></i></button>
+                                        <button class="btn-ghost px-3 py-2 text-[10px] uppercase-wide font-bold" style="background: rgba(0, 240, 255, 0.15); color: #00f0ff;"><i class="fa-solid fa-robot"></i> AI</button>
                                         <button id="fb-message-send" class="px-4 py-2 text-xs uppercase-wide font-bold" style="background:#4a9eff;color:#fff;border:1px solid #4a9eff;"><i class="fa-solid fa-paper-plane"></i></button>
                                     </div>
                                 </div>

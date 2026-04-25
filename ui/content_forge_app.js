@@ -2039,13 +2039,29 @@
         const quoteText = String(replyTo.message || replyTo.fallback_label || "").trim();
         const quoteAttachments = Array.isArray(replyTo.attachments) ? replyTo.attachments : [];
         const imageAttachment = quoteAttachments.find((item) => item && item.type === "image" && (item.preview_url || item.url));
+        const videoAttachment = quoteAttachments.find((item) => item && item.type === "video");
+        const audioAttachment = quoteAttachments.find((item) => item && item.type === "audio");
+        const fileAttachment = quoteAttachments.find((item) => item && item.type === "file");
         const tone = message.direction === "outbound" ? "border-hud-fb/40 bg-hud-fb/10" : "border-hud-cyan/20 bg-black/40";
+        const quoteLabel = imageAttachment
+            ? "Trả lời ảnh"
+            : videoAttachment
+                ? "Trả lời video"
+                : audioAttachment
+                    ? "Trả lời audio"
+                    : fileAttachment
+                        ? "Trả lời tệp đính kèm"
+                        : "Trả lời tin nhắn trước đó";
+        const displayText = quoteText === "Tin nhắn đặc biệt" && quoteAttachments.length ? "" : quoteText;
         return `<div class="mb-2 border-l-2 ${tone} px-3 py-2 text-[10px]">
             <div class="uppercase-wide mb-1 ${message.direction === "outbound" ? "text-hud-fb" : "text-hud-cyan"}">
-                <i class="fa-solid fa-reply"></i> ${replyTo.direction === "outbound" ? "Trả lời ảnh của bạn" : "Trả lời tin nhắn trước đó"}
+                <i class="fa-solid fa-reply"></i> ${replyTo.direction === "outbound" ? `${quoteLabel} của bạn` : quoteLabel}
             </div>
             ${imageAttachment ? `<img src="${escapeHtml(imageAttachment.preview_url || imageAttachment.url)}" alt="quoted" loading="lazy" class="w-20 h-20 object-cover rounded border border-white/10 mb-2"/>` : ""}
-            ${quoteText ? `<div class="text-white/80 line-clamp-2">${escapeHtml(quoteText)}</div>` : ""}
+            ${!imageAttachment && videoAttachment ? `<div class="text-white/80"><i class="fa-solid fa-video"></i> Video đính kèm</div>` : ""}
+            ${!imageAttachment && !videoAttachment && audioAttachment ? `<div class="text-white/80"><i class="fa-solid fa-microphone"></i> Audio đính kèm</div>` : ""}
+            ${!imageAttachment && !videoAttachment && !audioAttachment && fileAttachment ? `<div class="text-white/80"><i class="fa-solid fa-paperclip"></i> Tệp đính kèm</div>` : ""}
+            ${displayText ? `<div class="text-white/80 line-clamp-2">${escapeHtml(displayText)}</div>` : ""}
         </div>`;
     }
 

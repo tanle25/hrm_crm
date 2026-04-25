@@ -818,12 +818,24 @@ def _normalize_message_attachment(raw: dict[str, Any]) -> dict[str, Any]:
     image_url = str(image_data.get("url") or image_data.get("preview_url") or "")
     video_url = str(video_data.get("url") or video_data.get("preview_url") or "")
     file_url = str(raw.get("file_url") or image_url or video_url or raw.get("url") or "")
+    raw_type = str(raw.get("type") or "").lower()
+    url_for_guess = file_url.lower()
     attachment_type = "file"
-    if mime_type.startswith("image/") or image_url:
+    if (
+        raw_type == "image"
+        or mime_type.startswith("image/")
+        or image_url
+        or any(url_for_guess.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"])
+    ):
         attachment_type = "image"
-    elif mime_type.startswith("video/") or video_url:
+    elif (
+        raw_type == "video"
+        or mime_type.startswith("video/")
+        or video_url
+        or any(url_for_guess.endswith(ext) for ext in [".mp4", ".mov", ".webm", ".m4v", ".avi"])
+    ):
         attachment_type = "video"
-    elif mime_type.startswith("audio/"):
+    elif raw_type == "audio" or mime_type.startswith("audio/") or any(url_for_guess.endswith(ext) for ext in [".mp3", ".wav", ".m4a", ".ogg"]):
         attachment_type = "audio"
     return {
         "attachment_id": str(raw.get("id") or ""),

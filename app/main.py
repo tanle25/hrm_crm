@@ -101,8 +101,14 @@ def _request_api_token(request: Request) -> str:
     auth_header = str(request.headers.get("authorization") or "").strip()
     if auth_header.lower().startswith("bearer "):
         return auth_header[7:].strip()
+    if auth_header.lower().startswith("token "):
+        return auth_header[6:].strip()
+    if auth_header.startswith("cf_ext_"):
+        return auth_header
     return str(
         request.headers.get("x-api-token")
+        or request.headers.get("x-api-key")
+        or request.headers.get("x-extension-token")
         or request.query_params.get("token")
         or request.query_params.get("api_token")
         or ""
@@ -131,6 +137,16 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if _is_shopee_extension_path(path) and request.method.upper() == "POST" and verify_api_token(_request_api_token(request)):
         return await call_next(request)
+    if _is_shopee_extension_path(path) and request.method.upper() == "POST":
+        token_preview = _request_api_token(request)[:12]
+        log.warning(
+            "shopee_extension_auth_failed",
+            has_authorization=bool(request.headers.get("authorization")),
+            has_x_api_token=bool(request.headers.get("x-api-token")),
+            has_x_api_key=bool(request.headers.get("x-api-key")),
+            has_x_extension_token=bool(request.headers.get("x-extension-token")),
+            token_prefix=token_preview,
+        )
     if path.startswith(settings.api_prefix):
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})
     return RedirectResponse(url="/login", status_code=307)

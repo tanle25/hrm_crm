@@ -196,18 +196,20 @@ def _product_type_and_variations(state: dict) -> tuple[str, list[dict], list[dic
     variations = []
     for option in options:
         if not option.get("regular_price") and not fallback_price:
-            raise RuntimeError("Variable product variation is missing price and no fallback price is available.")
+            continue
         variation = {
             "regular_price": option.get("regular_price") or fallback_price,
             "attributes": [{"name": attribute_name, "option": option["name"]}],
         }
         variations.append(variation)
+    if not variations:
+        return "simple", [], []
     attributes = [
         {
             "name": attribute_name,
             "visible": True,
             "variation": True,
-            "options": option_names,
+            "options": [item["attributes"][0]["option"] for item in variations],
         }
     ]
     return "variable", attributes, variations
@@ -462,6 +464,7 @@ def _build_shopee_product_payload(state: dict) -> dict:
     attributes = []
     variations = []
     if product_type == "variable":
+        fallback_price = re.sub(r"[^\d]", "", str(normalized.get("regular_price") or normalized.get("sale_price") or ""))
         for attribute in normalized_attributes:
             if not isinstance(attribute, dict):
                 continue
@@ -488,7 +491,7 @@ def _build_shopee_product_payload(state: dict) -> dict:
                     variation_attributes.append({"name": attr_name, "option": option})
             if not variation_attributes:
                 continue
-            regular_price = re.sub(r"[^\d]", "", str(variation.get("regular_price") or variation.get("sale_price") or ""))
+            regular_price = re.sub(r"[^\d]", "", str(variation.get("regular_price") or variation.get("sale_price") or fallback_price))
             if not regular_price:
                 continue
             variations.append(
@@ -498,7 +501,9 @@ def _build_shopee_product_payload(state: dict) -> dict:
                 }
             )
         if not attributes or not variations:
-            raise RuntimeError("Shopee variable product is missing normalized attributes or variations.")
+            product_type = "simple"
+            attributes = []
+            variations = []
 
     meta_title = _seo_title(state)
     meta_description = _seo_description(state["plan"])

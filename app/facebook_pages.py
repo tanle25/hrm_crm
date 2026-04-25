@@ -277,6 +277,36 @@ def _comment_sentiment(message: str) -> str:
     return "neutral"
 
 
+def _normalize_facebook_comment(
+    comment: dict[str, Any],
+    *,
+    page: dict[str, Any],
+    post_id: str,
+    post_message: str,
+    post_link: str,
+) -> dict[str, Any]:
+    message = str(comment.get("message") or "")
+    sentiment = _comment_sentiment(message)
+    author = comment.get("from") or {}
+    return {
+        "comment_id": str(comment.get("id") or ""),
+        "post_id": post_id,
+        "page_id": str(page.get("page_id") or ""),
+        "page_name": page.get("name") or "",
+        "page_picture_url": page.get("picture_url") or "",
+        "author_id": str(author.get("id") or ""),
+        "author_name": author.get("name") or "Facebook User",
+        "message": message,
+        "created_time": str(comment.get("created_time") or ""),
+        "post_message": post_message,
+        "permalink_url": post_link,
+        "like_count": _safe_int(comment.get("like_count")),
+        "reply_count": _safe_int(comment.get("comment_count")),
+        "sentiment": sentiment,
+        "status": "auto" if sentiment == "positive" else "pending",
+    }
+
+
 def facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
     settings = get_settings()
     limit = max(1, min(limit, 100))
@@ -377,29 +407,56 @@ def facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                 post_id = str(post.get("id") or "")
                 post_message = str(post.get("message") or "")
                 post_link = str(post.get("permalink_url") or "")
-                for comment in ((post.get("comments") or {}).get("data") or []):
-                    message = str(comment.get("message") or "")
-                    sentiment = _comment_sentiment(message)
-                    author = comment.get("from") or {}
+                nested_comments = ((post.get("comments") or {}).get("data") or [])
+                if nested_comments:
+                    for comment in nested_comments:
+                        comments.append(
+                            _normalize_facebook_comment(
+                                comment,
+                                page=page,
+                                post_id=post_id,
+                                post_message=post_message,
+                                post_link=post_link,
+                            )
+                        )
+                    continue
+
+                comment_payload: dict[str, Any] | None = None
+                attempted_ids = [post_id]
+                if "_" in post_id:
+                    attempted_ids.append(post_id.split("_", 1)[1])
+                for target_id in attempted_ids:
+                    try:
+                        comment_response = client.get(
+                            f"{base_url}/{target_id}/comments",
+                            params={
+                                "fields": "id,message,created_time,from,like_count,comment_count,parent",
+                                "limit": 10,
+                                "access_token": page["page_access_token"],
+                            },
+                        )
+                        comment_response.raise_for_status()
+                        comment_payload = comment_response.json()
+                        break
+                    except httpx.HTTPError as error:
+                        warnings.append(
+                            f"{page.get('name') or page.get('page_id')}: direct comments unavailable for {target_id} - {_graph_error_message(error)}"
+                        )
+                if comment_payload is None:
+                    continue
+                for comment in comment_payload.get("data") or []:
                     comments.append(
-                        {
-                            "comment_id": str(comment.get("id") or ""),
-                            "post_id": post_id,
-                            "page_id": str(page.get("page_id") or ""),
-                            "page_name": page.get("name") or "",
-                            "page_picture_url": page.get("picture_url") or "",
-                            "author_id": str(author.get("id") or ""),
-                            "author_name": author.get("name") or "Facebook User",
-                            "message": message,
-                            "created_time": str(comment.get("created_time") or ""),
-                            "post_message": post_message,
-                            "permalink_url": post_link,
-                            "like_count": _safe_int(comment.get("like_count")),
-                            "reply_count": _safe_int(comment.get("comment_count")),
-                            "sentiment": sentiment,
-                            "status": "auto" if sentiment == "positive" else "pending",
-                        }
+                        _normalize_facebook_comment(
+                            comment,
+                            page=page,
+                            post_id=post_id,
+                            post_message=post_message,
+                            post_link=post_link,
+                        )
                     )
+
+    if not comments and pages and not warnings:
+        warnings.append("Graph API did not return comments for recent posts. Check whether the page has comments and whether pages_read_user_content is available for this app.")
 
     comments.sort(key=lambda item: item.get("created_time") or "", reverse=True)
     selected = comments[:limit]

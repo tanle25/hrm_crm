@@ -288,7 +288,7 @@ def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, An
                 client,
                 base_url,
                 page,
-                ["page_impressions_unique", "page_post_engagements", "page_fans"],
+                ["page_impressions_unique", "page_post_engagements"],
                 since,
                 now,
             )
@@ -301,15 +301,26 @@ def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, An
                     key = _date_key(item.get("end_time"))
                     if key:
                         target[key] += _safe_int(item.get("value"))
-            fan_values = insight_values.get("page_fans") or []
-            if fan_values:
-                fan_count += _safe_int(fan_values[-1].get("value"))
+
+            try:
+                page_response = client.get(
+                    f"{base_url}/{page['page_id']}",
+                    params={
+                        "fields": "followers_count,fan_count",
+                        "access_token": page["page_access_token"],
+                    },
+                )
+                page_response.raise_for_status()
+                page_payload = page_response.json()
+                fan_count += _safe_int(page_payload.get("followers_count") or page_payload.get("fan_count"))
+            except httpx.HTTPError as error:
+                warnings.append(f"{page.get('name') or page.get('page_id')}: follower count unavailable - {_graph_error_message(error)}")
 
             try:
                 posts_response = client.get(
                     f"{base_url}/{page['page_id']}/posts",
                     params={
-                        "fields": "id,message,created_time,status_type,type,shares,comments.summary(true),reactions.summary(true),insights.metric(post_impressions_unique,post_engaged_users)",
+                        "fields": "id,message,created_time,status_type,type,insights.metric(post_impressions_unique,post_engaged_users)",
                         "limit": 10,
                         "access_token": page["page_access_token"],
                     },
@@ -317,11 +328,10 @@ def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, An
                 posts_response.raise_for_status()
                 for post in posts_response.json().get("data") or []:
                     post_count += 1
-                    post_comments = _safe_int(((post.get("comments") or {}).get("summary") or {}).get("total_count"))
-                    post_reactions = _safe_int(((post.get("reactions") or {}).get("summary") or {}).get("total_count"))
-                    post_shares = _safe_int((post.get("shares") or {}).get("count"))
+                    post_comments = 0
+                    post_shares = 0
                     post_reach = _post_insight_total(post.get("insights"), "post_impressions_unique")
-                    post_engagement = _post_insight_total(post.get("insights"), "post_engaged_users") or post_reactions + post_comments + post_shares
+                    post_engagement = _post_insight_total(post.get("insights"), "post_engaged_users")
                     comments += post_comments
                     shares += post_shares
                     content_type = str(post.get("type") or post.get("status_type") or "unknown").replace("_", " ").title()

@@ -504,10 +504,10 @@
         /* ==================== FACEBOOK REPLY QUOTE ==================== */
         .reply-msg__quote {
             position: relative;
-            padding: 8px;
+            padding: 10px;
             background: rgba(74, 158, 255, 0.04);
             margin-bottom: 4px;
-            max-width: 360px;
+            max-width: 440px;
         }
         .reply-msg__corner {
             position: absolute;
@@ -541,16 +541,19 @@
         }
         .reply-msg__quote-inner {
             display: flex;
-            gap: 8px;
+            gap: 10px;
             align-items: center;
         }
         .reply-msg__thumb {
-            width: 32px;
-            height: 32px;
+            width: 58px;
+            height: 58px;
             flex-shrink: 0;
             border: 1px solid rgba(74, 158, 255, 0.4);
             overflow: hidden;
             background: #0a0e14;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         .reply-msg__thumb img {
             width: 100%;
@@ -584,6 +587,27 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+        }
+        .reply-msg__reply {
+            margin-top: 9px;
+            padding-top: 9px;
+            border-top: 1px solid rgba(74, 158, 255, 0.16);
+        }
+        .reply-msg__bubble {
+            padding: 8px 12px;
+            color: rgba(255, 255, 255, 0.94);
+            background: rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(0, 240, 255, 0.18);
+            font-size: 12px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+        .reply-msg__quote.is-outbound .reply-msg__bubble {
+            background: rgba(74, 158, 255, 0.18);
+            border-color: rgba(74, 158, 255, 0.45);
+        }
+        .reply-msg__reply .mt-2 {
+            margin-top: 0;
         }
 
         .kbd {

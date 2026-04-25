@@ -19,6 +19,7 @@ from app.facebook_pages import (
     debug_facebook_messages,
     facebook_aggregate_stats,
     facebook_comments,
+    facebook_conversation_detail,
     facebook_conversations,
     facebook_posts,
     list_facebook_pages,
@@ -568,9 +569,22 @@ async def sync_facebook_comments_endpoint(limit: int = 50) -> FacebookCommentLis
 
 
 @app.get(f"{settings.api_prefix}/facebook/conversations", response_model=FacebookConversationListResponse)
-async def get_facebook_conversations(limit: int = 50) -> FacebookConversationListResponse:
-    result = await asyncio.to_thread(facebook_conversations, max(1, min(limit, 100)))
+async def get_facebook_conversations(limit: int = 25, message_limit: int = 1) -> FacebookConversationListResponse:
+    result = await asyncio.to_thread(
+        facebook_conversations,
+        max(1, min(limit, 100)),
+        25,
+        max(0, min(message_limit, 200)),
+    )
     return FacebookConversationListResponse(**result)
+
+
+@app.get(f"{settings.api_prefix}/facebook/conversations/{{conversation_id}}")
+async def get_facebook_conversation_detail(conversation_id: str, message_limit: int = 100) -> dict:
+    try:
+        return await asyncio.to_thread(facebook_conversation_detail, conversation_id, max(1, min(message_limit, 200)))
+    except RuntimeError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.post(f"{settings.api_prefix}/facebook/conversations/sync", response_model=FacebookConversationListResponse)

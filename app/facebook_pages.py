@@ -533,6 +533,25 @@ def _list_cached_facebook_messages(conversation_id: str, limit: int = 100) -> li
         return [json.loads(row[0]) for row in cur.fetchall()]
 
 
+def _list_latest_cached_facebook_messages(conversation_id: str, limit: int = 1) -> list[dict[str, Any]]:
+    conn = _postgres_conn()
+    if conn is None or not conversation_id:
+        return []
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data::text
+            FROM facebook_messages
+            WHERE conversation_id = %s
+            ORDER BY created_time DESC NULLS LAST, updated_at DESC
+            LIMIT %s
+            """,
+            (conversation_id, max(1, min(limit, 200))),
+        )
+        rows = [json.loads(row[0]) for row in cur.fetchall()]
+    return list(reversed(rows))
+
+
 def _upsert_facebook_stats(stat_key: str, payload: dict[str, Any]) -> None:
     conn = _postgres_conn()
     if conn is None:
@@ -1227,19 +1246,33 @@ def _refresh_conversation_cache(
     return payload
 
 
-def facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
+def _conversation_with_cached_messages(conversation: dict[str, Any], message_limit: int) -> dict[str, Any]:
+    conversation_id = str(conversation.get("conversation_id") or "")
+    message_limit = max(0, min(message_limit, 200))
+    if message_limit <= 0:
+        merged_messages: list[dict[str, Any]] = []
+    elif message_limit == 1:
+        graph_messages = (conversation.get("messages") or [])[-1:]
+        stored_messages = _list_latest_cached_facebook_messages(conversation_id, 1)
+        merged_messages = _merge_conversation_messages(graph_messages, stored_messages)[-1:]
+    else:
+        graph_messages = (conversation.get("messages") or [])[-message_limit:]
+        stored_messages = _list_latest_cached_facebook_messages(conversation_id, message_limit)
+        merged_messages = _merge_conversation_messages(graph_messages, stored_messages)[-message_limit:]
+    conversation["messages"] = merged_messages
+    conversation["message_count"] = max(int(conversation.get("message_count") or 0), len(merged_messages))
+    if merged_messages:
+        last_message = merged_messages[-1]
+        conversation["snippet"] = last_message.get("message") or last_message.get("fallback_label") or conversation.get("snippet") or ""
+        conversation["updated_time"] = last_message.get("created_time") or conversation.get("updated_time") or ""
+    return conversation
+
+
+def facebook_conversations(limit: int = 50, max_pages: int = 25, message_limit: int = 1) -> dict[str, Any]:
     conversations = _list_cached_facebook_conversations(limit)
     enriched: list[dict[str, Any]] = []
     for conversation in conversations:
-        stored_messages = _list_cached_facebook_messages(str(conversation.get("conversation_id") or ""), 100)
-        merged_messages = _merge_conversation_messages(conversation.get("messages") or [], stored_messages)
-        conversation["messages"] = merged_messages
-        conversation["message_count"] = max(int(conversation.get("message_count") or 0), len(merged_messages))
-        if merged_messages:
-            last_message = merged_messages[-1]
-            conversation["snippet"] = last_message.get("message") or last_message.get("fallback_label") or conversation.get("snippet") or ""
-            conversation["updated_time"] = last_message.get("created_time") or conversation.get("updated_time") or ""
-        enriched.append(conversation)
+        enriched.append(_conversation_with_cached_messages(conversation, message_limit))
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
     warnings = [] if enriched else ["No cached Facebook conversations yet. Run sync to fetch inbox from Graph API."]
     return {
@@ -1248,6 +1281,16 @@ def facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[str, An
         "conversations": enriched,
         "warnings": warnings[:20],
     }
+
+
+def facebook_conversation_detail(conversation_id: str, message_limit: int = 100) -> dict[str, Any]:
+    conversation_id = (conversation_id or "").strip()
+    if not conversation_id:
+        raise RuntimeError("conversation_id is required.")
+    conversation = _get_cached_facebook_conversation(conversation_id)
+    if not conversation:
+        raise RuntimeError("Facebook conversation not found.")
+    return _conversation_with_cached_messages(conversation, max(1, min(message_limit, 200)))
 
 
 def debug_facebook_messages(conversation_id: str = "", message_id: str = "") -> dict[str, Any]:

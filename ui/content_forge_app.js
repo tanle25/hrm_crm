@@ -2077,20 +2077,44 @@
                         : "Quote · tin nhắn";
         const quoteMeta = replyTo.created_time ? formatDate(replyTo.created_time) : (replyTo.from_name || "");
         const thumbUrl = imageAttachment ? String(imageAttachment.preview_url || imageAttachment.url || "") : "";
-        return `<div class="reply-msg__quote">
+        return `<div class="reply-msg__quote-inner">
+            <div class="reply-msg__thumb">
+                ${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" alt="" loading="lazy" />` : `<i class="fa-solid fa-paperclip text-hud-fb text-sm"></i>`}
+            </div>
+            <div class="reply-msg__quote-info">
+                <div class="reply-msg__quote-label"><i class="fa-solid fa-reply"></i> ${escapeHtml(quoteLabel)}</div>
+                <div class="reply-msg__quote-meta">${escapeHtml(quoteMeta || replyTo.fallback_label || "Tin nhắn trước đó")}</div>
+            </div>
+        </div>`;
+    }
+
+    function renderStandardMessageBody(message) {
+        return `
+            ${message.message ? `
+                <div class="px-4 py-2 text-[12px] text-white ${message.direction === "outbound" ? "" : "bg-black/50 border border-hud-cyan/20"}" style="${message.direction === "outbound" ? "background: rgba(74, 158, 255, 0.2); border: 1px solid rgba(74, 158, 255, 0.5);" : ""}">
+                    ${escapeHtml(message.message)}
+                </div>
+            ` : ""}
+            ${renderMessageAttachments(message)}
+            ${!message.message && !(message.attachments || []).length ? renderMessageFallback(message) : ""}
+        `;
+    }
+
+    function renderReplyMessage(message) {
+        const replyQuote = renderReplyQuote(message);
+        if (!replyQuote) return renderStandardMessageBody(message);
+        const hasBody = Boolean(message.message || (message.attachments || []).length || message.fallback_label);
+        return `<div class="reply-msg__quote ${message.direction === "outbound" ? "is-outbound" : ""}">
             <span class="reply-msg__corner reply-msg__corner--tl"></span>
             <span class="reply-msg__corner reply-msg__corner--tr"></span>
             <span class="reply-msg__corner reply-msg__corner--bl"></span>
             <span class="reply-msg__corner reply-msg__corner--br"></span>
-            <div class="reply-msg__quote-inner">
-                <div class="reply-msg__thumb">
-                    ${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" alt="" loading="lazy" />` : `<i class="fa-solid fa-paperclip text-hud-fb text-[11px]"></i>`}
-                </div>
-                <div class="reply-msg__quote-info">
-                    <div class="reply-msg__quote-label"><i class="fa-solid fa-reply"></i> ${escapeHtml(quoteLabel)}</div>
-                    <div class="reply-msg__quote-meta">${escapeHtml(quoteMeta || replyTo.fallback_label || "Tin nhắn trước đó")}</div>
-                </div>
-            </div>
+            ${replyQuote}
+            ${hasBody ? `<div class="reply-msg__reply">
+                ${message.message ? `<div class="reply-msg__bubble">${escapeHtml(message.message)}</div>` : ""}
+                ${renderMessageAttachments(message)}
+                ${!message.message && !(message.attachments || []).length ? renderMessageFallback(message) : ""}
+            </div>` : ""}
         </div>`;
     }
 
@@ -2117,10 +2141,17 @@
             section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Đang đọc cache tin nhắn...</div>`;
         }
         try {
-            const payload = await fetchJSON("/facebook/conversations?limit=50");
+            const payload = await fetchJSON("/facebook/conversations?limit=25&message_limit=1");
             const conversations = payload.conversations || [];
             if (!state.selectedFacebookConversationId && conversations[0]) state.selectedFacebookConversationId = conversations[0].conversation_id;
-            const selected = conversations.find((item) => item.conversation_id === state.selectedFacebookConversationId) || conversations[0] || null;
+            let selected = conversations.find((item) => item.conversation_id === state.selectedFacebookConversationId) || conversations[0] || null;
+            if (selected?.conversation_id) {
+                try {
+                    selected = await fetchJSON(`/facebook/conversations/${encodeURIComponent(selected.conversation_id)}?message_limit=100`);
+                } catch (error) {
+                    console.warn("Facebook conversation detail failed", error);
+                }
+            }
             const messages = selected?.messages || [];
             const unread = conversations.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
             section.dataset.hydrated = "1";
@@ -2189,14 +2220,7 @@
                                                 <i class="fa-solid ${message.direction === "outbound" ? "fa-robot text-hud-fb" : "fa-user text-hud-muted"} text-[9px]"></i>
                                             </div>
                                             <div>
-                                                ${renderReplyQuote(message)}
-                                                ${message.message ? `
-                                                    <div class="px-4 py-2 text-[12px] text-white ${message.direction === "outbound" ? "" : "bg-black/50 border border-hud-cyan/20"}" style="${message.direction === "outbound" ? "background: rgba(74, 158, 255, 0.2); border: 1px solid rgba(74, 158, 255, 0.5);" : ""}">
-                                                        ${escapeHtml(message.message)}
-                                                    </div>
-                                                ` : ""}
-                                                ${renderMessageAttachments(message)}
-                                                ${!message.message && !(message.attachments || []).length ? renderMessageFallback(message) : ""}
+                                                ${renderReplyMessage(message)}
                                                 <div class="text-[9px] text-hud-muted mt-1 px-1 ${message.direction === "outbound" ? "text-right" : ""}">${escapeHtml(formatDate(message.created_time))} · ${escapeHtml(message.from_name || "")}</div>
                                             </div>
                                         </div>
@@ -2227,7 +2251,7 @@
                 const button = section.querySelector("#fb-messages-refresh");
                 if (button) button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>`;
                 try {
-                    await fetchJSON("/facebook/conversations/sync?limit=50", { method: "POST" });
+                    await fetchJSON("/facebook/conversations/sync?limit=25", { method: "POST" });
                 } finally {
                     state.facebookMessagesSyncing = false;
                     await renderFacebookMessagesPage();

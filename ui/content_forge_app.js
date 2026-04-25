@@ -2032,7 +2032,10 @@
                     </div>
                 </div>
             `;
-            section.querySelector("#fb-posts-refresh")?.addEventListener("click", () => renderFacebookPostsPage());
+            section.querySelector("#fb-posts-refresh")?.addEventListener("click", async () => {
+                await fetchJSON("/facebook/posts/sync?limit=50", { method: "POST" });
+                await renderFacebookPostsPage();
+            });
             section.querySelectorAll(".fb-post-comments").forEach((button) => {
                 button.addEventListener("click", (event) => {
                     event.preventDefault();
@@ -2158,7 +2161,10 @@
                     </div>
                 </div>
             `;
-            section.querySelector("#fb-comments-refresh")?.addEventListener("click", () => renderFacebookCommentsPage());
+            section.querySelector("#fb-comments-refresh")?.addEventListener("click", async () => {
+                await fetchJSON("/facebook/comments/sync?limit=50", { method: "POST" });
+                await renderFacebookCommentsPage();
+            });
             section.querySelectorAll(".fb-comment-item").forEach((button) => {
                 button.addEventListener("click", () => {
                     state.selectedFacebookCommentId = button.dataset.commentId || "";

@@ -260,10 +260,21 @@ def _post_insight_total(insights: dict[str, Any] | None, metric: str) -> int:
 def _parse_graph_time(value: str | None) -> datetime | None:
     if not value:
         return None
+    raw = str(value)
+    normalized = raw.replace("Z", "+00:00")
+    if len(normalized) >= 5 and normalized[-5] in ["+", "-"] and normalized[-3] != ":":
+        normalized = f"{normalized[:-2]}:{normalized[-2:]}"
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return datetime.fromisoformat(normalized)
     except ValueError:
         return None
+
+
+def _parse_graph_time_for_db(value: str | None) -> datetime | None:
+    parsed = _parse_graph_time(value)
+    if parsed is None:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _comment_sentiment(message: str) -> str:
@@ -307,7 +318,140 @@ def _normalize_facebook_comment(
     }
 
 
+def _upsert_facebook_post(item: dict[str, Any]) -> None:
+    conn = _postgres_conn()
+    if conn is None:
+        return
+    post_id = str(item.get("post_id") or "")
+    if not post_id:
+        return
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO facebook_posts (post_id, page_id, created_time, updated_at, data)
+            VALUES (%s, %s, %s, NOW(), %s::jsonb)
+            ON CONFLICT (post_id) DO UPDATE SET
+                page_id = EXCLUDED.page_id,
+                created_time = EXCLUDED.created_time,
+                updated_at = NOW(),
+                data = EXCLUDED.data
+            """,
+            (
+                post_id,
+                str(item.get("page_id") or ""),
+                _parse_graph_time_for_db(str(item.get("created_time") or "")),
+                serialize_json(item),
+            ),
+        )
+
+
+def _upsert_facebook_comment(item: dict[str, Any]) -> None:
+    conn = _postgres_conn()
+    if conn is None:
+        return
+    comment_id = str(item.get("comment_id") or "")
+    if not comment_id:
+        return
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO facebook_comments (comment_id, post_id, page_id, created_time, updated_at, data)
+            VALUES (%s, %s, %s, %s, NOW(), %s::jsonb)
+            ON CONFLICT (comment_id) DO UPDATE SET
+                post_id = EXCLUDED.post_id,
+                page_id = EXCLUDED.page_id,
+                created_time = EXCLUDED.created_time,
+                updated_at = NOW(),
+                data = EXCLUDED.data
+            """,
+            (
+                comment_id,
+                str(item.get("post_id") or ""),
+                str(item.get("page_id") or ""),
+                _parse_graph_time_for_db(str(item.get("created_time") or "")),
+                serialize_json(item),
+            ),
+        )
+
+
+def _list_cached_facebook_posts(limit: int) -> list[dict[str, Any]]:
+    conn = _postgres_conn()
+    if conn is None:
+        return []
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data::text
+            FROM facebook_posts
+            ORDER BY created_time DESC NULLS LAST, updated_at DESC
+            LIMIT %s
+            """,
+            (max(1, min(limit, 100)),),
+        )
+        return [json.loads(row[0]) for row in cur.fetchall()]
+
+
+def _list_cached_facebook_comments(limit: int) -> list[dict[str, Any]]:
+    conn = _postgres_conn()
+    if conn is None:
+        return []
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data::text
+            FROM facebook_comments
+            ORDER BY created_time DESC NULLS LAST, updated_at DESC
+            LIMIT %s
+            """,
+            (max(1, min(limit, 100)),),
+        )
+        return [json.loads(row[0]) for row in cur.fetchall()]
+
+
+def _facebook_posts_payload(posts: list[dict[str, Any]], page_count: int, warnings: list[str] | None = None) -> dict[str, Any]:
+    selected = posts
+    return {
+        "total": len(selected),
+        "page_count": page_count,
+        "totals": {
+            "posted_7d": sum(1 for post in selected if post.get("posted_7d")),
+            "scheduled": 0,
+            "reach": sum(_safe_int(post.get("reach")) for post in selected),
+            "engagement": sum(_safe_int(post.get("engagement")) for post in selected),
+            "comments": sum(_safe_int(post.get("comments")) for post in selected),
+            "shares": sum(_safe_int(post.get("shares")) for post in selected),
+        },
+        "posts": selected,
+        "warnings": (warnings or [])[:20],
+    }
+
+
+def _facebook_comments_payload(comments: list[dict[str, Any]], page_count: int, warnings: list[str] | None = None) -> dict[str, Any]:
+    selected = comments
+    return {
+        "total": len(selected),
+        "page_count": page_count,
+        "totals": {
+            "pending": sum(1 for item in selected if item.get("status") == "pending"),
+            "negative": sum(1 for item in selected if item.get("sentiment") == "negative"),
+            "question": sum(1 for item in selected if item.get("sentiment") == "question"),
+            "positive": sum(1 for item in selected if item.get("sentiment") == "positive"),
+            "neutral": sum(1 for item in selected if item.get("sentiment") == "neutral"),
+        },
+        "comments": selected,
+        "warnings": (warnings or [])[:20],
+    }
+
+
 def facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
+    cached = _list_cached_facebook_posts(limit)
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
+    if cached:
+        return _facebook_posts_payload(cached, len(pages), [])
+    return sync_facebook_posts(limit=limit, max_pages=max_pages)
+
+
+def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
     settings = get_settings()
     limit = max(1, min(limit, 100))
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
@@ -374,26 +518,21 @@ def facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                         "posted_7d": bool(created_dt and created_dt >= since_7d),
                     }
                 )
+                _upsert_facebook_post(posts[-1])
 
     posts.sort(key=lambda item: item.get("created_time") or "", reverse=True)
-    selected = posts[:limit]
-    return {
-        "total": len(selected),
-        "page_count": len(pages),
-        "totals": {
-            "posted_7d": sum(1 for post in selected if post.get("posted_7d")),
-            "scheduled": 0,
-            "reach": sum(_safe_int(post.get("reach")) for post in selected),
-            "engagement": sum(_safe_int(post.get("engagement")) for post in selected),
-            "comments": sum(_safe_int(post.get("comments")) for post in selected),
-            "shares": sum(_safe_int(post.get("shares")) for post in selected),
-        },
-        "posts": selected,
-        "warnings": warnings[:20],
-    }
+    return _facebook_posts_payload(posts[:limit], len(pages), warnings)
 
 
 def facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
+    cached = _list_cached_facebook_comments(limit)
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
+    if cached:
+        return _facebook_comments_payload(cached, len(pages), [])
+    return sync_facebook_comments(limit=limit, max_pages=max_pages)
+
+
+def sync_facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
     settings = get_settings()
     limit = max(1, min(limit, 100))
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
@@ -434,6 +573,7 @@ def facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                                 post_link=post_link,
                             )
                         )
+                        _upsert_facebook_comment(comments[-1])
                     continue
 
                 comment_payload: dict[str, Any] | None = None
@@ -469,25 +609,13 @@ def facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                             post_link=post_link,
                         )
                     )
+                    _upsert_facebook_comment(comments[-1])
 
     if not comments and pages and not warnings:
         warnings.append("Graph API did not return comments for recent posts. Check whether the page has comments and whether pages_read_user_content is available for this app.")
 
     comments.sort(key=lambda item: item.get("created_time") or "", reverse=True)
-    selected = comments[:limit]
-    return {
-        "total": len(selected),
-        "page_count": len(pages),
-        "totals": {
-            "pending": sum(1 for item in selected if item.get("status") == "pending"),
-            "negative": sum(1 for item in selected if item.get("sentiment") == "negative"),
-            "question": sum(1 for item in selected if item.get("sentiment") == "question"),
-            "positive": sum(1 for item in selected if item.get("sentiment") == "positive"),
-            "neutral": sum(1 for item in selected if item.get("sentiment") == "neutral"),
-        },
-        "comments": selected,
-        "warnings": warnings[:20],
-    }
+    return _facebook_comments_payload(comments[:limit], len(pages), warnings)
 
 
 def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:

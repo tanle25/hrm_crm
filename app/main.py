@@ -14,7 +14,15 @@ from app.api_tokens import create_api_token, delete_api_token, list_api_tokens, 
 from app.auth import authenticate_credentials, create_session_token, verify_session_token
 from app.config import get_settings
 from app.dlq import publish_anyway
-from app.facebook_pages import connect_facebook_pages, facebook_aggregate_stats, facebook_comments, facebook_posts, list_facebook_pages
+from app.facebook_pages import (
+    connect_facebook_pages,
+    facebook_aggregate_stats,
+    facebook_comments,
+    facebook_posts,
+    list_facebook_pages,
+    sync_facebook_comments,
+    sync_facebook_posts,
+)
 from app.graph import retry_from_dlq, run_pipeline_async
 from app.job_store import delete_dlq_entry, get_dlq_entry, get_job, get_jobs_version, list_dlq, list_jobs, stats_snapshot, wait_for_jobs_version
 from app.logging import get_logger
@@ -519,9 +527,21 @@ async def get_facebook_posts(limit: int = 50) -> FacebookPostListResponse:
     return FacebookPostListResponse(**result)
 
 
+@app.post(f"{settings.api_prefix}/facebook/posts/sync", response_model=FacebookPostListResponse)
+async def sync_facebook_posts_endpoint(limit: int = 50) -> FacebookPostListResponse:
+    result = await asyncio.to_thread(sync_facebook_posts, max(1, min(limit, 100)))
+    return FacebookPostListResponse(**result)
+
+
 @app.get(f"{settings.api_prefix}/facebook/comments", response_model=FacebookCommentListResponse)
 async def get_facebook_comments(limit: int = 50) -> FacebookCommentListResponse:
     result = await asyncio.to_thread(facebook_comments, max(1, min(limit, 100)))
+    return FacebookCommentListResponse(**result)
+
+
+@app.post(f"{settings.api_prefix}/facebook/comments/sync", response_model=FacebookCommentListResponse)
+async def sync_facebook_comments_endpoint(limit: int = 50) -> FacebookCommentListResponse:
+    result = await asyncio.to_thread(sync_facebook_comments, max(1, min(limit, 100)))
     return FacebookCommentListResponse(**result)
 
 

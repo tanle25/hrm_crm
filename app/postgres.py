@@ -84,6 +84,23 @@ def init_schema() -> None:
                 data JSONB NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS facebook_posts (
+                post_id TEXT PRIMARY KEY,
+                page_id TEXT NOT NULL DEFAULT '',
+                created_time TIMESTAMPTZ,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                data JSONB NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS facebook_comments (
+                comment_id TEXT PRIMARY KEY,
+                post_id TEXT NOT NULL DEFAULT '',
+                page_id TEXT NOT NULL DEFAULT '',
+                created_time TIMESTAMPTZ,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                data JSONB NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS job_meta (
                 key TEXT PRIMARY KEY,
                 value BIGINT NOT NULL DEFAULT 0

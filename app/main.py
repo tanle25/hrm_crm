@@ -217,6 +217,41 @@ async def _enqueue_multi_site_batch(
     master_job_ids: list[str] = []
     child_job_ids: list[str] = []
 
+    if len(sites) == 1:
+        site = sites[0]
+        for url in urls:
+            payload = PipelineState(
+                url=str(url),
+                site_id=str(site.get("site_id") or ""),
+                content_mode=content_mode,
+                site_profile=_site_profile_payload(site),
+                source_origin=source_origin,
+                source_seed=source_seed or {},
+                priority=priority,
+                woo_category_id=woo_category_id,
+                focus_keyword_override=focus_keyword,
+                publish_status=publish_status,
+            )
+            job_id = create_job_id()
+            init_job_state(job_id, payload)
+            state = get_job(job_id) or {}
+            state["batch_id"] = batch_id
+            state["workflow_role"] = "standard"
+            state["site_name"] = site.get("site_name", "")
+            update_job(job_id, state)
+            queue_name = enqueue_saved_state(job_id, state)
+            if queue_name == "inline":
+                asyncio.create_task(run_pipeline_async(job_id, state))
+            child_job_ids.append(job_id)
+            jobs_submitted.inc()
+        return SubmitBatchResponse(
+            batch_id=batch_id,
+            status="queued",
+            total_jobs=len(child_job_ids),
+            master_job_ids=[],
+            child_job_ids=child_job_ids,
+        )
+
     if content_mode == "per-site":
         for url in urls:
             for site in sites:
@@ -239,9 +274,9 @@ async def _enqueue_multi_site_batch(
                 state["workflow_role"] = "standard"
                 state["site_name"] = site.get("site_name", "")
                 update_job(job_id, state)
-                queue_name = enqueue_job(job_id, payload)
+                queue_name = enqueue_saved_state(job_id, state)
                 if queue_name == "inline":
-                    asyncio.create_task(run_pipeline_async(job_id, payload.model_dump(by_alias=True)))
+                    asyncio.create_task(run_pipeline_async(job_id, state))
                 child_job_ids.append(job_id)
                 jobs_submitted.inc()
         return SubmitBatchResponse(

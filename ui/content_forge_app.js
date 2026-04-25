@@ -28,6 +28,11 @@
         jobsReconnectAttempts: 0,
         jobsStreamActive: false,
         jobsSignature: "",
+        detailSocket: null,
+        detailSocketReconnectTimer: null,
+        detailReconnectAttempts: 0,
+        detailStreamActive: false,
+        detailSignature: "",
         jobsStatusFilter: "",
         jobsSortKey: "",
         jobsSortDir: "asc",
@@ -966,49 +971,90 @@
         };
     }
 
-    async function renderJobsPage() {
-        const section = document.getElementById("page-jobs");
-        if (!section) return;
-        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading jobs...</div>`;
-        try {
-            const [jobsPayload, stats] = await Promise.all([
-                fetchJSON("/jobs?limit=50"),
-                fetchJSON("/stats"),
-            ]);
-            section.innerHTML = buildJobsShell();
-            state.jobsSignature = jobsSignature(jobsPayload, stats);
-            applyJobsMarkup(section, jobsPayload, stats);
-            bindJobsActions(section);
-            openJobsStream(section);
-        } catch (error) {
-            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load jobs: ${escapeHtml(error.message)}</div>`;
+    function closeDetailStream() {
+        state.detailStreamActive = false;
+        if (state.detailSocketReconnectTimer) {
+            window.clearTimeout(state.detailSocketReconnectTimer);
+            state.detailSocketReconnectTimer = null;
+        }
+        if (state.detailSocket) {
+            state.detailSocket.close();
+            state.detailSocket = null;
         }
     }
 
-    async function renderDetailPage() {
-        const section = document.getElementById("page-detail");
-        if (!section) return;
-        if (!state.selectedJobId) {
-            section.innerHTML = `<div class="max-w-5xl mx-auto hud-card p-6"><span class="c-tl"></span><span class="c-br"></span><div class="text-hud-muted text-sm">Chưa có job được chọn. Mở từ màn jobs hoặc submit một job mới.</div></div>`;
-            return;
-        }
-        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading job detail...</div>`;
-        try {
-            const detail = await fetchJSON(`/job/${encodeURIComponent(state.selectedJobId)}/detail`);
-            const plan = detail.plan || {};
-            const metrics = detail.metrics || {};
-            const qa = detail.qa_result || {};
-            const [tone, label] = badge(detail.status);
-            const stepTimings = detail.step_timings || {};
-            const stepHtml = PAGE_STEPS.map((step, index) => {
-                const timings = stepTimings[step] || [];
-                const latest = timings[timings.length - 1] || {};
-                let cls = "";
-                if (detail.status === "completed" || PAGE_STEPS.indexOf(detail.current_step) > index) cls = "done";
-                if (detail.current_step === step && detail.status === "processing") cls = "active";
-                if (detail.status === "failed" && detail.current_step === step) cls = "failed";
-                const labelText = latest.duration_sec ? `${latest.duration_sec}s` : latest.status ? latest.status : "pending";
-                return `
+    function detailPageIsActive(section) {
+        return Boolean(section && document.body.contains(section) && section.classList.contains("active"));
+    }
+
+    function detailSignature(detail) {
+        return JSON.stringify({
+            job_id: detail.job_id || state.selectedJobId,
+            status: detail.status || "",
+            current_step: detail.current_step || "",
+            error: detail.error || "",
+            woo_post_id: detail.woo_post_id || "",
+            woo_link: detail.woo_link || "",
+            updated_at: detail.updated_at || "",
+            qa_score: (detail.qa_result || {}).overall_score || "",
+        });
+    }
+
+    function scheduleDetailReconnect(section, jobId) {
+        if (!state.detailStreamActive || !detailPageIsActive(section) || state.detailSocketReconnectTimer) return;
+        const delay = Math.min(10000, 1000 * 2 ** state.detailReconnectAttempts);
+        state.detailReconnectAttempts += 1;
+        state.detailSocketReconnectTimer = window.setTimeout(() => {
+            state.detailSocketReconnectTimer = null;
+            if (state.detailStreamActive && detailPageIsActive(section) && state.selectedJobId === jobId) openDetailStream(section, jobId);
+        }, delay);
+    }
+
+    function openDetailStream(section, jobId) {
+        closeDetailStream();
+        if (!jobId) return;
+        state.detailStreamActive = true;
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        state.detailSocket = new WebSocket(`${protocol}//${window.location.host}${API_BASE}/realtime/ws`);
+        state.detailSocket.onopen = () => {
+            state.detailReconnectAttempts = 0;
+            state.detailSocket.send(JSON.stringify({ type: "subscribe", channels: [`job:${jobId}`] }));
+        };
+        state.detailSocket.onmessage = (event) => {
+            const payload = JSON.parse(event.data);
+            if (payload.type !== "job.snapshot" || payload.job_id !== jobId || !payload.job) {
+                return;
+            }
+            const nextSignature = detailSignature(payload.job);
+            if (nextSignature === state.detailSignature) {
+                return;
+            }
+            renderDetailSnapshot(section, payload.job, false);
+        };
+        state.detailSocket.onerror = () => {
+            if (state.detailSocket) state.detailSocket.close();
+        };
+        state.detailSocket.onclose = () => {
+            state.detailSocket = null;
+            scheduleDetailReconnect(section, jobId);
+        };
+    }
+
+    function renderDetailSnapshot(section, detail, includeFade = true) {
+        const plan = detail.plan || {};
+        const metrics = detail.metrics || {};
+        const qa = detail.qa_result || {};
+        const [tone, label] = badge(detail.status);
+        const stepTimings = detail.step_timings || {};
+        const stepHtml = PAGE_STEPS.map((step, index) => {
+            const timings = stepTimings[step] || [];
+            const latest = timings[timings.length - 1] || {};
+            let cls = "";
+            if (detail.status === "completed" || PAGE_STEPS.indexOf(detail.current_step) > index) cls = "done";
+            if (detail.current_step === step && detail.status === "processing") cls = "active";
+            if (detail.status === "failed" && detail.current_step === step) cls = "failed";
+            const labelText = latest.duration_sec ? `${latest.duration_sec}s` : latest.status ? latest.status : "pending";
+            return `
                     <div class="flex flex-col items-center gap-2 min-w-[90px]">
                         <div class="step-node ${cls}">${String(index + 1).padStart(2, "0")}</div>
                         <div class="text-[9px] ${cls === "done" ? "text-hud-green" : cls === "active" ? "text-hud-cyan" : cls === "failed" ? "text-hud-red" : "text-hud-muted"} font-bold uppercase-wide text-center">${escapeHtml(stepLabel(step))}</div>
@@ -1016,10 +1062,10 @@
                     </div>
                     ${index < PAGE_STEPS.length - 1 ? `<div class="step-connector ${cls === "done" ? "done" : cls === "active" ? "active" : ""}"></div>` : ""}
                 `;
-            }).join("");
-            section.innerHTML = `
+        }).join("");
+        section.innerHTML = `
                 <div class="max-w-7xl mx-auto">
-                    <div class="hud-card p-5 mb-6 fade-in">
+                    <div class="hud-card p-5 mb-6 ${includeFade ? "fade-in" : ""}">
                         <span class="c-tl"></span><span class="c-br"></span>
                         <div class="flex items-start justify-between gap-4">
                             <div class="flex-1">
@@ -1040,7 +1086,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="hud-card p-6 mb-6 fade-in">
+                    <div class="hud-card p-6 mb-6 ${includeFade ? "fade-in" : ""}">
                         <span class="c-tl"></span><span class="c-br"></span>
                         <div class="flex items-center justify-between mb-5">
                             <div class="flex items-center gap-2">
@@ -1064,6 +1110,44 @@
                     </div>
                 </div>
             `;
+        state.detailSignature = detailSignature(detail);
+    }
+
+    async function renderJobsPage() {
+        const section = document.getElementById("page-jobs");
+        if (!section) return;
+        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading jobs...</div>`;
+        try {
+            const [jobsPayload, stats] = await Promise.all([
+                fetchJSON("/jobs?limit=50"),
+                fetchJSON("/stats"),
+            ]);
+            section.innerHTML = buildJobsShell();
+            state.jobsSignature = jobsSignature(jobsPayload, stats);
+            applyJobsMarkup(section, jobsPayload, stats);
+            bindJobsActions(section);
+            openJobsStream(section);
+        } catch (error) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load jobs: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    async function renderDetailPage() {
+        const section = document.getElementById("page-detail");
+        if (!section) return;
+        if (!state.selectedJobId) {
+            closeDetailStream();
+            section.innerHTML = `<div class="max-w-5xl mx-auto hud-card p-6"><span class="c-tl"></span><span class="c-br"></span><div class="text-hud-muted text-sm">Chưa có job được chọn. Mở từ màn jobs hoặc submit một job mới.</div></div>`;
+            return;
+        }
+        const jobId = state.selectedJobId;
+        closeDetailStream();
+        state.detailSignature = "";
+        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading job detail...</div>`;
+        try {
+            const detail = await fetchJSON(`/job/${encodeURIComponent(jobId)}/detail`);
+            renderDetailSnapshot(section, detail, true);
+            openDetailStream(section, jobId);
         } catch (error) {
             section.innerHTML = `<div class="max-w-6xl mx-auto text-hud-red text-sm">Failed to load job detail: ${escapeHtml(error.message)}</div>`;
         }
@@ -1756,6 +1840,7 @@
 
     async function onPageActivated(pageKey) {
         if (pageKey !== "jobs") closeJobsStream();
+        if (pageKey !== "detail") closeDetailStream();
         if (pageKey === "submit") {
             await renderSubmitSiteOptions();
             await renderRecentSubmissions();

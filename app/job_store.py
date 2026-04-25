@@ -106,6 +106,12 @@ def publish_realtime_event(channel: str, payload: dict) -> None:
         return
 
 
+def publish_job_realtime_event(job_id: str, event_type: str) -> None:
+    payload = {"type": event_type, "job_id": job_id}
+    publish_realtime_event("jobs", payload)
+    publish_realtime_event(f"job:{job_id}", payload)
+
+
 def _postgres_conn():
     return _pg_connection() if postgres_available() else None
 
@@ -207,14 +213,14 @@ def save_job(job_id: str, payload: dict) -> None:
                 (job_id, serialize_json(payload)),
             )
             cur.execute("UPDATE job_meta SET value = value + 1 WHERE key = 'jobs_version'")
-        publish_realtime_event("jobs", {"type": "job.updated", "job_id": job_id})
+        publish_job_realtime_event(job_id, "job.updated")
         return
     redis_conn = _redis_client()
     if redis_conn is not None:
         redis_conn.set(f"content_forge:job:{job_id}", _serialize(payload))
         redis_conn.sadd("content_forge:jobs", job_id)
         redis_conn.incr("content_forge:jobs:version")
-        publish_realtime_event("jobs", {"type": "job.updated", "job_id": job_id})
+        publish_job_realtime_event(job_id, "job.updated")
         return
     with STORE.lock:
         STORE.jobs[job_id] = payload
@@ -351,14 +357,14 @@ def push_dlq(entry: dict) -> None:
                 (entry["job_id"], serialize_json(entry)),
             )
             cur.execute("UPDATE job_meta SET value = value + 1 WHERE key = 'jobs_version'")
-        publish_realtime_event("jobs", {"type": "job.failed", "job_id": entry["job_id"]})
+        publish_job_realtime_event(entry["job_id"], "job.failed")
         return
     redis_conn = _redis_client()
     if redis_conn is not None:
         redis_conn.lpush("content_forge:dlq", _serialize(entry))
         redis_conn.set(f"content_forge:dlq:{entry['job_id']}", _serialize(entry))
         redis_conn.incr("content_forge:jobs:version")
-        publish_realtime_event("jobs", {"type": "job.failed", "job_id": entry["job_id"]})
+        publish_job_realtime_event(entry["job_id"], "job.failed")
         return
     with STORE.lock:
         STORE.dlq.appendleft(entry)

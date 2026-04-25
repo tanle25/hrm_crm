@@ -766,6 +766,11 @@ async def _jobs_realtime_snapshot(limit: int) -> dict:
     return {"type": "jobs.snapshot", "channel": "jobs", "jobs": items, "stats": stats}
 
 
+async def _job_realtime_snapshot(job_id: str) -> dict:
+    state = await asyncio.to_thread(get_job, job_id)
+    return {"type": "job.snapshot", "channel": f"job:{job_id}", "job_id": job_id, "job": state}
+
+
 @app.websocket(f"{settings.api_prefix}/realtime/ws")
 async def realtime_ws(websocket: WebSocket) -> None:
     payload = verify_session_token(websocket.cookies.get(settings.auth_cookie_name))
@@ -778,7 +783,7 @@ async def realtime_ws(websocket: WebSocket) -> None:
     subscribed_channels: set[str] = set()
     limit = 50
     try:
-        await websocket.send_text(json.dumps({"type": "realtime.ready"}, ensure_ascii=False))
+        await websocket.send_text(json.dumps({"type": "realtime.ready"}, ensure_ascii=False, default=str))
         while True:
             try:
                 raw_message = await asyncio.wait_for(websocket.receive_text(), timeout=0.2)
@@ -788,7 +793,7 @@ async def realtime_ws(websocket: WebSocket) -> None:
                     client_message = {}
                 message_type = str(client_message.get("type") or "")
                 if message_type == "ping":
-                    await websocket.send_text(json.dumps({"type": "pong"}, ensure_ascii=False))
+                    await websocket.send_text(json.dumps({"type": "pong"}, ensure_ascii=False, default=str))
                     continue
                 if message_type == "subscribe":
                     limit = max(1, min(int(client_message.get("limit") or limit), 200))
@@ -800,7 +805,10 @@ async def realtime_ws(websocket: WebSocket) -> None:
                         if pubsub is not None:
                             await asyncio.to_thread(pubsub.subscribe, f"content_forge:realtime:{channel}")
                     if "jobs" in requested:
-                        await websocket.send_text(json.dumps(await _jobs_realtime_snapshot(limit), ensure_ascii=False))
+                        await websocket.send_text(json.dumps(await _jobs_realtime_snapshot(limit), ensure_ascii=False, default=str))
+                    for channel in requested:
+                        if channel.startswith("job:"):
+                            await websocket.send_text(json.dumps(await _job_realtime_snapshot(channel.removeprefix("job:")), ensure_ascii=False, default=str))
             except asyncio.TimeoutError:
                 pass
 
@@ -816,9 +824,11 @@ async def realtime_ws(websocket: WebSocket) -> None:
                 continue
             channel = str(event.get("channel") or "")
             if channel == "jobs" and channel in subscribed_channels:
-                await websocket.send_text(json.dumps(await _jobs_realtime_snapshot(limit), ensure_ascii=False))
+                await websocket.send_text(json.dumps(await _jobs_realtime_snapshot(limit), ensure_ascii=False, default=str))
+            elif channel.startswith("job:") and channel in subscribed_channels:
+                await websocket.send_text(json.dumps(await _job_realtime_snapshot(channel.removeprefix("job:")), ensure_ascii=False, default=str))
             elif channel in subscribed_channels:
-                await websocket.send_text(json.dumps(event, ensure_ascii=False))
+                await websocket.send_text(json.dumps(event, ensure_ascii=False, default=str))
     except WebSocketDisconnect:
         return
     finally:

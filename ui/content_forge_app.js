@@ -1996,6 +1996,31 @@
         return `${type}${mime}`;
     }
 
+    function attachmentUrlLooksLikeImage(attachment) {
+        const url = String(attachment?.preview_url || attachment?.url || "").toLowerCase();
+        return [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"].some((ext) => url.includes(ext));
+    }
+
+    function isImageAttachment(attachment) {
+        const type = String(attachment?.type || "").toLowerCase();
+        const mime = String(attachment?.mime_type || "").toLowerCase();
+        return Boolean((attachment?.preview_url || attachment?.url) && (type === "image" || mime.startsWith("image/") || attachmentUrlLooksLikeImage(attachment)));
+    }
+
+    function isVideoAttachment(attachment) {
+        const type = String(attachment?.type || "").toLowerCase();
+        const mime = String(attachment?.mime_type || "").toLowerCase();
+        const url = String(attachment?.url || "").toLowerCase();
+        return Boolean(attachment?.url && (type === "video" || mime.startsWith("video/") || [".mp4", ".mov", ".webm", ".m4v", ".avi"].some((ext) => url.includes(ext))));
+    }
+
+    function isAudioAttachment(attachment) {
+        const type = String(attachment?.type || "").toLowerCase();
+        const mime = String(attachment?.mime_type || "").toLowerCase();
+        const url = String(attachment?.url || "").toLowerCase();
+        return Boolean(attachment?.url && (type === "audio" || mime.startsWith("audio/") || [".mp3", ".wav", ".m4a", ".ogg"].some((ext) => url.includes(ext))));
+    }
+
     function renderMessageAttachments(message) {
         const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
         if (!attachments.length) return "";
@@ -2004,19 +2029,19 @@
                 const url = String(attachment.url || attachment.preview_url || "");
                 const previewUrl = String(attachment.preview_url || attachment.url || "");
                 const name = attachment.name || attachmentLabel(attachment);
-                if (attachment.type === "image" && previewUrl) {
+                if (isImageAttachment(attachment) && previewUrl) {
                     return `<a href="${escapeHtml(url || previewUrl)}" target="_blank" rel="noopener noreferrer" class="block group">
                         <img src="${escapeHtml(previewUrl)}" alt="${escapeHtml(name)}" loading="lazy" class="max-h-64 rounded border border-hud-fb/40 object-cover bg-black/50"/>
                         <div class="text-[9px] mt-1 text-hud-fb uppercase-wide"><i class="fa-solid fa-image"></i> ${escapeHtml(name)}</div>
                     </a>`;
                 }
-                if (attachment.type === "video" && url) {
+                if (isVideoAttachment(attachment) && url) {
                     return `<div class="border border-hud-fb/40 bg-black/50 p-2">
                         <video src="${escapeHtml(url)}" controls class="max-h-64 max-w-full bg-black"></video>
                         <div class="text-[9px] mt-1 text-hud-fb uppercase-wide"><i class="fa-solid fa-video"></i> ${escapeHtml(name)}</div>
                     </div>`;
                 }
-                if (attachment.type === "audio" && url) {
+                if (isAudioAttachment(attachment) && url) {
                     return `<div class="border border-hud-cyan/30 bg-black/50 p-2">
                         <audio src="${escapeHtml(url)}" controls class="w-64 max-w-full"></audio>
                         <div class="text-[9px] mt-1 text-hud-cyan uppercase-wide"><i class="fa-solid fa-microphone"></i> ${escapeHtml(name)}</div>
@@ -2038,10 +2063,10 @@
         if (!replyTo.mid) return "";
         const quoteText = String(replyTo.message || replyTo.fallback_label || "").trim();
         const quoteAttachments = Array.isArray(replyTo.attachments) ? replyTo.attachments : [];
-        const imageAttachment = quoteAttachments.find((item) => item && item.type === "image" && (item.preview_url || item.url));
-        const videoAttachment = quoteAttachments.find((item) => item && item.type === "video");
-        const audioAttachment = quoteAttachments.find((item) => item && item.type === "audio");
-        const fileAttachment = quoteAttachments.find((item) => item && item.type === "file");
+        const imageAttachment = quoteAttachments.find((item) => isImageAttachment(item));
+        const videoAttachment = quoteAttachments.find((item) => isVideoAttachment(item));
+        const audioAttachment = quoteAttachments.find((item) => isAudioAttachment(item));
+        const fileAttachment = quoteAttachments.find((item) => item && !isImageAttachment(item) && !isVideoAttachment(item) && !isAudioAttachment(item));
         const tone = message.direction === "outbound" ? "border-hud-fb/40 bg-hud-fb/10" : "border-hud-cyan/20 bg-black/40";
         const quoteLabel = imageAttachment
             ? "Trả lời ảnh"

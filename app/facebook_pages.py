@@ -801,6 +801,31 @@ def _message_participant_name(participant: dict[str, Any]) -> str:
     return str(participant.get("name") or participant.get("email") or participant.get("id") or "Facebook User")
 
 
+def _normalize_message_attachment(raw: dict[str, Any]) -> dict[str, Any]:
+    image_data = raw.get("image_data") or {}
+    video_data = raw.get("video_data") or {}
+    mime_type = str(raw.get("mime_type") or image_data.get("mime_type") or video_data.get("mime_type") or "")
+    image_url = str(image_data.get("url") or image_data.get("preview_url") or "")
+    video_url = str(video_data.get("url") or video_data.get("preview_url") or "")
+    file_url = str(raw.get("file_url") or image_url or video_url or raw.get("url") or "")
+    attachment_type = "file"
+    if mime_type.startswith("image/") or image_url:
+        attachment_type = "image"
+    elif mime_type.startswith("video/") or video_url:
+        attachment_type = "video"
+    elif mime_type.startswith("audio/"):
+        attachment_type = "audio"
+    return {
+        "attachment_id": str(raw.get("id") or ""),
+        "type": attachment_type,
+        "mime_type": mime_type,
+        "name": str(raw.get("name") or raw.get("title") or ""),
+        "url": file_url,
+        "preview_url": str(image_data.get("preview_url") or video_data.get("preview_url") or image_url or ""),
+        "size": _safe_int(raw.get("file_size") or raw.get("size")),
+    }
+
+
 def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any]:
     participants = (((raw.get("participants") or {}).get("data")) or [])
     page_id = str(page.get("page_id") or "")
@@ -810,6 +835,11 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
         sender = message.get("from") or {}
         recipient = ((message.get("to") or {}).get("data") or [{}])[0]
         sender_id = str(sender.get("id") or "")
+        attachments = [
+            _normalize_message_attachment(item)
+            for item in (((message.get("attachments") or {}).get("data")) or [])
+            if isinstance(item, dict)
+        ]
         messages.append(
             {
                 "message_id": str(message.get("id") or ""),
@@ -820,6 +850,7 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
                 "to_id": str(recipient.get("id") or ""),
                 "to_name": _message_participant_name(recipient),
                 "direction": "outbound" if sender_id == page_id else "inbound",
+                "attachments": attachments,
             }
         )
     messages.sort(key=lambda item: item.get("created_time") or "")
@@ -859,7 +890,7 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[st
     base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
     conversations: list[dict[str, Any]] = []
     warnings: list[str] = []
-    fields = "id,snippet,updated_time,unread_count,message_count,participants,messages.limit(30){id,message,created_time,from,to}"
+    fields = "id,snippet,updated_time,unread_count,message_count,participants,messages.limit(30){id,message,created_time,from,to,attachments{mime_type,name,file_url,image_data,video_data}}"
 
     with httpx.Client(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
         for page in pages:

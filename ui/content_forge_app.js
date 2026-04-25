@@ -1990,6 +1990,49 @@
         return `<div class="mb-5 border border-hud-amber/30 bg-hud-amber/10 text-hud-amber text-[11px] p-3">Một số dữ liệu Facebook không lấy được do quyền Meta API hoặc page không có dữ liệu: ${escapeHtml(redactSensitiveText(items.slice(0, 3).join(" | ")))}</div>`;
     }
 
+    function attachmentLabel(attachment) {
+        const type = String(attachment?.type || "file").toUpperCase();
+        const mime = attachment?.mime_type ? ` · ${attachment.mime_type}` : "";
+        return `${type}${mime}`;
+    }
+
+    function renderMessageAttachments(message) {
+        const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+        if (!attachments.length) return "";
+        return `<div class="mt-2 space-y-2">
+            ${attachments.map((attachment) => {
+                const url = String(attachment.url || attachment.preview_url || "");
+                const previewUrl = String(attachment.preview_url || attachment.url || "");
+                const name = attachment.name || attachmentLabel(attachment);
+                if (attachment.type === "image" && previewUrl) {
+                    return `<a href="${escapeHtml(url || previewUrl)}" target="_blank" rel="noopener noreferrer" class="block group">
+                        <img src="${escapeHtml(previewUrl)}" alt="${escapeHtml(name)}" loading="lazy" class="max-h-64 rounded border border-hud-fb/40 object-cover bg-black/50"/>
+                        <div class="text-[9px] mt-1 text-hud-fb uppercase-wide"><i class="fa-solid fa-image"></i> ${escapeHtml(name)}</div>
+                    </a>`;
+                }
+                if (attachment.type === "video" && url) {
+                    return `<div class="border border-hud-fb/40 bg-black/50 p-2">
+                        <video src="${escapeHtml(url)}" controls class="max-h-64 max-w-full bg-black"></video>
+                        <div class="text-[9px] mt-1 text-hud-fb uppercase-wide"><i class="fa-solid fa-video"></i> ${escapeHtml(name)}</div>
+                    </div>`;
+                }
+                if (attachment.type === "audio" && url) {
+                    return `<div class="border border-hud-cyan/30 bg-black/50 p-2">
+                        <audio src="${escapeHtml(url)}" controls class="w-64 max-w-full"></audio>
+                        <div class="text-[9px] mt-1 text-hud-cyan uppercase-wide"><i class="fa-solid fa-microphone"></i> ${escapeHtml(name)}</div>
+                    </div>`;
+                }
+                return `<a href="${escapeHtml(url || "#")}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-3 border border-hud-cyan/30 bg-black/50 px-3 py-2 text-white/85 hover:border-hud-fb/60">
+                    <i class="fa-solid fa-paperclip text-hud-cyan"></i>
+                    <span class="min-w-0">
+                        <span class="block text-[11px] font-bold truncate">${escapeHtml(name || "Attachment")}</span>
+                        <span class="block text-[9px] text-hud-muted uppercase-wide">${escapeHtml(attachmentLabel(attachment))}</span>
+                    </span>
+                </a>`;
+            }).join("")}
+        </div>`;
+    }
+
     async function renderFacebookMessagesPage() {
         const section = document.getElementById("page-fb-messages");
         if (!section) return;
@@ -2069,9 +2112,15 @@
                                                 <i class="fa-solid ${message.direction === "outbound" ? "fa-robot text-hud-fb" : "fa-user text-hud-muted"} text-[9px]"></i>
                                             </div>
                                             <div>
-                                                <div class="px-4 py-2 text-[12px] text-white ${message.direction === "outbound" ? "" : "bg-black/50 border border-hud-cyan/20"}" style="${message.direction === "outbound" ? "background: rgba(74, 158, 255, 0.2); border: 1px solid rgba(74, 158, 255, 0.5);" : ""}">
-                                                    ${escapeHtml(message.message || "[non-text message]")}
-                                                </div>
+                                                ${message.message ? `
+                                                    <div class="px-4 py-2 text-[12px] text-white ${message.direction === "outbound" ? "" : "bg-black/50 border border-hud-cyan/20"}" style="${message.direction === "outbound" ? "background: rgba(74, 158, 255, 0.2); border: 1px solid rgba(74, 158, 255, 0.5);" : ""}">
+                                                        ${escapeHtml(message.message)}
+                                                    </div>
+                                                ` : ""}
+                                                ${renderMessageAttachments(message)}
+                                                ${!message.message && !(message.attachments || []).length ? `
+                                                    <div class="px-4 py-2 text-[12px] text-hud-muted bg-black/50 border border-hud-cyan/20 italic">Tin nhắn không có nội dung text</div>
+                                                ` : ""}
                                                 <div class="text-[9px] text-hud-muted mt-1 px-1 ${message.direction === "outbound" ? "text-right" : ""}">${escapeHtml(formatDate(message.created_time))} · ${escapeHtml(message.from_name || "")}</div>
                                             </div>
                                         </div>

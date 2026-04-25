@@ -1232,14 +1232,13 @@ def facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[str, An
     enriched: list[dict[str, Any]] = []
     for conversation in conversations:
         stored_messages = _list_cached_facebook_messages(str(conversation.get("conversation_id") or ""), 100)
-        if stored_messages:
-            merged_messages = _merge_conversation_messages(conversation.get("messages") or [], stored_messages)
-            conversation["messages"] = merged_messages
-            conversation["message_count"] = max(int(conversation.get("message_count") or 0), len(merged_messages))
-            if merged_messages:
-                last_message = merged_messages[-1]
-                conversation["snippet"] = last_message.get("message") or last_message.get("fallback_label") or conversation.get("snippet") or ""
-                conversation["updated_time"] = last_message.get("created_time") or conversation.get("updated_time") or ""
+        merged_messages = _merge_conversation_messages(conversation.get("messages") or [], stored_messages)
+        conversation["messages"] = merged_messages
+        conversation["message_count"] = max(int(conversation.get("message_count") or 0), len(merged_messages))
+        if merged_messages:
+            last_message = merged_messages[-1]
+            conversation["snippet"] = last_message.get("message") or last_message.get("fallback_label") or conversation.get("snippet") or ""
+            conversation["updated_time"] = last_message.get("created_time") or conversation.get("updated_time") or ""
         enriched.append(conversation)
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
     warnings = [] if enriched else ["No cached Facebook conversations yet. Run sync to fetch inbox from Graph API."]

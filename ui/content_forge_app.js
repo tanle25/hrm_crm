@@ -872,13 +872,6 @@
         bindJobsActions(section);
     }
 
-    function startJobsPolling(section) {
-        if (state.jobsPollTimer) return;
-        state.jobsPollTimer = window.setInterval(() => {
-            refreshJobsSnapshot(section).catch(() => {});
-        }, 5000);
-    }
-
     function scheduleJobsReconnect(section) {
         if (!state.jobsStreamActive || !jobsPageIsActive(section) || state.jobsSocketReconnectTimer) return;
         const delay = Math.min(10000, 1000 * 2 ** state.jobsReconnectAttempts);
@@ -892,7 +885,6 @@
     function openJobsStream(section) {
         closeJobsStream();
         state.jobsStreamActive = true;
-        startJobsPolling(section);
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         state.jobsSocket = new WebSocket(`${protocol}//${window.location.host}${API_BASE}/jobs/ws?limit=50`);
         state.jobsSocket.onopen = () => {

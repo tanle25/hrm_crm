@@ -12,7 +12,9 @@ PLANNER_SYSTEM_PROMPT = """
 Ban la Planner 2026 cho noi dung tieng Viet.
 Neu nguon la product, hay lap ke hoach cho mo ta san pham thuong mai:
 - title là tên sản phẩm tự nhiên, không biến thành tiêu đề blog kiểu "hướng dẫn", "phân tích"
+- title có thể biên tập lại tên nguồn cho gọn, rõ ý mua hàng hơn; không bắt buộc giữ nguyên từng chữ nếu tên nguồn dài, nhiễu hoặc chứa ngữ cảnh không chính.
 - meta_title là tiêu đề SEO riêng, có thể tối ưu Rank Math nhưng không thay tên sản phẩm
+- meta_title không dùng một công thức cố định. Hãy tự chọn dạng phù hợp: tên sản phẩm thuần, tên + quy cách, tên + lợi ích chính, hoặc tên + nhóm người dùng nếu dữ liệu thật sự hỗ trợ.
 - nếu dữ liệu sản phẩm đủ rõ, meta_title nên cố gắng có:
   focus keyword tự nhiên ở gần đầu,
   1 yếu tố tạo cảm xúc tích cực hoặc tiêu cực nhẹ,
@@ -137,7 +139,8 @@ def run(key_points: list[str], knowledge_facts: list[dict], metadata: dict, focu
     for key, value in fallback.items():
         data.setdefault(key, value)
     if source_type == "product":
-        title = _clean_title(metadata.get("title") or fallback["title"])
+        source_title = _clean_title(metadata.get("title") or fallback["title"])
+        title = _refine_product_title(str(data.get("title") or ""), source_title, original_metadata)
         data["title"] = title
         data["article_type"] = "Product Description"
         data["target_intent"] = "commercial"
@@ -192,6 +195,27 @@ def _clean_title(value: str) -> str:
     return title or "Sản phẩm"
 
 
+def _refine_product_title(raw_title: str, source_title: str, metadata: dict) -> str:
+    title = _clean_title(raw_title)
+    source_title = _clean_title(source_title)
+    lowered = title.lower()
+    if (
+        not title
+        or title == "Sản phẩm"
+        or contains_source_term(title, metadata)
+        or any(term in lowered for term in ["http://", "https://", "hướng dẫn", "huong dan", "phân tích", "phan tich", "review", "đánh giá"])
+    ):
+        return source_title
+    source_words = set(re.findall(r"[\wà-ỹ]+", source_title.lower()))
+    title_words = set(re.findall(r"[\wà-ỹ]+", lowered))
+    overlap = len(source_words & title_words)
+    if source_words and overlap < 2:
+        return source_title
+    if len(title.split()) > 12:
+        return source_title
+    return title
+
+
 def _short_product_focus_keyword(title: str, extracted: dict | None = None) -> str:
     specs = extracted.get("product_specs") if isinstance(extracted, dict) else {}
     if isinstance(specs, dict):
@@ -244,7 +268,7 @@ def _infer_product_archetype(title: str, extracted: dict | None = None) -> str:
 
 
 def _product_meta_title(focus_keyword: str) -> str:
-    return f"{focus_keyword}: lựa chọn nổi bật cho nhu cầu thực tế"
+    return focus_keyword
 
 
 def _truncate_meta_title(value: str, limit: int = 60) -> str:
@@ -279,7 +303,7 @@ def _descriptor_candidates(extracted: dict | None) -> list[str]:
 
 
 def _refine_product_meta_title(raw_meta_title: str, title: str, focus_keyword: str, extracted: dict | None = None) -> str:
-    meta_title = _clean_title(raw_meta_title)
+    meta_title = _clean_title(raw_meta_title) if str(raw_meta_title or "").strip() else ""
     lowered = meta_title.lower()
     if any(term in lowered for term in ["hướng dẫn", "huong dan", "phân tích", "phan tich", "tổng hợp", "tong hop"]):
         meta_title = ""
@@ -306,15 +330,14 @@ def _refine_product_meta_title(raw_meta_title: str, title: str, focus_keyword: s
         candidates.append(normalized)
 
     title_base = _clean_title(title)
-    for descriptor in _descriptor_candidates(extracted):
+    if not candidates:
+        candidates.append(title_base)
         if numeric_hint:
             candidates.append(f"{title_base} | {numeric_hint}")
+        for descriptor in _descriptor_candidates(extracted)[:2]:
             candidates.append(f"{title_base} | {descriptor}")
-            candidates.append(f"{title_base} | {numeric_hint}, {descriptor}")
-        else:
-            candidates.append(f"{title_base} | {descriptor}")
-    if focus_keyword and focus_keyword.lower() != title_base.lower():
-        candidates.append(f"{_clean_title(focus_keyword.title())} | {_descriptor_candidates(extracted)[0]}")
+        if focus_keyword and focus_keyword.lower() != title_base.lower():
+            candidates.append(_clean_title(focus_keyword.title()))
 
     cleaned_candidates = []
     seen: set[str] = set()

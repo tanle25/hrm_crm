@@ -208,6 +208,15 @@ def _wp_api_url(site_url: str) -> str:
     return f"{site_url.rstrip('/')}/wp-json/wp/v2/users/me?context=edit"
 
 
+def _woo_products_url(site_url: str) -> str:
+    return f"{site_url.rstrip('/')}/wp-json/wc/v3/products?per_page=1"
+
+
+def _basic_auth_header(username: str, password: str) -> str:
+    token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    return f"Basic {token}"
+
+
 def test_site_connection(site_id: str) -> dict[str, Any] | None:
     site = get_site(site_id)
     if not site:
@@ -218,8 +227,7 @@ def test_site_connection(site_id: str) -> dict[str, Any] | None:
     app_password = str(site.get("app_password") or "")
     headers = {"Accept": "application/json"}
     if username and app_password:
-        token = base64.b64encode(f"{username}:{app_password}".encode("utf-8")).decode("ascii")
-        headers["Authorization"] = f"Basic {token}"
+        headers["Authorization"] = _basic_auth_header(username, app_password)
 
     status = "offline"
     message = "Không thể kết nối website."
@@ -252,6 +260,43 @@ def test_site_connection(site_id: str) -> dict[str, Any] | None:
     except Exception as error:  # pragma: no cover
         status = "offline"
         message = str(error)
+
+    consumer_key = str(site.get("consumer_key") or "").strip()
+    consumer_secret = str(site.get("consumer_secret") or "").strip()
+    if consumer_key and consumer_secret:
+        woo_status = "offline"
+        woo_message = "Không thể kết nối WooCommerce REST API."
+        try:
+            woo_request = urllib.request.Request(
+                _woo_products_url(str(site.get("url") or "")),
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": _basic_auth_header(consumer_key, consumer_secret),
+                },
+                method="GET",
+            )
+            with urllib.request.urlopen(woo_request, timeout=15) as response:
+                woo_status = "connected"
+                woo_message = "Kết nối WooCommerce REST API thành công."
+                details["woo_http_status"] = response.status
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="ignore")
+            try:
+                payload = json.loads(body) if body else {}
+            except json.JSONDecodeError:
+                payload = {}
+            woo_status = "unauthorized" if error.code in {401, 403} else "error"
+            woo_message = payload.get("message") or f"WooCommerce trả HTTP {error.code}."
+            details["woo_http_status"] = error.code
+        except Exception as error:  # pragma: no cover
+            woo_status = "offline"
+            woo_message = str(error)
+
+        details["woo_status"] = woo_status
+        details["woo_message"] = woo_message
+        if woo_status != "connected":
+            status = woo_status
+            message = woo_message
 
     updated_site = {
         **site,

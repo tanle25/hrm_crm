@@ -7,6 +7,7 @@ import unicodedata
 import httpx
 
 from app.config import get_settings
+from app.site_store import get_site
 
 
 def _source_origin(state: dict) -> str:
@@ -33,7 +34,12 @@ def _rgba(hex_color: str, alpha: float) -> str:
 
 def _publisher_site_config(state: dict) -> dict:
     settings = get_settings()
-    site = state.get("site_profile") or {}
+    site = dict(state.get("site_profile") or {})
+    site_id = str(state.get("site_id") or site.get("site_id") or "").strip()
+    if site_id:
+        latest_site = get_site(site_id)
+        if latest_site:
+            site = {**site, **latest_site}
     config = {
         "woo_url": str(site.get("url") or "").strip(),
         "consumer_key": str(site.get("consumer_key") or "").strip(),

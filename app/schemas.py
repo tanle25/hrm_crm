@@ -88,6 +88,17 @@ class FacebookConnectResponse(BaseModel):
     expires_in: Optional[int] = None
 
 
+class FacebookStatsResponse(BaseModel):
+    days: int
+    page_count: int = 0
+    totals: Dict[str, Any] = Field(default_factory=dict)
+    series: List[Dict[str, Any]] = Field(default_factory=list)
+    top_posts: List[Dict[str, Any]] = Field(default_factory=list)
+    best_posting_time: str = ""
+    content_performance: List[Dict[str, Any]] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
 class SubmitResponse(BaseModel):
     job_id: str
     status: str

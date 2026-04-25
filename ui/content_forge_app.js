@@ -63,6 +63,12 @@
         return `$${formatNumber(Number(value ?? 0), 3)}`;
     }
 
+    function formatCompact(value) {
+        const numeric = Number(value ?? 0);
+        if (!Number.isFinite(numeric)) return "0";
+        return new Intl.NumberFormat("vi-VN", { notation: "compact", maximumFractionDigits: 1 }).format(numeric);
+    }
+
     function maskSecret(value) {
         const text = String(value ?? "");
         if (!text) return "-";
@@ -1792,6 +1798,147 @@
         }
     }
 
+    function facebookStatsChart(series) {
+        const items = series && series.length ? series : [];
+        const width = 800;
+        const height = 280;
+        const left = 48;
+        const right = 24;
+        const top = 34;
+        const bottom = 42;
+        const maxValue = Math.max(1, ...items.map((item) => Math.max(Number(item.reach || 0), Number(item.engagement || 0))));
+        const point = (item, index, key) => {
+            const x = items.length <= 1 ? left : left + ((width - left - right) * index) / (items.length - 1);
+            const y = top + (height - top - bottom) * (1 - Number(item[key] || 0) / maxValue);
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        };
+        const reachPoints = items.map((item, index) => point(item, index, "reach")).join(" ");
+        const engagementPoints = items.map((item, index) => point(item, index, "engagement")).join(" ");
+        const areaPoints = reachPoints ? `${reachPoints} ${width - right},${height - bottom} ${left},${height - bottom}` : "";
+        const labels = items.map((item, index) => {
+            const x = items.length <= 1 ? left : left + ((width - left - right) * index) / (items.length - 1);
+            return `<text x="${x.toFixed(1)}" y="260">${escapeHtml(String(item.date || "").slice(5))}</text>`;
+        }).join("");
+        const dots = items.map((item, index) => {
+            const [x, y] = point(item, index, "reach").split(",");
+            return `<circle cx="${x}" cy="${y}" r="3"/>`;
+        }).join("");
+        return `
+            <svg viewBox="0 0 ${width} ${height}" class="w-full h-56">
+                <defs><linearGradient id="fbReachArea" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#4a9eff" stop-opacity="0.35"/><stop offset="100%" stop-color="#4a9eff" stop-opacity="0"/></linearGradient></defs>
+                <g stroke="rgba(74,158,255,0.1)" stroke-width="0.5">
+                    <line x1="40" y1="40" x2="780" y2="40"/><line x1="40" y1="100" x2="780" y2="100"/><line x1="40" y1="160" x2="780" y2="160"/><line x1="40" y1="220" x2="780" y2="220"/>
+                </g>
+                <g fill="#8a9bb3" font-size="9" font-family="JetBrains Mono" text-anchor="middle">${labels}</g>
+                ${areaPoints ? `<polygon points="${areaPoints}" fill="url(#fbReachArea)"/>` : ""}
+                ${reachPoints ? `<polyline points="${reachPoints}" fill="none" stroke="#4a9eff" stroke-width="2" style="filter: drop-shadow(0 0 4px #4a9eff);"/>` : ""}
+                ${engagementPoints ? `<polyline points="${engagementPoints}" fill="none" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="5 5"/>` : ""}
+                <g fill="#4a9eff">${dots}</g>
+            </svg>
+        `;
+    }
+
+    async function renderFacebookStatsPage() {
+        const section = document.getElementById("page-fb-stats");
+        if (!section) return;
+        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading Facebook aggregate stats...</div>`;
+        try {
+            const stats = await fetchJSON("/facebook/stats?days=7");
+            const totals = stats.totals || {};
+            const topPosts = stats.top_posts || [];
+            const contentPerformance = stats.content_performance || [];
+            const maxAvgReach = Math.max(1, ...contentPerformance.map((item) => Number(item.avg_reach || 0)));
+            section.innerHTML = `
+                <div class="max-w-7xl mx-auto">
+                    <div class="grid grid-cols-6 gap-4 mb-6">
+                        ${[
+                            ["TOTAL REACH", formatCompact(totals.reach), "white", "hud-fb"],
+                            ["ENGAGEMENT", formatCompact(totals.engagement), "white", "hud-cyan"],
+                            ["PAGE LIKES", formatCompact(totals.likes), "white", "hud-cyan"],
+                            ["SHARES", formatCompact(totals.shares), "white", "hud-cyan"],
+                            ["COMMENTS", formatCompact(totals.comments), "white", "hud-cyan"],
+                            ["ENG / REACH", `${formatNumber(totals.ctr || 0, 2)}%`, "white", "hud-cyan"],
+                        ].map(([label, value, tone, color]) => `
+                            <div class="hud-card p-4 fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                                <span class="c-tl" style="border-color: #4a9eff;"></span><span class="c-br" style="border-color: #4a9eff;"></span>
+                                <div class="text-[9px] ${color === "hud-fb" ? "" : `text-${color}`} uppercase-widest mb-1" ${color === "hud-fb" ? `style="color:#4a9eff;"` : ""}>${label}</div>
+                                <div class="metric-num text-2xl text-${tone}">${value}</div>
+                                <div class="text-[9px] text-hud-muted">${formatNumber(stats.page_count || 0)} pages · ${formatNumber(totals.posts || 0)} posts</div>
+                            </div>
+                        `).join("")}
+                    </div>
+
+                    ${(stats.warnings || []).length ? `<div class="mb-5 border border-hud-amber/30 bg-hud-amber/10 text-hud-amber text-[11px] p-3">Một số metric không lấy được do quyền Meta API hoặc page không có dữ liệu: ${escapeHtml((stats.warnings || []).slice(0, 3).join(" | "))}</div>` : ""}
+
+                    <div class="grid grid-cols-3 gap-5 mb-6">
+                        <div class="col-span-2 hud-card fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                            <span class="c-tl" style="border-color: #4a9eff;"></span><span class="c-br" style="border-color: #4a9eff;"></span>
+                            <div class="header-strip px-5 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                                <i class="fa-solid fa-chart-area text-hud-fb"></i>
+                                <span class="font-display font-black text-xs text-white uppercase-widest">AGGREGATED REACH & ENGAGEMENT · ${formatNumber(stats.days || 7)} DAYS</span>
+                            </div>
+                            <div class="p-5">${facebookStatsChart(stats.series || [])}</div>
+                        </div>
+                        <div class="hud-card fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                            <span class="c-tl" style="border-color: #4a9eff;"></span><span class="c-br" style="border-color: #4a9eff;"></span>
+                            <div class="header-strip px-5 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                                <i class="fa-solid fa-trophy text-hud-amber"></i>
+                                <span class="font-display font-black text-xs text-white uppercase-widest">TOP POSTS · ALL PAGES</span>
+                            </div>
+                            <div class="p-4 space-y-3">
+                                ${topPosts.map((post, index) => `
+                                    <div class="border-l-2 ${index === 0 ? "border-hud-amber" : ""} pl-3" style="${index === 0 ? "" : "border-color:#4a9eff;"}">
+                                        <div class="text-[9px] text-hud-muted uppercase-wide">${escapeHtml(post.page_name || "Facebook page")}</div>
+                                        <div class="text-[11px] text-white font-bold truncate">${escapeHtml(post.message || "Untitled post")}</div>
+                                        <div class="text-[10px] ${index === 0 ? "text-hud-amber" : ""}" ${index === 0 ? "" : `style="color:#4a9eff;"`}><i class="fa-solid fa-eye"></i> ${formatCompact(post.reach)} · <i class="fa-solid fa-heart"></i> ${formatCompact(post.engagement)} · <i class="fa-solid fa-comment"></i> ${formatCompact(post.comments)}</div>
+                                    </div>
+                                `).join("") || `<div class="text-[11px] text-hud-muted">Chưa có dữ liệu top post.</div>`}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-5">
+                        <div class="hud-card fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                            <span class="c-tl" style="border-color: #4a9eff;"></span><span class="c-br" style="border-color: #4a9eff;"></span>
+                            <div class="header-strip px-5 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                                <i class="fa-solid fa-clock text-hud-fb"></i>
+                                <span class="font-display font-black text-xs text-white uppercase-widest">BEST POSTING TIME · ALL PAGES</span>
+                            </div>
+                            <div class="p-5 text-center">
+                                <div class="text-[9px] text-hud-muted uppercase-widest">PEAK TIME</div>
+                                <div class="metric-num text-3xl" style="color:#4a9eff;">${escapeHtml(stats.best_posting_time || "N/A")}</div>
+                                <div class="text-[10px] text-hud-muted">Tính theo engagement của các bài gần nhất.</div>
+                            </div>
+                        </div>
+                        <div class="hud-card fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                            <span class="c-tl" style="border-color: #4a9eff;"></span><span class="c-br" style="border-color: #4a9eff;"></span>
+                            <div class="header-strip px-5 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                                <i class="fa-solid fa-chart-column text-hud-fb"></i>
+                                <span class="font-display font-black text-xs text-white uppercase-widest">CONTENT TYPE PERFORMANCE · ALL PAGES</span>
+                            </div>
+                            <div class="p-5 space-y-4">
+                                ${contentPerformance.map((item) => {
+                                    const pct = Math.max(4, Math.round((Number(item.avg_reach || 0) / maxAvgReach) * 100));
+                                    return `
+                                        <div>
+                                            <div class="flex justify-between text-[10px] mb-1.5">
+                                                <span class="text-white font-bold uppercase-wide">${escapeHtml(item.type || "UNKNOWN")}</span>
+                                                <span class="font-bold" style="color:#4a9eff;">avg ${formatCompact(item.avg_reach)} reach · ${formatNumber(item.posts)} posts</span>
+                                            </div>
+                                            <div class="h-3" style="background: rgba(74, 158, 255, 0.1);"><div class="h-full" style="background:#4a9eff; width:${pct}%; box-shadow: 0 0 4px #4a9eff;"></div></div>
+                                        </div>
+                                    `;
+                                }).join("") || `<div class="text-[11px] text-hud-muted">Chưa có dữ liệu performance theo loại nội dung.</div>`}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook stats: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
     async function renderStatsPage() {
         const section = document.getElementById("page-stats");
         if (!section) return;
@@ -1999,6 +2146,7 @@
         if (pageKey === "shopee") await renderShopeePage();
         if (pageKey === "website-manage") await renderWebsiteManagePage();
         if (pageKey === "fb-pages") await renderFacebookPagesPage();
+        if (pageKey === "fb-stats") await renderFacebookStatsPage();
         if (pageKey === "stats") await renderStatsPage();
         if (pageKey === "settings") await renderSettingsPage();
     }

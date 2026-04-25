@@ -565,7 +565,7 @@ def _publish_via_rest(state: dict, payload: dict) -> dict:
     ]
     auth = (site_config["consumer_key"], site_config["consumer_secret"])
 
-    last_error: Exception | None = None
+    errors: list[str] = []
     for url, params, local_index_route in candidates:
         try:
             response = httpx.post(url, params=params, auth=auth, json=payload, timeout=60)
@@ -583,9 +583,15 @@ def _publish_via_rest(state: dict, payload: dict) -> dict:
                 "woo_post_id": data["id"],
                 "woo_link": data.get("permalink") or data.get("link") or data.get("slug", ""),
             }
+        except httpx.HTTPStatusError as exc:
+            response = exc.response
+            body = re.sub(r"\s+", " ", response.text or "").strip()[:500]
+            route = "index_rest_route" if local_index_route else "wp_json"
+            errors.append(f"{route} POST {response.status_code}: {body}")
         except Exception as exc:
-            last_error = exc
-    raise RuntimeError(f"WooCommerce REST publish failed: {last_error}")
+            route = "index_rest_route" if local_index_route else "wp_json"
+            errors.append(f"{route} POST error: {exc}")
+    raise RuntimeError("WooCommerce REST publish failed: " + " | ".join(errors))
 
 
 def _create_variations_via_rest(

@@ -446,9 +446,8 @@ def _facebook_comments_payload(comments: list[dict[str, Any]], page_count: int, 
 def facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
     cached = _list_cached_facebook_posts(limit)
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
-    if cached:
-        return _facebook_posts_payload(cached, len(pages), [])
-    return sync_facebook_posts(limit=limit, max_pages=max_pages)
+    warnings = [] if cached else ["No cached Facebook posts yet. Run sync to fetch posts from Graph API."]
+    return _facebook_posts_payload(cached, len(pages), warnings)
 
 
 def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
@@ -527,9 +526,8 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
 def facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
     cached = _list_cached_facebook_comments(limit)
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
-    if cached:
-        return _facebook_comments_payload(cached, len(pages), [])
-    return sync_facebook_comments(limit=limit, max_pages=max_pages)
+    warnings = [] if cached else ["No cached Facebook comments yet. Run sync to fetch comments from Graph API."]
+    return _facebook_comments_payload(cached, len(pages), warnings)
 
 
 def sync_facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:

@@ -37,6 +37,10 @@
         jobsSortKey: "",
         jobsSortDir: "asc",
         selectedFacebookCommentId: "",
+        facebookPostsSyncing: false,
+        facebookCommentsSyncing: false,
+        facebookPostsAutoSynced: false,
+        facebookCommentsAutoSynced: false,
     };
 
     function escapeHtml(value) {
@@ -1957,13 +1961,19 @@
     async function renderFacebookPostsPage() {
         const section = document.getElementById("page-fb-posts");
         if (!section) return;
-        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading Facebook posts...</div>`;
+        if (!section.dataset.hydrated) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Đang đọc cache bài viết...</div>`;
+        }
         try {
             const payload = await fetchJSON("/facebook/posts?limit=50");
             const posts = payload.posts || [];
             const totals = payload.totals || {};
+            section.dataset.hydrated = "1";
             section.innerHTML = `
                 <div class="max-w-7xl mx-auto">
+                    <div id="fb-posts-sync-status" class="${state.facebookPostsSyncing ? "" : "hidden"} mb-4 border border-hud-cyan/30 bg-hud-cyan/10 text-hud-cyan text-[11px] p-3">
+                        Đang đồng bộ bài viết Facebook trong nền. Dữ liệu đã lưu sẽ vẫn hiển thị, sync xong sẽ tự cập nhật.
+                    </div>
                     <div class="grid grid-cols-5 gap-4 mb-6">
                         ${[
                             ["TOTAL POSTS", formatNumber(payload.total || 0), "white"],
@@ -2025,17 +2035,31 @@
                                                 </div>
                                             </td>
                                         </tr>
-                                    `).join("") || `<tr><td colspan="7" class="px-5 py-10 text-center text-hud-muted text-sm">Chưa lấy được bài viết nào. Kiểm tra quyền page token hoặc page chưa có bài.</td></tr>`}
+                                    `).join("") || `<tr><td colspan="7" class="px-5 py-10 text-center text-hud-muted text-sm">Chưa có bài viết trong DB. Hệ thống sẽ đồng bộ nền; có bao nhiêu bài sẽ hiển thị bấy nhiêu sau khi sync xong.</td></tr>`}
                                 </tbody>
                             </table>
                         </div>
                     </div>
                 </div>
             `;
-            section.querySelector("#fb-posts-refresh")?.addEventListener("click", async () => {
-                await fetchJSON("/facebook/posts/sync?limit=50", { method: "POST" });
-                await renderFacebookPostsPage();
-            });
+            const syncPosts = async () => {
+                if (state.facebookPostsSyncing) return;
+                state.facebookPostsSyncing = true;
+                section.querySelector("#fb-posts-sync-status")?.classList.remove("hidden");
+                const button = section.querySelector("#fb-posts-refresh");
+                if (button) button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> SYNCING`;
+                try {
+                    await fetchJSON("/facebook/posts/sync?limit=50", { method: "POST" });
+                } finally {
+                    state.facebookPostsSyncing = false;
+                    await renderFacebookPostsPage();
+                }
+            };
+            section.querySelector("#fb-posts-refresh")?.addEventListener("click", syncPosts);
+            if (!posts.length && !state.facebookPostsAutoSynced) {
+                state.facebookPostsAutoSynced = true;
+                setTimeout(syncPosts, 50);
+            }
             section.querySelectorAll(".fb-post-comments").forEach((button) => {
                 button.addEventListener("click", (event) => {
                     event.preventDefault();
@@ -2058,15 +2082,21 @@
     async function renderFacebookCommentsPage() {
         const section = document.getElementById("page-fb-comments");
         if (!section) return;
-        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading Facebook comments...</div>`;
+        if (!section.dataset.hydrated) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Đang đọc cache bình luận...</div>`;
+        }
         try {
             const payload = await fetchJSON("/facebook/comments?limit=50");
             const comments = payload.comments || [];
             const totals = payload.totals || {};
             if (!state.selectedFacebookCommentId && comments[0]) state.selectedFacebookCommentId = comments[0].comment_id;
             const selected = comments.find((item) => item.comment_id === state.selectedFacebookCommentId) || comments[0] || null;
+            section.dataset.hydrated = "1";
             section.innerHTML = `
                 <div class="max-w-7xl mx-auto">
+                    <div id="fb-comments-sync-status" class="${state.facebookCommentsSyncing ? "" : "hidden"} mb-4 border border-hud-cyan/30 bg-hud-cyan/10 text-hud-cyan text-[11px] p-3">
+                        Đang đồng bộ bình luận Facebook trong nền. Bình luận đã lưu sẽ vẫn hiển thị, sync xong sẽ tự cập nhật.
+                    </div>
                     <div class="hud-card danger p-3 mb-4 fade-in">
                         <span class="c-tl"></span><span class="c-br"></span>
                         <div class="flex items-center gap-3">
@@ -2115,7 +2145,7 @@
                                             </div>
                                         </button>
                                     `;
-                                }).join("") || `<div class="p-6 text-center text-hud-muted text-sm">Chưa có bình luận nào hoặc token thiếu quyền đọc comments.</div>`}
+                                }).join("") || `<div class="p-6 text-center text-hud-muted text-sm">Chưa có bình luận trong DB. Hệ thống sẽ đồng bộ nền; có bao nhiêu bình luận sẽ hiển thị bấy nhiêu sau khi sync xong.</div>`}
                             </div>
                         </div>
                         <div class="hud-card overflow-hidden fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
@@ -2161,10 +2191,24 @@
                     </div>
                 </div>
             `;
-            section.querySelector("#fb-comments-refresh")?.addEventListener("click", async () => {
-                await fetchJSON("/facebook/comments/sync?limit=50", { method: "POST" });
-                await renderFacebookCommentsPage();
-            });
+            const syncComments = async () => {
+                if (state.facebookCommentsSyncing) return;
+                state.facebookCommentsSyncing = true;
+                section.querySelector("#fb-comments-sync-status")?.classList.remove("hidden");
+                const button = section.querySelector("#fb-comments-refresh");
+                if (button) button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> SYNCING`;
+                try {
+                    await fetchJSON("/facebook/comments/sync?limit=50", { method: "POST" });
+                } finally {
+                    state.facebookCommentsSyncing = false;
+                    await renderFacebookCommentsPage();
+                }
+            };
+            section.querySelector("#fb-comments-refresh")?.addEventListener("click", syncComments);
+            if (!comments.length && !state.facebookCommentsAutoSynced) {
+                state.facebookCommentsAutoSynced = true;
+                setTimeout(syncComments, 50);
+            }
             section.querySelectorAll(".fb-comment-item").forEach((button) => {
                 button.addEventListener("click", () => {
                     state.selectedFacebookCommentId = button.dataset.commentId || "";

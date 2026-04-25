@@ -18,6 +18,9 @@ from app.postgres import get_connection as _pg_connection, postgres_available, s
 
 DATA_PATH = Path("data/facebook_pages.json")
 STORE_LOCK = Lock()
+MESSAGE_DETAIL_FIELDS = "id,created_time,from,to,message,attachments,shares,sticker,reply_to{id,message,created_time,from,attachments,shares,sticker}"
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -972,6 +975,14 @@ def _normalize_reply_to(raw: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _reply_has_displayable_content(reply: dict[str, Any]) -> bool:
+    if not reply:
+        return False
+    if reply.get("message"):
+        return True
+    return any(_attachment_has_media_url(item) for item in (reply.get("attachments") or []))
+
+
 def _merge_message_attachments(primary: list[dict[str, Any]], fallback: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
     for item in fallback + primary:
@@ -991,6 +1002,25 @@ def _merge_message_attachments(primary: list[dict[str, Any]], fallback: list[dic
     return list(merged.values())
 
 
+def _fetch_message_reference(
+    client: httpx.Client,
+    base_url: str,
+    access_token: str,
+    message_id: str,
+) -> dict[str, Any]:
+    if not message_id:
+        return {}
+    try:
+        response = client.get(
+            f"{base_url}/{message_id}",
+            params={"fields": "id,created_time,from,message,attachments,shares,sticker", "access_token": access_token},
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return {}
+    return _normalize_reply_to(response.json())
+
+
 def _fetch_message_extras(
     client: httpx.Client,
     base_url: str,
@@ -1003,16 +1033,16 @@ def _fetch_message_extras(
     try:
         response = client.get(
             f"{base_url}/{message_id}",
-            params={
-                "fields": "attachments{type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data},shares,sticker,reply_to{id,message,created_time,from,attachments{type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data},sticker}",
-                "access_token": access_token,
-            },
+            params={"fields": MESSAGE_DETAIL_FIELDS, "access_token": access_token},
         )
         response.raise_for_status()
         payload = response.json()
         extras["shares"] = payload.get("shares") or {}
         extras["sticker"] = payload.get("sticker") or {}
         extras["reply_to"] = _normalize_reply_to(payload.get("reply_to") or {})
+        reply_mid = str((extras["reply_to"] or {}).get("mid") or "")
+        if reply_mid and not _reply_has_displayable_content(extras["reply_to"]):
+            extras["reply_to"] = _fetch_message_reference(client, base_url, access_token, reply_mid) or extras["reply_to"]
         extras["attachments"] = [
             _normalize_message_attachment(item)
             for item in (((payload.get("attachments") or {}).get("data")) or [])
@@ -1025,10 +1055,7 @@ def _fetch_message_extras(
     try:
         response = client.get(
             f"{base_url}/{message_id}/attachments",
-            params={
-                "fields": "type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data",
-                "access_token": access_token,
-            },
+            params={"access_token": access_token},
         )
         response.raise_for_status()
         payload = response.json()
@@ -1190,7 +1217,7 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[st
     base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
     conversations: list[dict[str, Any]] = []
     warnings: list[str] = []
-    fields = "id,snippet,updated_time,unread_count,message_count,participants,messages.limit(30){id,message,created_time,from,to,shares,sticker,reply_to{id},attachments{type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data}}"
+    fields = "id,snippet,updated_time,unread_count,message_count,participants,messages.limit(30){id,message,created_time,from,to,shares,sticker,reply_to{id},attachments}"
 
     with httpx.Client(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
         for page in pages:

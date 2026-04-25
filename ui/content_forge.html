@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CONTENT FORGE v2.0 // MISSION CONTROL</title>
+    <link rel="icon" type="image/png" href="/ui/logo.png">
+    <link rel="apple-touch-icon" href="/ui/logo.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
@@ -529,6 +531,13 @@
         }
         .toggle.on { background: rgba(0, 240, 255, 0.15); border-color: #00f0ff; box-shadow: 0 0 10px rgba(0, 240, 255, 0.3); }
         .toggle.on::after { left: 24px; background: #00f0ff; box-shadow: 0 0 6px #00f0ff; }
+
+        .brand-logo {
+            width: 52px;
+            height: 52px;
+            object-fit: contain;
+            filter: drop-shadow(0 0 12px rgba(0, 240, 255, 0.72));
+        }
     </style>
 </head>
 <body class="flex h-screen overflow-hidden font-sans text-sm">
@@ -541,11 +550,9 @@
         <!-- Brand Header -->
         <div class="p-5 border-b border-hud-cyan/20">
             <div class="flex items-center gap-3">
-                <div class="w-10 h-10 border-2 border-hud-cyan flex items-center justify-center relative" style="clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); box-shadow: 0 0 15px rgba(0,240,255,0.5);">
-                    <i class="fa-solid fa-bolt text-hud-cyan"></i>
-                </div>
+                <img src="/ui/logo.png" alt="HRM logo" class="brand-logo flex-shrink-0">
                 <div>
-                    <h1 class="font-display font-black text-lg text-white tracking-wider glitch">CONTENT FORGE</h1>
+                    <h1 class="font-display font-black text-lg text-white tracking-wider glitch">HRM FORGE</h1>
                     <p class="text-[9px] text-hud-cyan uppercase-widest -mt-1">v2.0 · 2026 EDITION</p>
                 </div>
             </div>

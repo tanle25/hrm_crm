@@ -423,6 +423,11 @@ async def login_page(request: Request):
     return FileResponse(UI_DIR / "login.html")
 
 
+@app.get("/favicon.ico")
+async def favicon() -> FileResponse:
+    return FileResponse(UI_DIR / "logo.png", media_type="image/png")
+
+
 @app.get(f"{settings.api_prefix}/auth/me", response_model=AuthMeResponse)
 async def auth_me(request: Request) -> AuthMeResponse:
     username = ""

@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OMNI-FORGE // ACCESS TERMINAL</title>
+    <title>HRM FORGE // ACCESS TERMINAL</title>
+    <link rel="icon" type="image/png" href="/ui/logo.png">
+    <link rel="apple-touch-icon" href="/ui/logo.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
@@ -98,6 +100,12 @@
             bottom: -1px; left: 0; right: 0;
             height: 1px; background: #00f0ff;
             box-shadow: 0 0 8px #00f0ff;
+        }
+        .login-logo {
+            width: 68px;
+            height: 68px;
+            object-fit: contain;
+            filter: drop-shadow(0 0 16px rgba(0, 240, 255, 0.8));
         }
 
         .hud-input {
@@ -510,8 +518,11 @@
             <div class="card-header-strip px-6 py-4">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-3">
-                        <i class="fa-solid fa-shield-halved text-hud-cyan" style="filter: drop-shadow(0 0 4px #00f0ff);"></i>
-                        <h2 class="font-display font-black text-base text-white uppercase-widest">AUTHORIZE</h2>
+                        <img src="/ui/logo.png" alt="HRM logo" class="login-logo">
+                        <div>
+                            <div class="font-display font-black text-base text-white uppercase-widest">HRM FORGE</div>
+                            <div class="text-[9px] text-hud-cyan uppercase-widest -mt-0.5">ACCESS TERMINAL</div>
+                        </div>
                     </div>
                     <span class="text-[10px] text-hud-green font-bold uppercase-wide flex items-center gap-1.5 bg-hud-green/10 px-2.5 py-1 border border-hud-green/50" style="box-shadow: 0 0 8px rgba(0, 255, 136, 0.3);">
                         <span class="w-1.5 h-1.5 bg-hud-green rounded-full blink" style="box-shadow: 0 0 6px #00ff88;"></span>

@@ -138,8 +138,8 @@
 
     async function fetchJSON(path, options) {
         const response = await fetch(`${API_BASE}${path}`, {
-            headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
             ...options,
+            headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
         });
         if (!response.ok) {
             let message = `${response.status} ${response.statusText}`;
@@ -1843,7 +1843,10 @@
         if (!section) return;
         section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading Facebook aggregate stats...</div>`;
         try {
-            const stats = await fetchJSON("/facebook/stats?days=7");
+            const controller = new AbortController();
+            const timeout = window.setTimeout(() => controller.abort(), 15000);
+            const stats = await fetchJSON("/facebook/stats?days=7", { signal: controller.signal });
+            window.clearTimeout(timeout);
             const totals = stats.totals || {};
             const topPosts = stats.top_posts || [];
             const contentPerformance = stats.content_performance || [];
@@ -1935,7 +1938,8 @@
                 </div>
             `;
         } catch (error) {
-            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook stats: ${escapeHtml(error.message)}</div>`;
+            const message = error.name === "AbortError" ? "Facebook stats request timed out. Có thể Graph API đang chậm hoặc thiếu quyền read_insights." : error.message;
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook stats: ${escapeHtml(message)}</div>`;
         }
     }
 

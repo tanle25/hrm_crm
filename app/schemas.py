@@ -97,6 +97,7 @@ class FacebookStatsResponse(BaseModel):
     best_posting_time: str = ""
     content_performance: List[Dict[str, Any]] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
+    cached: bool = False
 
 
 class SubmitResponse(BaseModel):

@@ -16,6 +16,7 @@ from app.postgres import get_connection as _pg_connection, postgres_available, s
 
 DATA_PATH = Path("data/facebook_pages.json")
 STORE_LOCK = Lock()
+STATS_CACHE: dict[str, Any] = {"key": "", "created_at": None, "payload": None}
 
 
 def _now() -> str:
@@ -210,6 +211,32 @@ def _fetch_metric_series(
         return [], f"{page.get('name') or page.get('page_id')}: {metric} unavailable ({error})"
 
 
+def _fetch_metrics_payload(
+    client: httpx.Client,
+    base_url: str,
+    page: dict[str, Any],
+    metrics: list[str],
+    since: datetime,
+    until: datetime,
+) -> tuple[dict[str, list[dict[str, Any]]], str | None]:
+    try:
+        response = client.get(
+            f"{base_url}/{page['page_id']}/insights",
+            params={
+                "metric": ",".join(metrics),
+                "period": "day",
+                "since": int(since.timestamp()),
+                "until": int(until.timestamp()),
+                "access_token": page["page_access_token"],
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return {metric: _insight_values(payload, metric) for metric in metrics}, None
+    except httpx.HTTPError as error:
+        return {}, f"{page.get('name') or page.get('page_id')}: insights unavailable ({error})"
+
+
 def _safe_int(value: Any) -> int:
     if isinstance(value, dict):
         return sum(_safe_int(item) for item in value.values())
@@ -232,9 +259,17 @@ def _post_insight_total(insights: dict[str, Any] | None, metric: str) -> int:
     return sum(_safe_int(item.get("value")) for item in values)
 
 
-def facebook_aggregate_stats(days: int = 7) -> dict[str, Any]:
+def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:
+    cache_key = f"{max(1, min(days, 30))}:{max(1, min(max_pages, 100))}"
+    cached_at = STATS_CACHE.get("created_at")
+    if STATS_CACHE.get("key") == cache_key and isinstance(cached_at, datetime):
+        if datetime.now(timezone.utc) - cached_at < timedelta(minutes=5) and isinstance(STATS_CACHE.get("payload"), dict):
+            payload = dict(STATS_CACHE["payload"])
+            payload["cached"] = True
+            return payload
+
     settings = get_settings()
-    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")]
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
     base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
     now = datetime.now(timezone.utc)
     since = now - timedelta(days=max(1, min(days, 30)))
@@ -249,25 +284,28 @@ def facebook_aggregate_stats(days: int = 7) -> dict[str, Any]:
     content_types: defaultdict[str, dict[str, int]] = defaultdict(lambda: {"posts": 0, "reach": 0})
     hour_buckets: defaultdict[int, int] = defaultdict(int)
 
-    with httpx.Client(timeout=30) as client:
+    with httpx.Client(timeout=httpx.Timeout(8.0, connect=3.0)) as client:
         for page in pages:
+            insight_values, warning = _fetch_metrics_payload(
+                client,
+                base_url,
+                page,
+                ["page_impressions_unique", "page_post_engagements", "page_fans"],
+                since,
+                now,
+            )
+            if warning:
+                warnings.append(warning)
             for metric, target in [
                 ("page_impressions_unique", reach_by_day),
                 ("page_post_engagements", engagement_by_day),
             ]:
-                values, warning = _fetch_metric_series(client, base_url, page, metric, since, now)
-                if warning:
-                    warnings.append(warning)
-                    continue
-                for item in values:
+                for item in insight_values.get(metric, []):
                     key = _date_key(item.get("end_time"))
                     if key:
                         target[key] += _safe_int(item.get("value"))
-
-            fan_values, warning = _fetch_metric_series(client, base_url, page, "page_fans", since, now)
-            if warning:
-                warnings.append(warning)
-            elif fan_values:
+            fan_values = insight_values.get("page_fans") or []
+            if fan_values:
                 fan_count += _safe_int(fan_values[-1].get("value"))
 
             try:
@@ -275,7 +313,7 @@ def facebook_aggregate_stats(days: int = 7) -> dict[str, Any]:
                     f"{base_url}/{page['page_id']}/posts",
                     params={
                         "fields": "id,message,created_time,status_type,type,shares,comments.summary(true),reactions.summary(true),insights.metric(post_impressions_unique,post_engaged_users)",
-                        "limit": 25,
+                        "limit": 10,
                         "access_token": page["page_access_token"],
                     },
                 )
@@ -329,7 +367,7 @@ def facebook_aggregate_stats(days: int = 7) -> dict[str, Any]:
     content_performance.sort(key=lambda item: item["avg_reach"], reverse=True)
     top_posts.sort(key=lambda item: item["reach"] + item["engagement"], reverse=True)
 
-    return {
+    payload = {
         "days": max(1, min(days, 30)),
         "page_count": len(pages),
         "totals": {
@@ -353,4 +391,7 @@ def facebook_aggregate_stats(days: int = 7) -> dict[str, Any]:
         "best_posting_time": f"{best_hour:02d}:00" if best_hour is not None else "",
         "content_performance": content_performance[:6],
         "warnings": warnings[:20],
+        "cached": False,
     }
+    STATS_CACHE.update({"key": cache_key, "created_at": datetime.now(timezone.utc), "payload": payload})
+    return payload

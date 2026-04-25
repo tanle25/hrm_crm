@@ -6,7 +6,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -21,11 +21,13 @@ from app.facebook_pages import (
     facebook_conversations,
     facebook_posts,
     list_facebook_pages,
+    process_facebook_webhook,
     send_facebook_message,
     sync_facebook_comments,
     sync_facebook_aggregate_stats,
     sync_facebook_conversations,
     sync_facebook_posts,
+    verify_facebook_webhook_signature,
 )
 from app.graph import retry_from_dlq, run_pipeline_async
 from app.job_store import delete_dlq_entry, get_dlq_entry, get_job, get_jobs_version, list_dlq, list_jobs, stats_snapshot, wait_for_jobs_version
@@ -103,6 +105,7 @@ AUTH_EXEMPT_PATHS = {
     "/docs",
     "/openapi.json",
     "/redoc",
+    f"{settings.api_prefix}/facebook/webhook",
 }
 
 
@@ -585,6 +588,32 @@ async def send_facebook_message_endpoint(request: FacebookMessageSendRequest) ->
     except RuntimeError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return FacebookMessageSendResponse(**result)
+
+
+@app.get(f"{settings.api_prefix}/facebook/webhook")
+async def verify_facebook_webhook(
+    hub_mode: str = Query("", alias="hub.mode"),
+    hub_verify_token: str = Query("", alias="hub.verify_token"),
+    hub_challenge: str = Query("", alias="hub.challenge"),
+) -> Response:
+    expected_token = settings.facebook_webhook_verify_token or settings.auth_secret
+    if hub_mode == "subscribe" and hub_verify_token == expected_token:
+        return Response(content=hub_challenge, media_type="text/plain")
+    raise HTTPException(status_code=403, detail="Invalid Facebook webhook verification token.")
+
+
+@app.post(f"{settings.api_prefix}/facebook/webhook")
+async def receive_facebook_webhook(request: Request) -> JSONResponse:
+    body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not verify_facebook_webhook_signature(body, signature):
+        raise HTTPException(status_code=403, detail="Invalid Facebook webhook signature.")
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="Invalid webhook payload.") from error
+    result = await asyncio.to_thread(process_facebook_webhook, payload)
+    return JSONResponse({"ok": True, **result})
 
 
 @app.post(f"{settings.api_prefix}/rag/ingest", response_model=RAGIngestResponse)

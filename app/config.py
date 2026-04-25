@@ -88,6 +88,7 @@ class Settings:
     facebook_app_id: Optional[str]
     facebook_app_secret: Optional[str]
     facebook_graph_version: str
+    facebook_webhook_verify_token: Optional[str]
 
 
 @lru_cache(maxsize=1)
@@ -149,4 +150,5 @@ def get_settings() -> Settings:
         facebook_app_id=os.getenv("FACEBOOK_APP_ID"),
         facebook_app_secret=os.getenv("FACEBOOK_APP_SECRET"),
         facebook_graph_version=os.getenv("FACEBOOK_GRAPH_VERSION", "v24.0"),
+        facebook_webhook_verify_token=os.getenv("FACEBOOK_WEBHOOK_VERIFY_TOKEN"),
     )

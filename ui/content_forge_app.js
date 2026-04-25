@@ -2033,6 +2033,22 @@
         </div>`;
     }
 
+    function renderReplyQuote(message) {
+        const replyTo = message?.reply_to || {};
+        if (!replyTo.mid) return "";
+        const quoteText = String(replyTo.message || replyTo.fallback_label || "").trim();
+        const quoteAttachments = Array.isArray(replyTo.attachments) ? replyTo.attachments : [];
+        const imageAttachment = quoteAttachments.find((item) => item && item.type === "image" && (item.preview_url || item.url));
+        const tone = message.direction === "outbound" ? "border-hud-fb/40 bg-hud-fb/10" : "border-hud-cyan/20 bg-black/40";
+        return `<div class="mb-2 border-l-2 ${tone} px-3 py-2 text-[10px]">
+            <div class="uppercase-wide mb-1 ${message.direction === "outbound" ? "text-hud-fb" : "text-hud-cyan"}">
+                <i class="fa-solid fa-reply"></i> ${replyTo.direction === "outbound" ? "Trả lời ảnh của bạn" : "Trả lời tin nhắn trước đó"}
+            </div>
+            ${imageAttachment ? `<img src="${escapeHtml(imageAttachment.preview_url || imageAttachment.url)}" alt="quoted" loading="lazy" class="w-20 h-20 object-cover rounded border border-white/10 mb-2"/>` : ""}
+            ${quoteText ? `<div class="text-white/80 line-clamp-2">${escapeHtml(quoteText)}</div>` : ""}
+        </div>`;
+    }
+
     function renderMessageFallback(message) {
         const label = String(message?.fallback_label || "").trim();
         if (!label) return "";
@@ -2128,6 +2144,7 @@
                                                 <i class="fa-solid ${message.direction === "outbound" ? "fa-robot text-hud-fb" : "fa-user text-hud-muted"} text-[9px]"></i>
                                             </div>
                                             <div>
+                                                ${renderReplyQuote(message)}
                                                 ${message.message ? `
                                                     <div class="px-4 py-2 text-[12px] text-white ${message.direction === "outbound" ? "" : "bg-black/50 border border-hud-cyan/20"}" style="${message.direction === "outbound" ? "background: rgba(74, 158, 255, 0.2); border: 1px solid rgba(74, 158, 255, 0.5);" : ""}">
                                                         ${escapeHtml(message.message)}

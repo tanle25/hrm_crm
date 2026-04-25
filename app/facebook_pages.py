@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import secrets
 from collections import defaultdict
@@ -469,6 +471,65 @@ def _get_cached_facebook_conversation(conversation_id: str) -> dict[str, Any] | 
         return json.loads(row[0]) if row else None
 
 
+def _upsert_facebook_message(item: dict[str, Any]) -> None:
+    conn = _postgres_conn()
+    if conn is None:
+        return
+    message_id = str(item.get("message_id") or "")
+    if not message_id:
+        return
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO facebook_messages (message_id, conversation_id, page_id, customer_id, created_time, updated_at, data)
+            VALUES (%s, %s, %s, %s, %s, NOW(), %s::jsonb)
+            ON CONFLICT (message_id) DO UPDATE SET
+                conversation_id = EXCLUDED.conversation_id,
+                page_id = EXCLUDED.page_id,
+                customer_id = EXCLUDED.customer_id,
+                created_time = EXCLUDED.created_time,
+                updated_at = NOW(),
+                data = EXCLUDED.data
+            """,
+            (
+                message_id,
+                str(item.get("conversation_id") or ""),
+                str(item.get("page_id") or ""),
+                str(item.get("customer_id") or ""),
+                _parse_graph_time_for_db(str(item.get("created_time") or "")),
+                serialize_json(item),
+            ),
+        )
+
+
+def _get_cached_facebook_message(message_id: str) -> dict[str, Any] | None:
+    conn = _postgres_conn()
+    if conn is None:
+        return None
+    with conn, conn.cursor() as cur:
+        cur.execute("SELECT data::text FROM facebook_messages WHERE message_id = %s", (message_id,))
+        row = cur.fetchone()
+        return json.loads(row[0]) if row else None
+
+
+def _list_cached_facebook_messages(conversation_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    conn = _postgres_conn()
+    if conn is None or not conversation_id:
+        return []
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data::text
+            FROM facebook_messages
+            WHERE conversation_id = %s
+            ORDER BY created_time ASC NULLS LAST, updated_at ASC
+            LIMIT %s
+            """,
+            (conversation_id, max(1, min(limit, 200))),
+        )
+        return [json.loads(row[0]) for row in cur.fetchall()]
+
+
 def _upsert_facebook_stats(stat_key: str, payload: dict[str, Any]) -> None:
     conn = _postgres_conn()
     if conn is None:
@@ -875,6 +936,18 @@ def _attachment_has_media_url(attachment: dict[str, Any]) -> bool:
     return bool(str(attachment.get("url") or attachment.get("preview_url") or "").strip())
 
 
+def _message_fallback_label(message_text: str, attachments: list[dict[str, Any]], shares: dict[str, Any], sticker: dict[str, Any]) -> str:
+    if message_text:
+        return ""
+    if attachments:
+        return "Đã gửi tệp đính kèm"
+    if shares:
+        return "Đã chia sẻ liên kết"
+    if sticker:
+        return "Đã gửi sticker"
+    return "Tin nhắn đặc biệt"
+
+
 def _merge_message_attachments(primary: list[dict[str, Any]], fallback: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
     for item in fallback + primary:
@@ -959,20 +1032,12 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
             for item in (((message.get("attachments") or {}).get("data")) or [])
             if isinstance(item, dict)
         ]
-        fallback_label = ""
-        if not message.get("message"):
-            if attachments:
-                fallback_label = "Đã gửi tệp đính kèm"
-            elif message.get("shares"):
-                fallback_label = "Đã chia sẻ liên kết"
-            elif message.get("sticker"):
-                fallback_label = "Đã gửi sticker"
-            else:
-                fallback_label = "Tin nhắn đặc biệt"
+        message_text = str(message.get("message") or "")
+        fallback_label = _message_fallback_label(message_text, attachments, message.get("shares") or {}, message.get("sticker") or {})
         messages.append(
             {
                 "message_id": str(message.get("id") or ""),
-                "message": str(message.get("message") or ""),
+                "message": message_text,
                 "created_time": str(message.get("created_time") or ""),
                 "from_id": sender_id,
                 "from_name": _message_participant_name(sender),
@@ -1001,14 +1066,92 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
     }
 
 
+def _find_cached_conversation_by_participants(page_id: str, customer_id: str) -> dict[str, Any] | None:
+    conn = _postgres_conn()
+    if conn is None or not page_id or not customer_id:
+        return None
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data::text
+            FROM facebook_conversations
+            WHERE page_id = %s
+            ORDER BY updated_time DESC NULLS LAST, updated_at DESC
+            """,
+            (page_id,),
+        )
+        for row in cur.fetchall():
+            payload = json.loads(row[0])
+            if str(payload.get("customer_id") or "") == customer_id:
+                return payload
+    return None
+
+
+def _merge_conversation_messages(graph_messages: list[dict[str, Any]], stored_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for item in graph_messages + stored_messages:
+        message_id = str(item.get("message_id") or "")
+        key = message_id or f"{item.get('created_time')}::{item.get('from_id')}::{item.get('message')}"
+        existing = merged.get(key) or {}
+        merged[key] = {
+            **existing,
+            **item,
+            "attachments": _merge_message_attachments(item.get("attachments") or [], existing.get("attachments") or []),
+            "reply_to": item.get("reply_to") or existing.get("reply_to") or {},
+            "fallback_label": item.get("fallback_label") or existing.get("fallback_label") or "",
+        }
+    return sorted(merged.values(), key=lambda item: item.get("created_time") or "")
+
+
+def _refresh_conversation_cache(
+    conversation_id: str,
+    page_id: str,
+    customer_id: str,
+    customer_name: str,
+    page_name: str,
+    page_picture_url: str = "",
+) -> dict[str, Any]:
+    existing = _get_cached_facebook_conversation(conversation_id) or {}
+    messages = _list_cached_facebook_messages(conversation_id, 100)
+    last_message = messages[-1] if messages else {}
+    payload = {
+        "conversation_id": conversation_id,
+        "page_id": page_id,
+        "page_name": page_name or existing.get("page_name") or "",
+        "page_picture_url": page_picture_url or existing.get("page_picture_url") or "",
+        "customer_id": customer_id,
+        "customer_name": customer_name or existing.get("customer_name") or "Facebook User",
+        "snippet": last_message.get("message") or last_message.get("fallback_label") or existing.get("snippet") or "",
+        "updated_time": last_message.get("created_time") or existing.get("updated_time") or _now(),
+        "unread_count": existing.get("unread_count") or 0,
+        "message_count": len(messages),
+        "messages": messages,
+        "status": existing.get("status") or "open",
+    }
+    _upsert_facebook_conversation(payload)
+    return payload
+
+
 def facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
     conversations = _list_cached_facebook_conversations(limit)
+    enriched: list[dict[str, Any]] = []
+    for conversation in conversations:
+        stored_messages = _list_cached_facebook_messages(str(conversation.get("conversation_id") or ""), 100)
+        if stored_messages:
+            merged_messages = _merge_conversation_messages(conversation.get("messages") or [], stored_messages)
+            conversation["messages"] = merged_messages
+            conversation["message_count"] = max(int(conversation.get("message_count") or 0), len(merged_messages))
+            if merged_messages:
+                last_message = merged_messages[-1]
+                conversation["snippet"] = last_message.get("message") or last_message.get("fallback_label") or conversation.get("snippet") or ""
+                conversation["updated_time"] = last_message.get("created_time") or conversation.get("updated_time") or ""
+        enriched.append(conversation)
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
-    warnings = [] if conversations else ["No cached Facebook conversations yet. Run sync to fetch inbox from Graph API."]
+    warnings = [] if enriched else ["No cached Facebook conversations yet. Run sync to fetch inbox from Graph API."]
     return {
-        "total": len(conversations),
+        "total": len(enriched),
         "page_count": len(pages),
-        "conversations": conversations,
+        "conversations": enriched,
         "warnings": warnings[:20],
     }
 
@@ -1123,6 +1266,9 @@ def send_facebook_message(conversation_id: str, message: str) -> dict[str, Any]:
 
     sent_message = {
         "message_id": str(payload.get("message_id") or ""),
+        "conversation_id": conversation_id,
+        "page_id": page_id,
+        "customer_id": customer_id,
         "message": message,
         "created_time": _now(),
         "from_id": page_id,
@@ -1130,13 +1276,105 @@ def send_facebook_message(conversation_id: str, message: str) -> dict[str, Any]:
         "to_id": customer_id,
         "to_name": conversation.get("customer_name") or "Facebook User",
         "direction": "outbound",
+        "attachments": [],
+        "fallback_label": "",
+        "reply_to": {},
     }
-    conversation["messages"] = (conversation.get("messages") or []) + [sent_message]
-    conversation["snippet"] = message
-    conversation["updated_time"] = sent_message["created_time"]
+    _upsert_facebook_message(sent_message)
+    conversation = _refresh_conversation_cache(
+        conversation_id,
+        page_id,
+        customer_id,
+        str(conversation.get("customer_name") or ""),
+        str(conversation.get("page_name") or ""),
+        str(conversation.get("page_picture_url") or ""),
+    )
     conversation["status"] = "open"
     _upsert_facebook_conversation(conversation)
     return {"sent": True, "conversation_id": conversation_id, "message_id": sent_message["message_id"]}
+
+
+def verify_facebook_webhook_signature(body: bytes, signature: str | None) -> bool:
+    settings = get_settings()
+    if not settings.facebook_app_secret:
+        return True
+    if not signature or not signature.startswith("sha256="):
+        return False
+    expected = hmac.new(
+        settings.facebook_app_secret.encode("utf-8"),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    provided = signature.split("=", 1)[1].strip()
+    return hmac.compare_digest(expected, provided)
+
+
+def process_facebook_webhook(payload: dict[str, Any]) -> dict[str, Any]:
+    entries = payload.get("entry") or []
+    processed = 0
+    for entry in entries:
+        for messaging in entry.get("messaging") or []:
+            message = messaging.get("message") or {}
+            message_id = str(message.get("mid") or "")
+            if not message_id:
+                continue
+            sender = messaging.get("sender") or {}
+            recipient = messaging.get("recipient") or {}
+            is_echo = bool(message.get("is_echo"))
+            page_id = str(sender.get("id") or "") if is_echo else str(recipient.get("id") or "")
+            customer_id = str(recipient.get("id") or "") if is_echo else str(sender.get("id") or "")
+            if not page_id or not customer_id:
+                continue
+            page = next((item for item in _list_facebook_page_records() if str(item.get("page_id") or "") == page_id), None) or {}
+            existing_conversation = _find_cached_conversation_by_participants(page_id, customer_id) or {}
+            conversation_id = str(existing_conversation.get("conversation_id") or f"psid:{page_id}:{customer_id}")
+            attachments = [
+                _normalize_message_attachment(item)
+                for item in (message.get("attachments") or [])
+                if isinstance(item, dict)
+            ]
+            message_text = str(message.get("text") or "")
+            shares = message.get("shares") or {}
+            sticker = message.get("sticker") or {}
+            reply_to_mid = str(((message.get("reply_to") or {}).get("mid")) or "")
+            quoted = _get_cached_facebook_message(reply_to_mid) if reply_to_mid else None
+            normalized = {
+                "message_id": message_id,
+                "conversation_id": conversation_id,
+                "page_id": page_id,
+                "customer_id": customer_id,
+                "message": message_text,
+                "created_time": datetime.fromtimestamp(
+                    int(messaging.get("timestamp") or 0) / 1000,
+                    tz=timezone.utc,
+                ).isoformat() if messaging.get("timestamp") else _now(),
+                "from_id": str(sender.get("id") or ""),
+                "from_name": existing_conversation.get("customer_name") if not is_echo else page.get("name") or "Page",
+                "to_id": str(recipient.get("id") or ""),
+                "to_name": page.get("name") or "Facebook Page" if not is_echo else existing_conversation.get("customer_name") or "Facebook User",
+                "direction": "outbound" if is_echo else "inbound",
+                "attachments": attachments,
+                "fallback_label": _message_fallback_label(message_text, attachments, shares, sticker),
+                "reply_to": {
+                    "mid": reply_to_mid,
+                    "message": str((quoted or {}).get("message") or ""),
+                    "fallback_label": str((quoted or {}).get("fallback_label") or ""),
+                    "attachments": (quoted or {}).get("attachments") or [],
+                    "direction": str((quoted or {}).get("direction") or ""),
+                } if reply_to_mid else {},
+                "raw": message,
+            }
+            _upsert_facebook_message(normalized)
+            _refresh_conversation_cache(
+                conversation_id,
+                page_id,
+                customer_id,
+                str(existing_conversation.get("customer_name") or ""),
+                str(page.get("name") or existing_conversation.get("page_name") or ""),
+                str(page.get("picture_url") or existing_conversation.get("page_picture_url") or ""),
+            )
+            processed += 1
+    return {"processed": processed}
 
 
 def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:

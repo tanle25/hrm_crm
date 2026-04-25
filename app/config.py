@@ -85,6 +85,9 @@ class Settings:
     author_name: str
     metrics_enabled: bool
     metrics_port: int
+    facebook_app_id: Optional[str]
+    facebook_app_secret: Optional[str]
+    facebook_graph_version: str
 
 
 @lru_cache(maxsize=1)
@@ -143,4 +146,7 @@ def get_settings() -> Settings:
         author_name=os.getenv("AUTHOR_NAME", "Content Forge"),
         metrics_enabled=_env_bool("METRICS_ENABLED", True),
         metrics_port=_env_int("METRICS_PORT", 8001),
+        facebook_app_id=os.getenv("FACEBOOK_APP_ID"),
+        facebook_app_secret=os.getenv("FACEBOOK_APP_SECRET"),
+        facebook_graph_version=os.getenv("FACEBOOK_GRAPH_VERSION", "v24.0"),
     )

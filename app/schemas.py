@@ -57,6 +57,36 @@ class ApiTokenListResponse(BaseModel):
     tokens: List[ApiTokenListItem] = Field(default_factory=list)
 
 
+class FacebookConnectRequest(BaseModel):
+    short_lived_token: str
+
+
+class FacebookPageItem(BaseModel):
+    page_id: str
+    name: str = ""
+    category: str = ""
+    picture_url: str = ""
+    tasks: List[str] = Field(default_factory=list)
+    status: str = "connected"
+    token_prefix: str = ""
+    connected_at: str = ""
+    updated_at: str = ""
+    expires_in: Optional[int] = None
+
+
+class FacebookPageListResponse(BaseModel):
+    total: int
+    pages: List[FacebookPageItem] = Field(default_factory=list)
+
+
+class FacebookConnectResponse(BaseModel):
+    status: str
+    total: int
+    pages: List[FacebookPageItem] = Field(default_factory=list)
+    batch_id: str = ""
+    expires_in: Optional[int] = None
+
+
 class SubmitResponse(BaseModel):
     job_id: str
     status: str

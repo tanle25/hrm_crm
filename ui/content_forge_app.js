@@ -1645,6 +1645,146 @@
         }
     }
 
+    function facebookPageCard(page) {
+        const isConnected = page.status === "connected";
+        const tasks = (page.tasks || []).slice(0, 4);
+        return `
+            <div class="bg-black/40 border ${isConnected ? "hover:border-hud-fb" : "border-hud-red/40 hover:border-hud-red"} transition p-4" style="border-color: ${isConnected ? "rgba(74, 158, 255, 0.3)" : "rgba(255, 0, 60, 0.4)"};">
+                <div class="flex items-start gap-3 mb-3">
+                    <div class="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden" style="background: rgba(74, 158, 255, 0.2); border: 2px solid ${isConnected ? "#4a9eff" : "#ff003c"};">
+                        ${page.picture_url ? `<img src="${escapeHtml(page.picture_url)}" alt="${escapeHtml(page.name)}" class="w-full h-full object-cover"/>` : `<i class="fa-brands fa-facebook ${isConnected ? "text-hud-fb" : "text-hud-red"} text-lg"></i>`}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 mb-0.5">
+                            <span class="font-display font-bold text-sm text-white uppercase-wide truncate">${escapeHtml(page.name || page.page_id)}</span>
+                            ${isConnected ? `<i class="fa-solid fa-check text-[10px]" style="color:#4a9eff;"></i>` : ""}
+                        </div>
+                        <div class="text-[10px] text-hud-muted truncate">${escapeHtml(page.category || "Facebook Page")} · ${escapeHtml(page.page_id || "-")}</div>
+                    </div>
+                    <span class="badge ${isConnected ? "green" : "red"}"><span class="status-dot ${isConnected ? "green" : "red"}" style="width:5px;height:5px;"></span> ${isConnected ? "ACTIVE" : "ISSUE"}</span>
+                </div>
+                <div class="py-3 border-t" style="border-color: rgba(74, 158, 255, 0.15);">
+                    <div class="text-[9px] text-hud-muted uppercase-wide mb-2">PAGE TASKS</div>
+                    <div class="flex flex-wrap gap-2">
+                        ${tasks.map((task) => `<span class="badge cyan">${escapeHtml(task)}</span>`).join("") || `<span class="text-[10px] text-hud-muted">No task metadata</span>`}
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3 py-3 border-t text-[10px]" style="border-color: rgba(74, 158, 255, 0.15);">
+                    <div><div class="text-hud-muted uppercase-wide">TOKEN</div><div class="font-mono text-white truncate">${escapeHtml(page.token_prefix || "-")}</div></div>
+                    <div><div class="text-hud-muted uppercase-wide">CONNECTED</div><div class="text-white truncate">${escapeHtml(page.connected_at ? formatDate(page.connected_at) : "-")}</div></div>
+                </div>
+            </div>
+        `;
+    }
+
+    async function renderFacebookPagesPage() {
+        const section = document.getElementById("page-fb-pages");
+        if (!section) return;
+        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading Facebook pages...</div>`;
+        try {
+            const payload = await fetchJSON("/facebook/pages");
+            const pages = payload.pages || [];
+            const connectedCount = pages.filter((page) => page.status === "connected").length;
+            const issueCount = pages.length - connectedCount;
+            const taskCount = pages.reduce((sum, page) => sum + ((page.tasks || []).length), 0);
+            section.innerHTML = `
+                <div class="max-w-7xl mx-auto">
+                    <div class="grid grid-cols-4 gap-4 mb-6">
+                        <div class="hud-card p-4 fade-in" style="border-color: rgba(74, 158, 255, 0.3);"><span class="c-tl" style="border-color: #4a9eff;"></span><span class="c-br" style="border-color: #4a9eff;"></span><div class="text-[9px] uppercase-widest mb-1" style="color:#4a9eff;">TỔNG FANPAGE</div><div class="metric-num text-2xl text-white">${pages.length}</div></div>
+                        <div class="hud-card green p-4 fade-in"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-green uppercase-widest mb-1">CONNECTED</div><div class="metric-num text-2xl text-hud-green">${connectedCount}</div></div>
+                        <div class="hud-card p-4 fade-in"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-cyan uppercase-widest mb-1">PAGE TASKS</div><div class="metric-num text-2xl text-white">${taskCount}</div></div>
+                        <div class="hud-card danger p-4 fade-in"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-red uppercase-widest mb-1">ISSUES</div><div class="metric-num text-2xl text-hud-red">${issueCount}</div></div>
+                    </div>
+                    <div class="hud-card fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                        <span class="c-tl" style="border-color: #4a9eff;"></span><span class="c-br" style="border-color: #4a9eff;"></span>
+                        <div class="header-strip px-5 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                            <i class="fa-solid fa-users-viewfinder text-hud-fb"></i>
+                            <span class="font-display font-black text-xs text-white uppercase-widest">CONNECTED FANPAGES</span>
+                            <button id="fb-connect-open" class="ml-auto px-4 py-2 text-[10px] uppercase-wide font-bold" style="background: #4a9eff; color: #fff; border: 1px solid #4a9eff;">
+                                <i class="fa-brands fa-facebook"></i> CONNECT NEW PAGE
+                            </button>
+                        </div>
+                        <div class="p-5 grid grid-cols-2 gap-4">
+                            ${pages.map(facebookPageCard).join("") || `<div class="col-span-2 text-center py-10 text-hud-muted text-sm border border-hud-cyan/10 bg-black/30">Chưa có fanpage nào. Bấm Connect New Page để nhập short-lived token.</div>`}
+                        </div>
+                    </div>
+                    <div id="fb-connect-dialog" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-sm">
+                        <div class="hud-card w-full max-w-2xl p-6 border-hud-fb/40">
+                            <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                            <div class="flex items-start justify-between gap-4 mb-5">
+                                <div>
+                                    <div class="flex items-center gap-2 text-hud-fb uppercase-wide text-xs font-bold"><i class="fa-brands fa-facebook"></i> CONNECT FACEBOOK PAGES</div>
+                                    <h3 class="font-display font-black text-xl text-white uppercase-wide mt-1">Nhập short-lived user token</h3>
+                                    <p class="text-[11px] text-hud-muted mt-2">Backend sẽ exchange sang long-lived user token, gọi /me/accounts và lưu page access token cho từng fanpage.</p>
+                                </div>
+                                <button id="fb-connect-close" class="btn-ghost px-3 py-2 text-xs"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                            <div id="fb-connect-feedback" class="hidden text-[11px] border p-3 mb-4"></div>
+                            <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 block">Short-lived token</label>
+                            <textarea id="fb-short-token" class="hud-input w-full min-h-[140px] px-4 py-3 text-xs font-mono" placeholder="EAAB..."></textarea>
+                            <div class="mt-4 flex gap-2">
+                                <button id="fb-connect-submit" class="flex-1 px-4 py-2.5 text-[10px] uppercase-wide font-bold" style="background:#4a9eff;color:#fff;border:1px solid #4a9eff;"><i class="fa-solid fa-link"></i> CONNECT & IMPORT PAGES</button>
+                                <button id="fb-connect-cancel" class="btn-ghost px-4 py-2.5 text-[10px] uppercase-wide font-bold">CANCEL</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const dialog = section.querySelector("#fb-connect-dialog");
+            const feedback = section.querySelector("#fb-connect-feedback");
+            const closeDialog = () => dialog?.classList.add("hidden");
+            const openDialog = () => {
+                feedback?.classList.add("hidden");
+                dialog?.classList.remove("hidden");
+                dialog?.classList.add("flex");
+                section.querySelector("#fb-short-token")?.focus();
+            };
+            section.querySelector("#fb-connect-open")?.addEventListener("click", openDialog);
+            section.querySelector("#fb-connect-close")?.addEventListener("click", closeDialog);
+            section.querySelector("#fb-connect-cancel")?.addEventListener("click", closeDialog);
+            dialog?.addEventListener("click", (event) => {
+                if (event.target === dialog) closeDialog();
+            });
+            section.querySelector("#fb-connect-submit")?.addEventListener("click", async () => {
+                const token = section.querySelector("#fb-short-token")?.value.trim() || "";
+                if (!token) {
+                    if (feedback) {
+                        feedback.className = "text-[11px] border p-3 mb-4 text-hud-red border-hud-red/30 bg-hud-red/10";
+                        feedback.textContent = "Cần nhập short-lived token.";
+                        feedback.classList.remove("hidden");
+                    }
+                    return;
+                }
+                try {
+                    if (feedback) {
+                        feedback.className = "text-[11px] border p-3 mb-4 text-hud-cyan border-hud-cyan/30 bg-hud-cyan/10";
+                        feedback.textContent = "Đang exchange token và lấy danh sách page...";
+                        feedback.classList.remove("hidden");
+                    }
+                    const result = await fetchJSON("/facebook/pages/connect", {
+                        method: "POST",
+                        body: JSON.stringify({ short_lived_token: token }),
+                    });
+                    if (feedback) {
+                        feedback.className = "text-[11px] border p-3 mb-4 text-hud-green border-hud-green/30 bg-hud-green/10";
+                        feedback.textContent = `Đã kết nối ${result.total} fanpage.`;
+                        feedback.classList.remove("hidden");
+                    }
+                    await renderFacebookPagesPage();
+                } catch (error) {
+                    if (feedback) {
+                        feedback.className = "text-[11px] border p-3 mb-4 text-hud-red border-hud-red/30 bg-hud-red/10";
+                        feedback.textContent = `Connect failed: ${error.message}`;
+                        feedback.classList.remove("hidden");
+                    }
+                }
+            });
+        } catch (error) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook pages: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
     async function renderStatsPage() {
         const section = document.getElementById("page-stats");
         if (!section) return;
@@ -1851,6 +1991,7 @@
         if (pageKey === "knowledge") await renderKnowledgePage();
         if (pageKey === "shopee") await renderShopeePage();
         if (pageKey === "website-manage") await renderWebsiteManagePage();
+        if (pageKey === "fb-pages") await renderFacebookPagesPage();
         if (pageKey === "stats") await renderStatsPage();
         if (pageKey === "settings") await renderSettingsPage();
     }

@@ -5,6 +5,7 @@ import json
 from contextlib import suppress
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +14,7 @@ from app.api_tokens import create_api_token, delete_api_token, list_api_tokens, 
 from app.auth import authenticate_credentials, create_session_token, verify_session_token
 from app.config import get_settings
 from app.dlq import publish_anyway
+from app.facebook_pages import connect_facebook_pages, list_facebook_pages
 from app.graph import retry_from_dlq, run_pipeline_async
 from app.job_store import delete_dlq_entry, get_dlq_entry, get_job, get_jobs_version, list_dlq, list_jobs, stats_snapshot, wait_for_jobs_version
 from app.logging import get_logger
@@ -31,6 +33,9 @@ from app.schemas import (
     ApiTokenListItem,
     ApiTokenListResponse,
     AuthMeResponse,
+    FacebookConnectRequest,
+    FacebookConnectResponse,
+    FacebookPageListResponse,
     LoginRequest,
     LoginResponse,
     RAGCategoryCreate,
@@ -478,6 +483,25 @@ async def settings_delete_token(token_id: str) -> dict:
         raise HTTPException(status_code=404, detail="API token not found")
     log.info("api_token_deleted", token_id=token_id)
     return {"deleted": True, "token_id": token_id}
+
+
+@app.get(f"{settings.api_prefix}/facebook/pages", response_model=FacebookPageListResponse)
+async def get_facebook_pages() -> FacebookPageListResponse:
+    pages = await asyncio.to_thread(list_facebook_pages)
+    return FacebookPageListResponse(total=len(pages), pages=pages)
+
+
+@app.post(f"{settings.api_prefix}/facebook/pages/connect", response_model=FacebookConnectResponse)
+async def connect_facebook_pages_endpoint(request: FacebookConnectRequest) -> FacebookConnectResponse:
+    try:
+        result = await asyncio.to_thread(connect_facebook_pages, request.short_lived_token)
+    except httpx.HTTPStatusError as error:
+        body = error.response.text[:500] if error.response is not None else str(error)
+        raise HTTPException(status_code=400, detail=f"Facebook Graph API failed: {body}") from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    log.info("facebook_pages_connected", total=result.get("total"), batch_id=result.get("batch_id"))
+    return FacebookConnectResponse(**result)
 
 
 @app.post(f"{settings.api_prefix}/rag/ingest", response_model=RAGIngestResponse)

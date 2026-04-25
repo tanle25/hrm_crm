@@ -15,6 +15,7 @@ Neu nguon la product, hay lap ke hoach cho mo ta san pham thuong mai:
 - title có thể biên tập lại tên nguồn cho gọn, rõ ý mua hàng hơn; không bắt buộc giữ nguyên từng chữ nếu tên nguồn dài, nhiễu hoặc chứa ngữ cảnh không chính.
 - meta_title là tiêu đề SEO riêng, có thể tối ưu Rank Math nhưng không thay tên sản phẩm
 - meta_title không dùng một công thức cố định. Hãy tự chọn dạng phù hợp: tên sản phẩm thuần, tên + quy cách, tên + lợi ích chính, hoặc tên + nhóm người dùng nếu dữ liệu thật sự hỗ trợ.
+- meta_title bắt buộc chứa focus_keyword hoặc cụm từ khóa chính tương đương gần như nguyên vẹn, ưu tiên đặt ở đầu câu.
 - nếu dữ liệu sản phẩm đủ rõ, meta_title nên cố gắng có:
   focus keyword tự nhiên ở gần đầu,
   1 yếu tố tạo cảm xúc tích cực hoặc tiêu cực nhẹ,
@@ -279,6 +280,33 @@ def _truncate_meta_title(value: str, limit: int = 60) -> str:
     return shortened or value[:limit].rstrip(" -–|:,;")
 
 
+def _contains_keyword_phrase(value: str, focus_keyword: str) -> bool:
+    value = re.sub(r"\s+", " ", (value or "").lower()).strip()
+    keyword = re.sub(r"\s+", " ", (focus_keyword or "").lower()).strip()
+    if not keyword:
+        return True
+    if keyword in value:
+        return True
+    keyword_words = re.findall(r"[\wà-ỹ]+", keyword)
+    value_words = set(re.findall(r"[\wà-ỹ]+", value))
+    if len(keyword_words) <= 2:
+        return all(word in value_words for word in keyword_words)
+    matched = sum(1 for word in keyword_words if word in value_words)
+    return matched >= max(2, len(keyword_words) - 1)
+
+
+def _with_focus_keyword(candidate: str, focus_keyword: str) -> str:
+    candidate = _clean_title(candidate)
+    focus = _clean_title(focus_keyword)
+    if not focus or _contains_keyword_phrase(candidate, focus):
+        return candidate
+    suffix = re.sub(rf"^{re.escape(focus)}\s*[\-|–|:]\s*", "", candidate, flags=re.IGNORECASE).strip()
+    joined = f"{focus} | {suffix}" if suffix else focus
+    if len(joined) <= 60:
+        return joined
+    return focus
+
+
 def _descriptor_candidates(extracted: dict | None) -> list[str]:
     extracted = extracted or {}
     combined = " ".join(
@@ -327,15 +355,15 @@ def _refine_product_meta_title(raw_meta_title: str, title: str, focus_keyword: s
     if meta_title:
         normalized = re.sub(r"\s*[:|]\s*", " | ", meta_title)
         normalized = re.sub(r"\s*,\s*,+", ", ", normalized)
-        candidates.append(normalized)
+        candidates.append(_with_focus_keyword(normalized, focus_keyword))
 
     title_base = _clean_title(title)
     if not candidates:
-        candidates.append(title_base)
+        candidates.append(_with_focus_keyword(title_base, focus_keyword))
         if numeric_hint:
-            candidates.append(f"{title_base} | {numeric_hint}")
+            candidates.append(_with_focus_keyword(f"{title_base} | {numeric_hint}", focus_keyword))
         for descriptor in _descriptor_candidates(extracted)[:2]:
-            candidates.append(f"{title_base} | {descriptor}")
+            candidates.append(_with_focus_keyword(f"{title_base} | {descriptor}", focus_keyword))
         if focus_keyword and focus_keyword.lower() != title_base.lower():
             candidates.append(_clean_title(focus_keyword.title()))
 
@@ -356,9 +384,9 @@ def _refine_product_meta_title(raw_meta_title: str, title: str, focus_keyword: s
         cleaned_candidates.append(candidate)
 
     for candidate in cleaned_candidates:
-        if len(candidate) <= 60:
+        if len(candidate) <= 60 and _contains_keyword_phrase(candidate, focus_keyword):
             return candidate
-    return _truncate_meta_title(title_base)
+    return _truncate_meta_title(_with_focus_keyword(title_base, focus_keyword))
 
 
 def _normalize_tag(value: str) -> str:

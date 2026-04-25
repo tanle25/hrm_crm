@@ -257,6 +257,167 @@ def _post_insight_total(insights: dict[str, Any] | None, metric: str) -> int:
     return sum(_safe_int(item.get("value")) for item in values)
 
 
+def _parse_graph_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _comment_sentiment(message: str) -> str:
+    text = (message or "").lower()
+    if any(term in text for term in ["lỗi", "tệ", "chậm", "không trả lời", "hoàn tiền", "bực", "kém", "xấu", "lừa", "scam"]):
+        return "negative"
+    if "?" in text or any(term in text for term in ["giá", "bao nhiêu", "còn không", "mua", "ở đâu", "ship", "tư vấn"]):
+        return "question"
+    if any(term in text for term in ["hay", "tốt", "cảm ơn", "ok", "đẹp", "thích", "tuyệt"]):
+        return "positive"
+    return "neutral"
+
+
+def facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
+    settings = get_settings()
+    limit = max(1, min(limit, 100))
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
+    base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
+    now = datetime.now(timezone.utc)
+    since_7d = now - timedelta(days=7)
+    posts: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    with httpx.Client(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+        for page in pages:
+            try:
+                response = client.get(
+                    f"{base_url}/{page['page_id']}/posts",
+                    params={
+                        "fields": "id,message,created_time,status_type,type,permalink_url,full_picture,insights.metric(post_impressions_unique,post_impressions,post_engaged_users)",
+                        "limit": min(25, limit),
+                        "access_token": page["page_access_token"],
+                    },
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as error:
+                warnings.append(f"{page.get('name') or page.get('page_id')}: posts unavailable - {_graph_error_message(error)}")
+                continue
+
+            for post in response.json().get("data") or []:
+                created_time = str(post.get("created_time") or "")
+                created_dt = _parse_graph_time(created_time)
+                reach = _post_insight_total(post.get("insights"), "post_impressions_unique")
+                impressions = _post_insight_total(post.get("insights"), "post_impressions")
+                engagement = _post_insight_total(post.get("insights"), "post_engaged_users")
+                posts.append(
+                    {
+                        "post_id": str(post.get("id") or ""),
+                        "page_id": str(page.get("page_id") or ""),
+                        "page_name": page.get("name") or "",
+                        "page_picture_url": page.get("picture_url") or "",
+                        "message": post.get("message") or "",
+                        "created_time": created_time,
+                        "type": post.get("type") or post.get("status_type") or "post",
+                        "status": "posted",
+                        "permalink_url": post.get("permalink_url") or "",
+                        "full_picture": post.get("full_picture") or "",
+                        "reach": reach,
+                        "impressions": impressions,
+                        "engagement": engagement,
+                        "comments": 0,
+                        "shares": 0,
+                        "posted_7d": bool(created_dt and created_dt >= since_7d),
+                    }
+                )
+
+    posts.sort(key=lambda item: item.get("created_time") or "", reverse=True)
+    selected = posts[:limit]
+    return {
+        "total": len(selected),
+        "page_count": len(pages),
+        "totals": {
+            "posted_7d": sum(1 for post in selected if post.get("posted_7d")),
+            "scheduled": 0,
+            "reach": sum(_safe_int(post.get("reach")) for post in selected),
+            "engagement": sum(_safe_int(post.get("engagement")) for post in selected),
+            "comments": sum(_safe_int(post.get("comments")) for post in selected),
+            "shares": sum(_safe_int(post.get("shares")) for post in selected),
+        },
+        "posts": selected,
+        "warnings": warnings[:20],
+    }
+
+
+def facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
+    settings = get_settings()
+    limit = max(1, min(limit, 100))
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
+    base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
+    comments: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    fields = "id,message,created_time,permalink_url,comments.limit(10){id,message,created_time,from,like_count,comment_count,parent}"
+
+    with httpx.Client(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+        for page in pages:
+            try:
+                response = client.get(
+                    f"{base_url}/{page['page_id']}/posts",
+                    params={
+                        "fields": fields,
+                        "limit": 10,
+                        "access_token": page["page_access_token"],
+                    },
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as error:
+                warnings.append(f"{page.get('name') or page.get('page_id')}: comments unavailable - {_graph_error_message(error)}")
+                continue
+
+            for post in response.json().get("data") or []:
+                post_id = str(post.get("id") or "")
+                post_message = str(post.get("message") or "")
+                post_link = str(post.get("permalink_url") or "")
+                for comment in ((post.get("comments") or {}).get("data") or []):
+                    message = str(comment.get("message") or "")
+                    sentiment = _comment_sentiment(message)
+                    author = comment.get("from") or {}
+                    comments.append(
+                        {
+                            "comment_id": str(comment.get("id") or ""),
+                            "post_id": post_id,
+                            "page_id": str(page.get("page_id") or ""),
+                            "page_name": page.get("name") or "",
+                            "page_picture_url": page.get("picture_url") or "",
+                            "author_id": str(author.get("id") or ""),
+                            "author_name": author.get("name") or "Facebook User",
+                            "message": message,
+                            "created_time": str(comment.get("created_time") or ""),
+                            "post_message": post_message,
+                            "permalink_url": post_link,
+                            "like_count": _safe_int(comment.get("like_count")),
+                            "reply_count": _safe_int(comment.get("comment_count")),
+                            "sentiment": sentiment,
+                            "status": "auto" if sentiment == "positive" else "pending",
+                        }
+                    )
+
+    comments.sort(key=lambda item: item.get("created_time") or "", reverse=True)
+    selected = comments[:limit]
+    return {
+        "total": len(selected),
+        "page_count": len(pages),
+        "totals": {
+            "pending": sum(1 for item in selected if item.get("status") == "pending"),
+            "negative": sum(1 for item in selected if item.get("sentiment") == "negative"),
+            "question": sum(1 for item in selected if item.get("sentiment") == "question"),
+            "positive": sum(1 for item in selected if item.get("sentiment") == "positive"),
+            "neutral": sum(1 for item in selected if item.get("sentiment") == "neutral"),
+        },
+        "comments": selected,
+        "warnings": warnings[:20],
+    }
+
+
 def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:
     cache_key = f"{max(1, min(days, 30))}:{max(1, min(max_pages, 100))}"
     cached_at = STATS_CACHE.get("created_at")

@@ -36,6 +36,7 @@
         jobsStatusFilter: "",
         jobsSortKey: "",
         jobsSortDir: "asc",
+        selectedFacebookCommentId: "",
     };
 
     function escapeHtml(value) {
@@ -1947,6 +1948,228 @@
         }
     }
 
+    function facebookWarningBanner(warnings) {
+        const items = warnings || [];
+        if (!items.length) return "";
+        return `<div class="mb-5 border border-hud-amber/30 bg-hud-amber/10 text-hud-amber text-[11px] p-3">Một số dữ liệu Facebook không lấy được do quyền Meta API hoặc page không có dữ liệu: ${escapeHtml(redactSensitiveText(items.slice(0, 3).join(" | ")))}</div>`;
+    }
+
+    async function renderFacebookPostsPage() {
+        const section = document.getElementById("page-fb-posts");
+        if (!section) return;
+        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading Facebook posts...</div>`;
+        try {
+            const payload = await fetchJSON("/facebook/posts?limit=50");
+            const posts = payload.posts || [];
+            const totals = payload.totals || {};
+            section.innerHTML = `
+                <div class="max-w-7xl mx-auto">
+                    <div class="grid grid-cols-5 gap-4 mb-6">
+                        ${[
+                            ["TOTAL POSTS", formatNumber(payload.total || 0), "white"],
+                            ["POSTED 7D", formatNumber(totals.posted_7d || 0), "green"],
+                            ["SCHEDULED", formatNumber(totals.scheduled || 0), "amber"],
+                            ["REACH", formatCompact(totals.reach || 0), "white"],
+                            ["ENGAGEMENT", formatCompact(totals.engagement || 0), "white"],
+                        ].map(([label, value, tone]) => `
+                            <div class="hud-card ${tone === "green" ? "green" : tone === "amber" ? "amber" : ""} p-4 fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                                <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                                <div class="text-[9px] ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : ""} uppercase-widest mb-1" ${tone === "white" ? `style="color:#4a9eff;"` : ""}>${label}</div>
+                                <div class="metric-num text-2xl ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : "text-white"}">${value}</div>
+                                <div class="text-[9px] text-hud-muted">${formatNumber(payload.page_count || 0)} pages</div>
+                            </div>
+                        `).join("")}
+                    </div>
+                    ${facebookWarningBanner(payload.warnings)}
+                    <div class="hud-card fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                        <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                        <div class="header-strip px-5 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                            <i class="fa-solid fa-newspaper text-hud-fb"></i>
+                            <span class="font-display font-black text-xs text-white uppercase-widest">FACEBOOK POSTS · ALL PAGES</span>
+                            <button id="fb-posts-refresh" class="ml-auto btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> REFRESH</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left">
+                                <thead>
+                                    <tr class="text-[10px] uppercase-widest text-hud-muted border-b border-hud-fb/20">
+                                        <th class="px-5 py-3">Bài viết</th>
+                                        <th class="px-4 py-3">Page</th>
+                                        <th class="px-4 py-3">Thời gian</th>
+                                        <th class="px-4 py-3 text-right">Reach</th>
+                                        <th class="px-4 py-3 text-right">Engaged</th>
+                                        <th class="px-4 py-3">Status</th>
+                                        <th class="px-4 py-3 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${posts.map((post) => `
+                                        <tr class="border-b border-hud-fb/10 hover:bg-hud-fb/5">
+                                            <td class="px-5 py-4">
+                                                <div class="flex items-start gap-3">
+                                                    ${post.full_picture ? `<img src="${escapeHtml(post.full_picture)}" alt="" class="w-12 h-12 object-cover border border-hud-fb/20"/>` : `<div class="w-12 h-12 border border-hud-fb/20 bg-hud-fb/10 flex items-center justify-center"><i class="fa-brands fa-facebook text-hud-fb"></i></div>`}
+                                                    <div class="min-w-0">
+                                                        <div class="text-sm text-white font-bold truncate max-w-[520px]">${escapeHtml(post.message || "Bài viết không có nội dung text")}</div>
+                                                        <div class="text-[10px] text-hud-muted uppercase-wide mt-1">${escapeHtml(post.type || "post")} · ${escapeHtml(post.post_id || "")}</div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 text-[11px] text-white">${escapeHtml(post.page_name || "Facebook Page")}</td>
+                                            <td class="px-4 py-4 text-[11px] text-hud-muted">${escapeHtml(formatDate(post.created_time))}</td>
+                                            <td class="px-4 py-4 text-right text-white font-mono">${formatCompact(post.reach || 0)}</td>
+                                            <td class="px-4 py-4 text-right text-hud-green font-mono">${formatCompact(post.engagement || 0)}</td>
+                                            <td class="px-4 py-4"><span class="badge green">POSTED</span></td>
+                                            <td class="px-4 py-4 text-right">
+                                                <div class="flex items-center justify-end gap-3">
+                                                    <a href="#" data-page="fb-comments" class="fb-post-comments text-xs hover:text-white" style="color:#4a9eff;"><i class="fa-solid fa-comment"></i></a>
+                                                    ${post.permalink_url ? `<a href="${escapeHtml(post.permalink_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-hud-muted hover:text-white"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : ""}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    `).join("") || `<tr><td colspan="7" class="px-5 py-10 text-center text-hud-muted text-sm">Chưa lấy được bài viết nào. Kiểm tra quyền page token hoặc page chưa có bài.</td></tr>`}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+            section.querySelector("#fb-posts-refresh")?.addEventListener("click", () => renderFacebookPostsPage());
+            section.querySelectorAll(".fb-post-comments").forEach((button) => {
+                button.addEventListener("click", (event) => {
+                    event.preventDefault();
+                    if (window.switchPage) window.switchPage("fb-comments");
+                });
+            });
+        } catch (error) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook posts: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    function facebookCommentBadge(sentiment) {
+        const key = String(sentiment || "neutral").toLowerCase();
+        if (key === "negative") return ["red", "NEGATIVE", "fa-user"];
+        if (key === "question") return ["amber", "QUESTION", "fa-question"];
+        if (key === "positive") return ["green", "POSITIVE", "fa-heart"];
+        return ["cyan", "NEUTRAL", "fa-user"];
+    }
+
+    async function renderFacebookCommentsPage() {
+        const section = document.getElementById("page-fb-comments");
+        if (!section) return;
+        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading Facebook comments...</div>`;
+        try {
+            const payload = await fetchJSON("/facebook/comments?limit=50");
+            const comments = payload.comments || [];
+            const totals = payload.totals || {};
+            if (!state.selectedFacebookCommentId && comments[0]) state.selectedFacebookCommentId = comments[0].comment_id;
+            const selected = comments.find((item) => item.comment_id === state.selectedFacebookCommentId) || comments[0] || null;
+            section.innerHTML = `
+                <div class="max-w-7xl mx-auto">
+                    <div class="hud-card danger p-3 mb-4 fade-in">
+                        <span class="c-tl"></span><span class="c-br"></span>
+                        <div class="flex items-center gap-3">
+                            <i class="fa-solid fa-bell text-hud-red ${Number(totals.negative || 0) ? "blink" : ""} text-lg"></i>
+                            <div class="flex-1">
+                                <div class="text-[11px] text-white font-bold uppercase-wide"><span class="text-hud-red">${formatNumber(totals.pending || 0)} BÌNH LUẬN</span> cần xem lại · ${formatNumber(totals.negative || 0)} negative · ${formatNumber(totals.question || 0)} câu hỏi</div>
+                            </div>
+                            <span class="badge red">MODERATION</span>
+                            <button id="fb-comments-refresh" class="btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> REFRESH</button>
+                        </div>
+                    </div>
+                    ${facebookWarningBanner(payload.warnings)}
+                    <div class="grid gap-4" style="grid-template-columns: 360px 1fr; min-height: calc(100vh - 280px);">
+                        <div class="hud-card flex flex-col overflow-hidden fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                            <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                            <div class="header-strip px-4 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                                <i class="fa-solid fa-comments text-hud-fb"></i>
+                                <span class="font-display font-black text-[10px] text-white uppercase-widest">BÌNH LUẬN · ${formatNumber(comments.length)}</span>
+                            </div>
+                            <div class="flex border-b border-hud-fb/15 text-[9px] uppercase-widest font-bold">
+                                <button class="flex-1 py-2 text-white" style="background: rgba(74, 158, 255, 0.15); color:#4a9eff; border-bottom: 2px solid #4a9eff;">TẤT CẢ</button>
+                                <button class="flex-1 py-2 text-hud-muted">PENDING <span class="text-hud-amber">${formatNumber(totals.pending || 0)}</span></button>
+                                <button class="flex-1 py-2 text-hud-muted">NEGATIVE <span class="text-hud-red">${formatNumber(totals.negative || 0)}</span></button>
+                            </div>
+                            <div class="flex-1 overflow-y-auto">
+                                ${comments.map((comment) => {
+                                    const [tone, label, icon] = facebookCommentBadge(comment.sentiment);
+                                    const active = selected && selected.comment_id === comment.comment_id;
+                                    return `
+                                        <button class="fb-comment-item block w-full text-left p-3 border-b border-hud-fb/10 hover:bg-hud-fb/5 ${active ? "bg-hud-fb/10" : ""}" data-comment-id="${escapeHtml(comment.comment_id)}">
+                                            <div class="flex items-start gap-2.5">
+                                                <div class="w-9 h-9 rounded-full bg-hud-${tone}/20 border border-hud-${tone} flex items-center justify-center flex-shrink-0">
+                                                    <i class="fa-solid ${icon} text-hud-${tone} text-[10px]"></i>
+                                                </div>
+                                                <div class="flex-1 min-w-0">
+                                                    <div class="flex items-center gap-1 mb-0.5">
+                                                        <span class="text-xs font-bold text-white truncate">${escapeHtml(comment.author_name || "Facebook User")}</span>
+                                                        <span class="text-[9px] text-hud-muted ml-auto">${escapeHtml(formatDate(comment.created_time))}</span>
+                                                    </div>
+                                                    <div class="text-[10px] text-white/70 truncate italic">"${escapeHtml(comment.message || "")}"</div>
+                                                    <div class="flex items-center gap-1 mt-1.5">
+                                                        <span class="badge ${tone}" style="font-size:8px;">${label}</span>
+                                                        <span class="text-[8px] text-hud-muted uppercase-wide ml-1">${escapeHtml(comment.page_name || "Page")} · ${formatNumber(comment.reply_count || 0)} replies</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                    `;
+                                }).join("") || `<div class="p-6 text-center text-hud-muted text-sm">Chưa có bình luận nào hoặc token thiếu quyền đọc comments.</div>`}
+                            </div>
+                        </div>
+                        <div class="hud-card overflow-hidden fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                            <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                            ${selected ? (() => {
+                                const [tone, label] = facebookCommentBadge(selected.sentiment);
+                                return `
+                                    <div class="header-strip px-5 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                                        <i class="fa-solid fa-message text-hud-fb"></i>
+                                        <span class="font-display font-black text-xs text-white uppercase-widest">COMMENT DETAIL</span>
+                                        <span class="badge ${tone} ml-auto">${label}</span>
+                                    </div>
+                                    <div class="p-5 space-y-5">
+                                        <div class="border border-hud-fb/15 bg-hud-fb/5 p-4">
+                                            <div class="text-[10px] text-hud-muted uppercase-wide mb-2">POST PREVIEW · ${escapeHtml(selected.page_name || "Facebook Page")}</div>
+                                            <div class="text-sm text-white">${escapeHtml(selected.post_message || "Bài viết không có nội dung text")}</div>
+                                            ${selected.permalink_url ? `<a href="${escapeHtml(selected.permalink_url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 mt-3 text-[10px] uppercase-wide font-bold" style="color:#4a9eff;"><i class="fa-solid fa-arrow-up-right-from-square"></i> OPEN ON FACEBOOK</a>` : ""}
+                                        </div>
+                                        <div>
+                                            <div class="flex items-center justify-between mb-2">
+                                                <div class="text-white font-bold">${escapeHtml(selected.author_name || "Facebook User")}</div>
+                                                <div class="text-[10px] text-hud-muted">${escapeHtml(formatDate(selected.created_time))}</div>
+                                            </div>
+                                            <div class="text-sm text-white/85 leading-relaxed border-l-2 pl-4" style="border-color:#4a9eff;">${escapeHtml(selected.message || "")}</div>
+                                        </div>
+                                        <div class="grid grid-cols-3 gap-3 text-[10px]">
+                                            <div class="border border-hud-cyan/15 bg-black/20 p-3"><div class="text-hud-muted uppercase-wide">Likes</div><div class="text-white font-mono">${formatNumber(selected.like_count || 0)}</div></div>
+                                            <div class="border border-hud-cyan/15 bg-black/20 p-3"><div class="text-hud-muted uppercase-wide">Replies</div><div class="text-white font-mono">${formatNumber(selected.reply_count || 0)}</div></div>
+                                            <div class="border border-hud-cyan/15 bg-black/20 p-3"><div class="text-hud-muted uppercase-wide">Status</div><div class="text-white font-mono uppercase">${escapeHtml(selected.status || "pending")}</div></div>
+                                        </div>
+                                        <div class="border border-hud-fb/15 bg-black/20 p-4">
+                                            <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">Reply draft</label>
+                                            <textarea class="hud-input w-full min-h-[120px] px-4 py-3 text-sm" placeholder="Tính năng trả lời tự động sẽ dùng khung này ở bước tiếp theo."></textarea>
+                                            <div class="mt-3 flex gap-2">
+                                                <button class="btn-primary px-4 py-2 text-[10px] uppercase-wide font-bold opacity-60 cursor-not-allowed" disabled><i class="fa-solid fa-paper-plane"></i> SEND REPLY</button>
+                                                <button class="btn-ghost px-4 py-2 text-[10px] uppercase-wide font-bold opacity-60 cursor-not-allowed" disabled><i class="fa-solid fa-eye-slash"></i> HIDE</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            })() : `<div class="p-10 text-center text-hud-muted">Chọn một bình luận để xem chi tiết.</div>`}
+                        </div>
+                    </div>
+                </div>
+            `;
+            section.querySelector("#fb-comments-refresh")?.addEventListener("click", () => renderFacebookCommentsPage());
+            section.querySelectorAll(".fb-comment-item").forEach((button) => {
+                button.addEventListener("click", () => {
+                    state.selectedFacebookCommentId = button.dataset.commentId || "";
+                    renderFacebookCommentsPage();
+                });
+            });
+        } catch (error) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook comments: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
     async function renderStatsPage() {
         const section = document.getElementById("page-stats");
         if (!section) return;
@@ -2155,6 +2378,8 @@
         if (pageKey === "website-manage") await renderWebsiteManagePage();
         if (pageKey === "fb-pages") await renderFacebookPagesPage();
         if (pageKey === "fb-stats") await renderFacebookStatsPage();
+        if (pageKey === "fb-posts") await renderFacebookPostsPage();
+        if (pageKey === "fb-comments") await renderFacebookCommentsPage();
         if (pageKey === "stats") await renderStatsPage();
         if (pageKey === "settings") await renderSettingsPage();
     }

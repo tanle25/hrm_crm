@@ -100,6 +100,22 @@ class FacebookStatsResponse(BaseModel):
     cached: bool = False
 
 
+class FacebookPostListResponse(BaseModel):
+    total: int = 0
+    page_count: int = 0
+    totals: Dict[str, Any] = Field(default_factory=dict)
+    posts: List[Dict[str, Any]] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
+class FacebookCommentListResponse(BaseModel):
+    total: int = 0
+    page_count: int = 0
+    totals: Dict[str, Any] = Field(default_factory=dict)
+    comments: List[Dict[str, Any]] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
 class SubmitResponse(BaseModel):
     job_id: str
     status: str

@@ -29,6 +29,8 @@
         jobsStreamActive: false,
         jobsSignature: "",
         jobsStatusFilter: "",
+        jobsSortKey: "",
+        jobsSortDir: "asc",
     };
 
     function escapeHtml(value) {
@@ -567,6 +569,29 @@
         return jobs.filter((job) => String(job.status || "").toLowerCase() === filter);
     }
 
+    function jobSortValue(job, key) {
+        if (key === "job_id") return String(job.job_id || "");
+        if (key === "title") return String(job.title || job.url || "");
+        if (key === "step") return PAGE_STEPS.indexOf(job.current_step) >= 0 ? PAGE_STEPS.indexOf(job.current_step) : 999;
+        if (key === "status") {
+            const rank = { pending: 1, processing: 2, completed: 3, failed: 4, duplicate: 5 };
+            return rank[String(job.status || "").toLowerCase()] || 99;
+        }
+        return "";
+    }
+
+    function sortJobs(jobs) {
+        const key = state.jobsSortKey;
+        if (!key) return jobs;
+        const dir = state.jobsSortDir === "desc" ? -1 : 1;
+        return [...jobs].sort((left, right) => {
+            const a = jobSortValue(left, key);
+            const b = jobSortValue(right, key);
+            if (typeof a === "number" && typeof b === "number") return (a - b) * dir;
+            return String(a).localeCompare(String(b), "vi", { numeric: true, sensitivity: "base" }) * dir;
+        });
+    }
+
     function progressDots(job) {
         const activeIndex = PAGE_STEPS.indexOf(job.current_step);
         return PAGE_STEPS.slice(0, 10).map((step, index) => {
@@ -617,6 +642,8 @@
             avg_cost: stats.avg_cost || 0,
             dlq_size: stats.dlq_size || 0,
             status_filter: normalizeJobsStatusFilter(state.jobsStatusFilter),
+            sort_key: state.jobsSortKey,
+            sort_dir: state.jobsSortDir,
         });
     }
 
@@ -643,10 +670,10 @@
                     <table class="hud-table">
                         <thead>
                             <tr>
-                                <th class="w-[160px]">JOB ID</th>
-                                <th>URL / TITLE</th>
-                                <th class="w-[320px]">STEP PROGRESS</th>
-                                <th class="w-[120px]">STATUS</th>
+                                <th class="w-[160px]"><button class="jobs-sort-header hover:text-hud-cyan" data-sort-key="job_id">JOB ID <span class="jobs-sort-indicator" data-sort-indicator="job_id"></span></button></th>
+                                <th><button class="jobs-sort-header hover:text-hud-cyan" data-sort-key="title">URL / TITLE <span class="jobs-sort-indicator" data-sort-indicator="title"></span></button></th>
+                                <th class="w-[320px]"><button class="jobs-sort-header hover:text-hud-cyan" data-sort-key="step">STEP PROGRESS <span class="jobs-sort-indicator" data-sort-indicator="step"></span></button></th>
+                                <th class="w-[120px]"><button class="jobs-sort-header hover:text-hud-cyan" data-sort-key="status">STATUS <span class="jobs-sort-indicator" data-sort-indicator="status"></span></button></th>
                                 <th class="w-[90px]"></th>
                             </tr>
                         </thead>
@@ -660,7 +687,7 @@
     function renderJobsMarkup(jobsPayload, stats) {
         const jobs = jobsPayload.jobs || [];
         const metrics = jobsMetrics(jobs, stats);
-        const visibleJobs = filterJobsByStatus(jobs);
+        const visibleJobs = sortJobs(filterJobsByStatus(jobs));
         const groupedRows = [];
         const consumed = new Set();
         const childrenByParent = new Map();
@@ -756,6 +783,10 @@
         if (metricsEl) metricsEl.innerHTML = metricsHtml;
         if (rowsEl) rowsEl.innerHTML = rowsHtml;
         if (countEl) countEl.textContent = `${jobsCount} jobs loaded`;
+        section.querySelectorAll(".jobs-sort-indicator").forEach((indicator) => {
+            const key = indicator.dataset.sortIndicator || "";
+            indicator.textContent = state.jobsSortKey === key ? (state.jobsSortDir === "desc" ? "↓" : "↑") : "";
+        });
     }
 
     function bindJobsActions(section) {
@@ -781,6 +812,22 @@
             card.addEventListener("click", () => {
                 const nextFilter = normalizeJobsStatusFilter(card.dataset.statusFilter);
                 state.jobsStatusFilter = normalizeJobsStatusFilter(state.jobsStatusFilter) === nextFilter ? "" : nextFilter;
+                state.jobsSignature = "";
+                refreshJobsSnapshot(section).catch(() => renderJobsPage());
+            });
+        });
+        section.querySelectorAll(".jobs-sort-header").forEach((button) => {
+            if (button.dataset.bound) return;
+            button.dataset.bound = "1";
+            button.addEventListener("click", () => {
+                const key = button.dataset.sortKey || "";
+                if (!key) return;
+                if (state.jobsSortKey === key) {
+                    state.jobsSortDir = state.jobsSortDir === "asc" ? "desc" : "asc";
+                } else {
+                    state.jobsSortKey = key;
+                    state.jobsSortDir = "asc";
+                }
                 state.jobsSignature = "";
                 refreshJobsSnapshot(section).catch(() => renderJobsPage());
             });

@@ -507,10 +507,9 @@ def _build_shopee_product_payload(state: dict) -> dict:
 
     meta_title = _seo_title(state)
     meta_description = _seo_description(state["plan"])
-    images = (
-        [{"id": int(item["id"]), "alt": item.get("alt", "")} for item in uploaded[:8] if item.get("id")]
-        or [{"src": url, "alt": image_data.get("alt_text", "")} for url in image_gallery[:8]]
-    )
+    # Shopee CDN URLs often have formats/headers WooCommerce rejects when it
+    # tries to sideload them. Only send already-uploaded WP media IDs here.
+    images = [{"id": int(item["id"]), "alt": item.get("alt", "")} for item in uploaded[:8] if item.get("id")]
     payload = {
         "name": state["plan"]["title"],
         "slug": _product_slug(state["plan"]),

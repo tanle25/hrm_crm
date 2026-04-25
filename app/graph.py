@@ -239,9 +239,18 @@ def _hydrate_child_from_parent(state: dict) -> dict:
     parent_id = state.get("parent_job_id")
     if not parent_id:
         raise RuntimeError("Shared publish child is missing parent_job_id")
-    parent = get_job(parent_id)
+    parent = None
+    for _ in range(24):
+        parent = get_job(parent_id)
+        if parent and parent.get("status") in {"completed", "failed", "duplicate"}:
+            break
+        time.sleep(5)
     if not parent:
         raise RuntimeError("Shared content master job not found")
+    if parent.get("status") == "failed":
+        raise RuntimeError(f"Shared content master job failed: {parent.get('error') or 'unknown error'}")
+    if parent.get("status") == "duplicate":
+        raise RuntimeError("Shared content master job was marked duplicate")
     if parent.get("status") != "completed":
         raise RuntimeError("Shared content master job is not completed yet")
     for key in ["dedup_result", "fetch_result", "extracted", "knowledge_facts", "additional_sources", "plan", "draft", "humanized", "image_data", "metrics"]:

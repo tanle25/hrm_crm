@@ -102,6 +102,9 @@ class FacebookStatsResponse(BaseModel):
 
 class FacebookPostListResponse(BaseModel):
     total: int = 0
+    limit: int = 50
+    offset: int = 0
+    has_more: bool = False
     page_count: int = 0
     totals: Dict[str, Any] = Field(default_factory=dict)
     posts: List[Dict[str, Any]] = Field(default_factory=list)

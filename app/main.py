@@ -21,6 +21,7 @@ from app.facebook_pages import (
     facebook_posts,
     list_facebook_pages,
     sync_facebook_comments,
+    sync_facebook_aggregate_stats,
     sync_facebook_posts,
 )
 from app.graph import retry_from_dlq, run_pipeline_async
@@ -526,9 +527,15 @@ async def get_facebook_stats(days: int = 7) -> FacebookStatsResponse:
     return FacebookStatsResponse(**result)
 
 
+@app.post(f"{settings.api_prefix}/facebook/stats/sync", response_model=FacebookStatsResponse)
+async def sync_facebook_stats_endpoint(days: int = 7) -> FacebookStatsResponse:
+    result = await asyncio.to_thread(sync_facebook_aggregate_stats, max(1, min(days, 30)))
+    return FacebookStatsResponse(**result)
+
+
 @app.get(f"{settings.api_prefix}/facebook/posts", response_model=FacebookPostListResponse)
-async def get_facebook_posts(limit: int = 50) -> FacebookPostListResponse:
-    result = await asyncio.to_thread(facebook_posts, max(1, min(limit, 100)))
+async def get_facebook_posts(limit: int = 50, offset: int = 0) -> FacebookPostListResponse:
+    result = await asyncio.to_thread(facebook_posts, max(1, min(limit, 100)), max(0, offset))
     return FacebookPostListResponse(**result)
 
 

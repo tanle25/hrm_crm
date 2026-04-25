@@ -16,9 +16,6 @@ from app.postgres import get_connection as _pg_connection, postgres_available, s
 
 DATA_PATH = Path("data/facebook_pages.json")
 STORE_LOCK = Lock()
-STATS_CACHE: dict[str, Any] = {"key": "", "created_at": None, "payload": None}
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -374,7 +371,17 @@ def _upsert_facebook_comment(item: dict[str, Any]) -> None:
         )
 
 
-def _list_cached_facebook_posts(limit: int) -> list[dict[str, Any]]:
+def _count_cached_facebook_posts() -> int:
+    conn = _postgres_conn()
+    if conn is None:
+        return 0
+    with conn, conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM facebook_posts")
+        row = cur.fetchone()
+        return int(row[0] if row else 0)
+
+
+def _list_cached_facebook_posts(limit: int, offset: int = 0) -> list[dict[str, Any]]:
     conn = _postgres_conn()
     if conn is None:
         return []
@@ -384,9 +391,9 @@ def _list_cached_facebook_posts(limit: int) -> list[dict[str, Any]]:
             SELECT data::text
             FROM facebook_posts
             ORDER BY created_time DESC NULLS LAST, updated_at DESC
-            LIMIT %s
+            LIMIT %s OFFSET %s
             """,
-            (max(1, min(limit, 100)),),
+            (max(1, min(limit, 100)), max(0, offset)),
         )
         return [json.loads(row[0]) for row in cur.fetchall()]
 
@@ -408,10 +415,49 @@ def _list_cached_facebook_comments(limit: int) -> list[dict[str, Any]]:
         return [json.loads(row[0]) for row in cur.fetchall()]
 
 
-def _facebook_posts_payload(posts: list[dict[str, Any]], page_count: int, warnings: list[str] | None = None) -> dict[str, Any]:
+def _upsert_facebook_stats(stat_key: str, payload: dict[str, Any]) -> None:
+    conn = _postgres_conn()
+    if conn is None:
+        return
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO facebook_stats (stat_key, updated_at, data)
+            VALUES (%s, NOW(), %s::jsonb)
+            ON CONFLICT (stat_key) DO UPDATE SET
+                updated_at = NOW(),
+                data = EXCLUDED.data
+            """,
+            (stat_key, serialize_json(payload)),
+        )
+
+
+def _get_cached_facebook_stats(stat_key: str) -> dict[str, Any] | None:
+    conn = _postgres_conn()
+    if conn is None:
+        return None
+    with conn, conn.cursor() as cur:
+        cur.execute("SELECT data::text FROM facebook_stats WHERE stat_key = %s", (stat_key,))
+        row = cur.fetchone()
+        return json.loads(row[0]) if row else None
+
+
+def _facebook_posts_payload(
+    posts: list[dict[str, Any]],
+    page_count: int,
+    warnings: list[str] | None = None,
+    *,
+    total: int | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
     selected = posts
+    total_count = len(selected) if total is None else total
     return {
-        "total": len(selected),
+        "total": total_count,
+        "limit": max(1, min(limit, 100)),
+        "offset": max(0, offset),
+        "has_more": max(0, offset) + len(selected) < total_count,
         "page_count": page_count,
         "totals": {
             "posted_7d": sum(1 for post in selected if post.get("posted_7d")),
@@ -443,11 +489,31 @@ def _facebook_comments_payload(comments: list[dict[str, Any]], page_count: int, 
     }
 
 
-def facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
-    cached = _list_cached_facebook_posts(limit)
+def _empty_facebook_stats(days: int, page_count: int, warnings: list[str] | None = None) -> dict[str, Any]:
+    normalized_days = max(1, min(days, 30))
+    now = datetime.now(timezone.utc)
+    labels = [(now - timedelta(days=normalized_days - index - 1)).date().isoformat() for index in range(normalized_days)]
+    return {
+        "days": normalized_days,
+        "page_count": page_count,
+        "totals": {"reach": 0, "engagement": 0, "likes": 0, "shares": 0, "comments": 0, "ctr": 0, "posts": 0},
+        "series": [{"date": label, "reach": 0, "engagement": 0} for label in labels],
+        "top_posts": [],
+        "best_posting_time": "",
+        "content_performance": [],
+        "warnings": (warnings or [])[:20],
+        "cached": False,
+    }
+
+
+def facebook_posts(limit: int = 50, offset: int = 0, max_pages: int = 25) -> dict[str, Any]:
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    cached = _list_cached_facebook_posts(limit, offset)
+    total = _count_cached_facebook_posts()
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
     warnings = [] if cached else ["No cached Facebook posts yet. Run sync to fetch posts from Graph API."]
-    return _facebook_posts_payload(cached, len(pages), warnings)
+    return _facebook_posts_payload(cached, len(pages), warnings, total=total, limit=limit, offset=offset)
 
 
 def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
@@ -462,48 +528,58 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
 
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
         for page in pages:
+            remaining = limit
+            after = None
             try:
-                response = client.get(
-                    f"{base_url}/{page['page_id']}/posts",
-                    params={
+                while remaining > 0:
+                    params = {
                         "fields": "id,message,created_time,permalink_url",
-                        "limit": min(25, limit),
+                        "limit": min(25, remaining),
                         "access_token": page["page_access_token"],
-                    },
-                )
-                response.raise_for_status()
-                posts_payload = response.json()
+                    }
+                    if after:
+                        params["after"] = after
+                    response = client.get(f"{base_url}/{page['page_id']}/posts", params=params)
+                    response.raise_for_status()
+                    posts_payload = response.json()
+                    batch = posts_payload.get("data") or []
+                    if not batch:
+                        break
+                    for post in batch:
+                        created_time = str(post.get("created_time") or "")
+                        created_dt = _parse_graph_time(created_time)
+                        posts.append(
+                            {
+                                "post_id": str(post.get("id") or ""),
+                                "page_id": str(page.get("page_id") or ""),
+                                "page_name": page.get("name") or "",
+                                "page_picture_url": page.get("picture_url") or "",
+                                "message": post.get("message") or "",
+                                "created_time": created_time,
+                                "type": post.get("type") or post.get("status_type") or "post",
+                                "status": "posted",
+                                "permalink_url": post.get("permalink_url") or "",
+                                "full_picture": post.get("full_picture") or "",
+                                "reach": 0,
+                                "impressions": 0,
+                                "engagement": 0,
+                                "comments": 0,
+                                "shares": 0,
+                                "posted_7d": bool(created_dt and created_dt >= since_7d),
+                            }
+                        )
+                        _upsert_facebook_post(posts[-1])
+                    remaining -= len(batch)
+                    after = ((posts_payload.get("paging") or {}).get("cursors") or {}).get("after")
+                    if not after:
+                        break
             except httpx.HTTPError as error:
                 warnings.append(f"{page.get('name') or page.get('page_id')}: posts unavailable - {_graph_error_message(error)}")
                 continue
 
-            for post in (posts_payload or {}).get("data") or []:
-                created_time = str(post.get("created_time") or "")
-                created_dt = _parse_graph_time(created_time)
-                posts.append(
-                    {
-                        "post_id": str(post.get("id") or ""),
-                        "page_id": str(page.get("page_id") or ""),
-                        "page_name": page.get("name") or "",
-                        "page_picture_url": page.get("picture_url") or "",
-                        "message": post.get("message") or "",
-                        "created_time": created_time,
-                        "type": post.get("type") or post.get("status_type") or "post",
-                        "status": "posted",
-                        "permalink_url": post.get("permalink_url") or "",
-                        "full_picture": post.get("full_picture") or "",
-                        "reach": 0,
-                        "impressions": 0,
-                        "engagement": 0,
-                        "comments": 0,
-                        "shares": 0,
-                        "posted_7d": bool(created_dt and created_dt >= since_7d),
-                    }
-                )
-                _upsert_facebook_post(posts[-1])
-
     posts.sort(key=lambda item: item.get("created_time") or "", reverse=True)
-    return _facebook_posts_payload(posts[:limit], len(pages), warnings)
+    total = _count_cached_facebook_posts()
+    return _facebook_posts_payload(posts[:limit], len(pages), warnings, total=total or len(posts), limit=limit, offset=0)
 
 
 def facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
@@ -601,12 +677,16 @@ def sync_facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, An
 
 def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:
     cache_key = f"{max(1, min(days, 30))}:{max(1, min(max_pages, 100))}"
-    cached_at = STATS_CACHE.get("created_at")
-    if STATS_CACHE.get("key") == cache_key and isinstance(cached_at, datetime):
-        if datetime.now(timezone.utc) - cached_at < timedelta(minutes=5) and isinstance(STATS_CACHE.get("payload"), dict):
-            payload = dict(STATS_CACHE["payload"])
-            payload["cached"] = True
-            return payload
+    cached = _get_cached_facebook_stats(cache_key)
+    if cached:
+        cached["cached"] = True
+        return cached
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
+    return _empty_facebook_stats(days, len(pages), ["No cached Facebook stats yet. Run sync to fetch stats from Graph API."])
+
+
+def sync_facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:
+    cache_key = f"{max(1, min(days, 30))}:{max(1, min(max_pages, 100))}"
 
     settings = get_settings()
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
@@ -742,5 +822,5 @@ def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, An
         "warnings": warnings[:20],
         "cached": False,
     }
-    STATS_CACHE.update({"key": cache_key, "created_at": datetime.now(timezone.utc), "payload": payload})
+    _upsert_facebook_stats(cache_key, payload)
     return payload

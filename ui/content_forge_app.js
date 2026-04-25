@@ -41,6 +41,10 @@
         facebookCommentsSyncing: false,
         facebookPostsAutoSynced: false,
         facebookCommentsAutoSynced: false,
+        facebookPostsOffset: 0,
+        facebookPostsLimit: 20,
+        facebookStatsSyncing: false,
+        facebookStatsAutoSynced: false,
     };
 
     function escapeHtml(value) {
@@ -1850,7 +1854,9 @@
     async function renderFacebookStatsPage() {
         const section = document.getElementById("page-fb-stats");
         if (!section) return;
-        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading Facebook aggregate stats...</div>`;
+        if (!section.dataset.hydrated) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Đang đọc cache thống kê Facebook...</div>`;
+        }
         try {
             const controller = new AbortController();
             const timeout = window.setTimeout(() => controller.abort(), 15000);
@@ -1860,8 +1866,12 @@
             const topPosts = stats.top_posts || [];
             const contentPerformance = stats.content_performance || [];
             const maxAvgReach = Math.max(1, ...contentPerformance.map((item) => Number(item.avg_reach || 0)));
+            section.dataset.hydrated = "1";
             section.innerHTML = `
                 <div class="max-w-7xl mx-auto">
+                    <div id="fb-stats-sync-status" class="${state.facebookStatsSyncing ? "" : "hidden"} mb-4 border border-hud-cyan/30 bg-hud-cyan/10 text-hud-cyan text-[11px] p-3">
+                        Đang đồng bộ thống kê Facebook trong nền. Dữ liệu cache vẫn hiển thị, sync xong sẽ tự cập nhật.
+                    </div>
                     <div class="grid grid-cols-6 gap-4 mb-6">
                         ${[
                             ["TOTAL REACH", formatCompact(totals.reach), "white", "hud-fb"],
@@ -1888,6 +1898,7 @@
                             <div class="header-strip px-5 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
                                 <i class="fa-solid fa-chart-area text-hud-fb"></i>
                                 <span class="font-display font-black text-xs text-white uppercase-widest">AGGREGATED REACH & ENGAGEMENT · ${formatNumber(stats.days || 7)} DAYS</span>
+                                <button id="fb-stats-refresh" class="ml-auto btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> REFRESH</button>
                             </div>
                             <div class="p-5">${facebookStatsChart(stats.series || [])}</div>
                         </div>
@@ -1946,6 +1957,24 @@
                     </div>
                 </div>
             `;
+            const syncStats = async () => {
+                if (state.facebookStatsSyncing) return;
+                state.facebookStatsSyncing = true;
+                section.querySelector("#fb-stats-sync-status")?.classList.remove("hidden");
+                const button = section.querySelector("#fb-stats-refresh");
+                if (button) button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> SYNCING`;
+                try {
+                    await fetchJSON("/facebook/stats/sync?days=7", { method: "POST" });
+                } finally {
+                    state.facebookStatsSyncing = false;
+                    await renderFacebookStatsPage();
+                }
+            };
+            section.querySelector("#fb-stats-refresh")?.addEventListener("click", syncStats);
+            if (!stats.cached && !Number(totals.posts || 0) && !state.facebookStatsAutoSynced) {
+                state.facebookStatsAutoSynced = true;
+                setTimeout(syncStats, 50);
+            }
         } catch (error) {
             const message = error.name === "AbortError" ? "Facebook stats request timed out. Có thể Graph API đang chậm hoặc thiếu quyền read_insights." : error.message;
             section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook stats: ${escapeHtml(message)}</div>`;
@@ -1965,9 +1994,11 @@
             section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Đang đọc cache bài viết...</div>`;
         }
         try {
-            const payload = await fetchJSON("/facebook/posts?limit=50");
+            const payload = await fetchJSON(`/facebook/posts?limit=${state.facebookPostsLimit}&offset=${state.facebookPostsOffset}`);
             const posts = payload.posts || [];
             const totals = payload.totals || {};
+            const currentPage = Math.floor((payload.offset || 0) / (payload.limit || state.facebookPostsLimit)) + 1;
+            const totalPages = Math.max(1, Math.ceil((payload.total || 0) / (payload.limit || state.facebookPostsLimit)));
             section.dataset.hydrated = "1";
             section.innerHTML = `
                 <div class="max-w-7xl mx-auto">
@@ -1996,6 +2027,7 @@
                         <div class="header-strip px-5 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
                             <i class="fa-solid fa-newspaper text-hud-fb"></i>
                             <span class="font-display font-black text-xs text-white uppercase-widest">FACEBOOK POSTS · ALL PAGES</span>
+                            <span class="ml-auto text-[10px] text-hud-muted uppercase-wide">PAGE ${formatNumber(currentPage)} / ${formatNumber(totalPages)}</span>
                             <button id="fb-posts-refresh" class="ml-auto btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> REFRESH</button>
                         </div>
                         <div class="overflow-x-auto">
@@ -2039,6 +2071,13 @@
                                 </tbody>
                             </table>
                         </div>
+                        <div class="px-5 py-4 border-t border-hud-fb/15 flex items-center justify-between text-[10px] uppercase-wide">
+                            <div class="text-hud-muted">Showing ${formatNumber((payload.offset || 0) + (posts.length ? 1 : 0))}-${formatNumber((payload.offset || 0) + posts.length)} of ${formatNumber(payload.total || 0)}</div>
+                            <div class="flex items-center gap-2">
+                                <button id="fb-posts-prev" class="btn-ghost px-3 py-1.5 font-bold ${Number(payload.offset || 0) <= 0 ? "opacity-40 cursor-not-allowed" : ""}" ${Number(payload.offset || 0) <= 0 ? "disabled" : ""}>PREV</button>
+                                <button id="fb-posts-next" class="btn-ghost px-3 py-1.5 font-bold ${payload.has_more ? "" : "opacity-40 cursor-not-allowed"}" ${payload.has_more ? "" : "disabled"}>NEXT</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             `;
@@ -2056,6 +2095,14 @@
                 }
             };
             section.querySelector("#fb-posts-refresh")?.addEventListener("click", syncPosts);
+            section.querySelector("#fb-posts-prev")?.addEventListener("click", () => {
+                state.facebookPostsOffset = Math.max(0, state.facebookPostsOffset - state.facebookPostsLimit);
+                renderFacebookPostsPage();
+            });
+            section.querySelector("#fb-posts-next")?.addEventListener("click", () => {
+                state.facebookPostsOffset += state.facebookPostsLimit;
+                renderFacebookPostsPage();
+            });
             if (!posts.length && !state.facebookPostsAutoSynced) {
                 state.facebookPostsAutoSynced = true;
                 setTimeout(syncPosts, 50);

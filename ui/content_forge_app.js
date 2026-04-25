@@ -1653,15 +1653,15 @@
             : "background: radial-gradient(circle at top left, rgba(74,158,255,0.22), rgba(0,0,0,0.15));";
         return `
             <div class="bg-black/40 border ${isConnected ? "hover:border-hud-fb" : "border-hud-red/40 hover:border-hud-red"} transition overflow-hidden" style="border-color: ${isConnected ? "rgba(74, 158, 255, 0.3)" : "rgba(255, 0, 60, 0.4)"};">
-                <div class="h-24 border-b border-hud-fb/20 relative" style="${coverStyle}">
+                <div class="h-28 border-b border-hud-fb/20 relative" style="${coverStyle}">
                     <div class="absolute top-3 right-3"><span class="badge ${isConnected ? "green" : "red"}"><span class="status-dot ${isConnected ? "green" : "red"}" style="width:5px;height:5px;"></span> ${isConnected ? "ACTIVE" : "ISSUE"}</span></div>
                 </div>
-                <div class="p-4">
-                <div class="flex items-start gap-3 mb-3 -mt-10">
-                    <div class="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden" style="background: rgba(74, 158, 255, 0.2); border: 2px solid ${isConnected ? "#4a9eff" : "#ff003c"};">
+                <div class="px-4 pb-4">
+                <div class="flex items-end gap-3 mb-4">
+                    <div class="w-14 h-14 -mt-7 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden shadow-[0_0_0_4px_rgba(0,0,0,0.75)]" style="background: rgba(74, 158, 255, 0.2); border: 2px solid ${isConnected ? "#4a9eff" : "#ff003c"};">
                         ${page.picture_url ? `<img src="${escapeHtml(page.picture_url)}" alt="${escapeHtml(page.name)}" class="w-full h-full object-cover"/>` : `<i class="fa-brands fa-facebook ${isConnected ? "text-hud-fb" : "text-hud-red"} text-lg"></i>`}
                     </div>
-                    <div class="flex-1 min-w-0">
+                    <div class="flex-1 min-w-0 pt-3">
                         <div class="flex items-center gap-2 mb-0.5">
                             <span class="font-display font-bold text-sm text-white uppercase-wide truncate">${escapeHtml(page.name || page.page_id)}</span>
                             ${isConnected ? `<i class="fa-solid fa-check text-[10px]" style="color:#4a9eff;"></i>` : ""}

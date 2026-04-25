@@ -60,6 +60,11 @@ from app.schemas import (
 )
 from app.site_store import create_site, delete_site, get_site, list_sites, test_site_connection, update_site
 
+try:
+    from redis import Redis
+except ImportError:  # pragma: no cover
+    Redis = None
+
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="2.0.0")
 log = get_logger("content_forge.api")
@@ -727,6 +732,101 @@ async def get_jobs(status: str | None = None, priority: str | None = None, searc
     return JobListResponse(total=len(items), jobs=items)
 
 
+def _realtime_redis_client() -> Redis | None:
+    if Redis is None:
+        return None
+    try:
+        client = Redis.from_url(settings.redis_url, decode_responses=True)
+        client.ping()
+        return client
+    except Exception:
+        return None
+
+
+def _stats_payload() -> dict:
+    snapshot = stats_snapshot()
+    total = snapshot["total"]
+    completed = snapshot["completed"]
+    duplicate = snapshot["duplicate"]
+    return {
+        "total_processed": total,
+        "success_rate": round((completed / total), 2) if total else 0.0,
+        "avg_processing_time_sec": round(snapshot["avg_time"], 2),
+        "avg_qa_score": round(snapshot["avg_score"], 2),
+        "avg_cost_per_article_usd": round(snapshot["avg_cost"], 4),
+        "dlq_size": snapshot["dlq_size"],
+        "duplicate_rate": round((duplicate / total), 2) if total else 0.0,
+    }
+
+
+async def _jobs_realtime_snapshot(limit: int) -> dict:
+    jobs = await asyncio.to_thread(list_jobs, None, None, None, max(1, min(limit, 200)))
+    items = [item.model_dump() for item in _job_list_items(jobs)]
+    stats = await asyncio.to_thread(_stats_payload)
+    return {"type": "jobs.snapshot", "channel": "jobs", "jobs": items, "stats": stats}
+
+
+@app.websocket(f"{settings.api_prefix}/realtime/ws")
+async def realtime_ws(websocket: WebSocket) -> None:
+    payload = verify_session_token(websocket.cookies.get(settings.auth_cookie_name))
+    if not payload:
+        await websocket.close(code=4401)
+        return
+    await websocket.accept()
+    redis_conn = _realtime_redis_client()
+    pubsub = redis_conn.pubsub(ignore_subscribe_messages=True) if redis_conn is not None else None
+    subscribed_channels: set[str] = set()
+    limit = 50
+    try:
+        await websocket.send_text(json.dumps({"type": "realtime.ready"}, ensure_ascii=False))
+        while True:
+            try:
+                raw_message = await asyncio.wait_for(websocket.receive_text(), timeout=0.2)
+                try:
+                    client_message = json.loads(raw_message)
+                except json.JSONDecodeError:
+                    client_message = {}
+                message_type = str(client_message.get("type") or "")
+                if message_type == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}, ensure_ascii=False))
+                    continue
+                if message_type == "subscribe":
+                    limit = max(1, min(int(client_message.get("limit") or limit), 200))
+                    requested = {str(channel) for channel in (client_message.get("channels") or [])}
+                    for channel in requested:
+                        if channel in subscribed_channels:
+                            continue
+                        subscribed_channels.add(channel)
+                        if pubsub is not None:
+                            await asyncio.to_thread(pubsub.subscribe, f"content_forge:realtime:{channel}")
+                    if "jobs" in requested:
+                        await websocket.send_text(json.dumps(await _jobs_realtime_snapshot(limit), ensure_ascii=False))
+            except asyncio.TimeoutError:
+                pass
+
+            if pubsub is None or not subscribed_channels:
+                continue
+
+            message = await asyncio.to_thread(pubsub.get_message, timeout=0.2)
+            if not message or message.get("type") != "message":
+                continue
+            try:
+                event = json.loads(message.get("data") or "{}")
+            except json.JSONDecodeError:
+                continue
+            channel = str(event.get("channel") or "")
+            if channel == "jobs" and channel in subscribed_channels:
+                await websocket.send_text(json.dumps(await _jobs_realtime_snapshot(limit), ensure_ascii=False))
+            elif channel in subscribed_channels:
+                await websocket.send_text(json.dumps(event, ensure_ascii=False))
+    except WebSocketDisconnect:
+        return
+    finally:
+        if pubsub is not None:
+            with suppress(Exception):
+                pubsub.close()
+
+
 @app.websocket(f"{settings.api_prefix}/jobs/ws")
 async def jobs_ws(websocket: WebSocket, limit: int = 50) -> None:
     payload = verify_session_token(websocket.cookies.get(settings.auth_cookie_name))
@@ -867,19 +967,7 @@ async def delete_dlq(job_id: str) -> dict:
 
 @app.get(f"{settings.api_prefix}/stats", response_model=StatsResponse)
 async def get_stats() -> StatsResponse:
-    snapshot = stats_snapshot()
-    total = snapshot["total"]
-    completed = snapshot["completed"]
-    duplicate = snapshot["duplicate"]
-    return StatsResponse(
-        total_processed=total,
-        success_rate=round((completed / total), 2) if total else 0.0,
-        avg_processing_time_sec=round(snapshot["avg_time"], 2),
-        avg_qa_score=round(snapshot["avg_score"], 2),
-        avg_cost_per_article_usd=round(snapshot["avg_cost"], 4),
-        dlq_size=snapshot["dlq_size"],
-        duplicate_rate=round((duplicate / total), 2) if total else 0.0,
-    )
+    return StatsResponse(**_stats_payload())
 
 
 @app.get("/")

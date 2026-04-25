@@ -660,10 +660,10 @@
         }));
         return JSON.stringify({
             jobs,
-            total: stats.total || 0,
-            avg_time: stats.avg_time || 0,
-            avg_score: stats.avg_score || 0,
-            avg_cost: stats.avg_cost || 0,
+            total_processed: stats.total_processed || 0,
+            avg_processing_time_sec: stats.avg_processing_time_sec || 0,
+            avg_qa_score: stats.avg_qa_score || 0,
+            avg_cost_per_article_usd: stats.avg_cost_per_article_usd || 0,
             dlq_size: stats.dlq_size || 0,
             status_filter: normalizeJobsStatusFilter(state.jobsStatusFilter),
             sort_key: state.jobsSortKey,
@@ -886,12 +886,16 @@
         closeJobsStream();
         state.jobsStreamActive = true;
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        state.jobsSocket = new WebSocket(`${protocol}//${window.location.host}${API_BASE}/jobs/ws?limit=50`);
+        state.jobsSocket = new WebSocket(`${protocol}//${window.location.host}${API_BASE}/realtime/ws`);
         state.jobsSocket.onopen = () => {
             state.jobsReconnectAttempts = 0;
+            state.jobsSocket.send(JSON.stringify({ type: "subscribe", channels: ["jobs"], limit: 50 }));
         };
         state.jobsSocket.onmessage = (event) => {
             const payload = JSON.parse(event.data);
+            if (payload.type !== "jobs.snapshot") {
+                return;
+            }
             const nextSignature = jobsSignature({ jobs: payload.jobs || [] }, payload.stats || {});
             if (nextSignature === state.jobsSignature) {
                 return;

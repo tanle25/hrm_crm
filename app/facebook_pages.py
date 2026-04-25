@@ -802,6 +802,16 @@ def _message_participant_name(participant: dict[str, Any]) -> str:
 
 
 def _normalize_message_attachment(raw: dict[str, Any]) -> dict[str, Any]:
+    if {"type", "url", "preview_url"}.issubset(raw.keys()):
+        return {
+            "attachment_id": str(raw.get("attachment_id") or raw.get("id") or ""),
+            "type": str(raw.get("type") or "file"),
+            "mime_type": str(raw.get("mime_type") or ""),
+            "name": str(raw.get("name") or ""),
+            "url": str(raw.get("url") or ""),
+            "preview_url": str(raw.get("preview_url") or ""),
+            "size": _safe_int(raw.get("size")),
+        }
     image_data = raw.get("image_data") or {}
     video_data = raw.get("video_data") or {}
     mime_type = str(raw.get("mime_type") or image_data.get("mime_type") or video_data.get("mime_type") or "")
@@ -824,6 +834,71 @@ def _normalize_message_attachment(raw: dict[str, Any]) -> dict[str, Any]:
         "preview_url": str(image_data.get("preview_url") or video_data.get("preview_url") or image_url or ""),
         "size": _safe_int(raw.get("file_size") or raw.get("size")),
     }
+
+
+def _attachment_has_media_url(attachment: dict[str, Any]) -> bool:
+    return bool(str(attachment.get("url") or attachment.get("preview_url") or "").strip())
+
+
+def _merge_message_attachments(primary: list[dict[str, Any]], fallback: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for item in fallback + primary:
+        attachment_id = str(item.get("attachment_id") or "")
+        key = attachment_id or f"{item.get('type')}::{item.get('name')}::{item.get('url')}::{item.get('preview_url')}"
+        existing = merged.get(key) or {}
+        merged[key] = {
+            **item,
+            "attachment_id": attachment_id or existing.get("attachment_id") or "",
+            "type": item.get("type") or existing.get("type") or "file",
+            "mime_type": item.get("mime_type") or existing.get("mime_type") or "",
+            "name": item.get("name") or existing.get("name") or "",
+            "url": item.get("url") or existing.get("url") or "",
+            "preview_url": item.get("preview_url") or existing.get("preview_url") or "",
+            "size": item.get("size") or existing.get("size") or 0,
+        }
+    return list(merged.values())
+
+
+def _fetch_message_extras(
+    client: httpx.Client,
+    base_url: str,
+    access_token: str,
+    message_id: str,
+) -> dict[str, Any]:
+    extras: dict[str, Any] = {"attachments": [], "shares": {}, "sticker": {}}
+    if not message_id:
+        return extras
+    try:
+        response = client.get(
+            f"{base_url}/{message_id}",
+            params={"fields": "attachments,shares,sticker", "access_token": access_token},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        extras["shares"] = payload.get("shares") or {}
+        extras["sticker"] = payload.get("sticker") or {}
+        extras["attachments"] = [
+            _normalize_message_attachment(item)
+            for item in (((payload.get("attachments") or {}).get("data")) or [])
+            if isinstance(item, dict)
+        ]
+    except httpx.HTTPError:
+        return extras
+    if extras["attachments"] and all(_attachment_has_media_url(item) for item in extras["attachments"]):
+        return extras
+    try:
+        response = client.get(f"{base_url}/{message_id}/attachments", params={"access_token": access_token})
+        response.raise_for_status()
+        payload = response.json()
+        attachment_items = [
+            _normalize_message_attachment(item)
+            for item in (payload.get("data") or [])
+            if isinstance(item, dict)
+        ]
+        extras["attachments"] = _merge_message_attachments(attachment_items, extras["attachments"])
+    except httpx.HTTPError:
+        return extras
+    return extras
 
 
 def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any]:
@@ -923,6 +998,30 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[st
                     if not batch:
                         break
                     for item in batch:
+                        message_items = (((item.get("messages") or {}).get("data")) or [])
+                        for message in message_items:
+                            if not isinstance(message, dict):
+                                continue
+                            message_id = str(message.get("id") or "")
+                            thread_attachments = [
+                                _normalize_message_attachment(attachment)
+                                for attachment in (((message.get("attachments") or {}).get("data")) or [])
+                                if isinstance(attachment, dict)
+                            ]
+                            should_enrich = (
+                                not message.get("message")
+                                or not thread_attachments
+                                or any(not _attachment_has_media_url(attachment) for attachment in thread_attachments)
+                            )
+                            if not should_enrich:
+                                continue
+                            extras = _fetch_message_extras(client, base_url, page["page_access_token"], message_id)
+                            if extras.get("attachments"):
+                                message["attachments"] = {"data": extras["attachments"]}
+                            if extras.get("shares"):
+                                message["shares"] = extras["shares"]
+                            if extras.get("sticker"):
+                                message["sticker"] = extras["sticker"]
                         conversation = _normalize_conversation(page, item)
                         conversations.append(conversation)
                         fetched_for_page += 1

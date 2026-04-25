@@ -28,6 +28,7 @@
         jobsReconnectAttempts: 0,
         jobsStreamActive: false,
         jobsSignature: "",
+        jobsStatusFilter: "",
     };
 
     function escapeHtml(value) {
@@ -553,6 +554,19 @@
         return { processing, queued, completed, failed, avgTime: stats.avg_processing_time_sec || 0 };
     }
 
+    function normalizeJobsStatusFilter(status) {
+        const key = String(status || "").toLowerCase();
+        if (key === "queued") return "pending";
+        if (["processing", "pending", "completed", "failed"].includes(key)) return key;
+        return "";
+    }
+
+    function filterJobsByStatus(jobs) {
+        const filter = normalizeJobsStatusFilter(state.jobsStatusFilter);
+        if (!filter) return jobs;
+        return jobs.filter((job) => String(job.status || "").toLowerCase() === filter);
+    }
+
     function progressDots(job) {
         const activeIndex = PAGE_STEPS.indexOf(job.current_step);
         return PAGE_STEPS.slice(0, 10).map((step, index) => {
@@ -602,6 +616,7 @@
             avg_score: stats.avg_score || 0,
             avg_cost: stats.avg_cost || 0,
             dlq_size: stats.dlq_size || 0,
+            status_filter: normalizeJobsStatusFilter(state.jobsStatusFilter),
         });
     }
 
@@ -645,16 +660,17 @@
     function renderJobsMarkup(jobsPayload, stats) {
         const jobs = jobsPayload.jobs || [];
         const metrics = jobsMetrics(jobs, stats);
+        const visibleJobs = filterJobsByStatus(jobs);
         const groupedRows = [];
         const consumed = new Set();
         const childrenByParent = new Map();
-        for (const job of jobs) {
+        for (const job of visibleJobs) {
             if (!job.parent_job_id) continue;
             const list = childrenByParent.get(job.parent_job_id) || [];
             list.push(job);
             childrenByParent.set(job.parent_job_id, list);
         }
-        for (const job of jobs) {
+        for (const job of visibleJobs) {
             if (consumed.has(job.job_id)) continue;
             if (job.workflow_role === "shared_master") {
                 groupedRows.push({ job, depth: 0, groupLabel: job.batch_id ? `BATCH ${job.batch_id.slice(0, 8)}` : "SHARED BATCH" });
@@ -676,18 +692,23 @@
             consumed.add(job.job_id);
         }
         const metricsHtml = [
-            ["PROCESSING", metrics.processing, "cyan"],
-            ["QUEUED", metrics.queued, "amber"],
-            ["COMPLETED", metrics.completed, "green"],
-            ["FAILED", metrics.failed, "red"],
-            ["AVG TIME", `${formatNumber(metrics.avgTime, 2)}s`, "white"],
-        ].map(([label, value, tone]) => `
-            <div class="hud-card ${tone === "amber" ? "amber" : tone === "green" ? "green" : tone === "red" ? "danger" : ""} p-4 fade-in">
+            ["PROCESSING", metrics.processing, "cyan", "processing"],
+            ["QUEUED", metrics.queued, "amber", "pending"],
+            ["COMPLETED", metrics.completed, "green", "completed"],
+            ["FAILED", metrics.failed, "red", "failed"],
+            ["AVG TIME", `${formatNumber(metrics.avgTime, 2)}s`, "white", ""],
+        ].map(([label, value, tone, statusFilter]) => {
+            const active = statusFilter && normalizeJobsStatusFilter(state.jobsStatusFilter) === statusFilter;
+            const clickable = statusFilter ? "cursor-pointer hover:border-hud-cyan/60 transition-colors jobs-status-filter" : "";
+            const activeClass = active ? "ring-1 ring-hud-cyan/70 shadow-[0_0_24px_rgba(34,211,238,0.18)]" : "";
+            return `
+            <div class="hud-card ${tone === "amber" ? "amber" : tone === "green" ? "green" : tone === "red" ? "danger" : ""} ${clickable} ${activeClass} p-4 fade-in" ${statusFilter ? `data-status-filter="${statusFilter}" title="Click để lọc/bỏ lọc"` : ""}>
                 <span class="c-tl"></span><span class="c-br"></span>
-                <div class="text-[9px] ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : tone === "red" ? "text-hud-red" : "text-hud-cyan"} uppercase-widest mb-1">${label}</div>
+                <div class="text-[9px] ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : tone === "red" ? "text-hud-red" : "text-hud-cyan"} uppercase-widest mb-1">${label}${active ? " · FILTER" : ""}</div>
                 <div class="metric-num text-2xl ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : tone === "red" ? "text-hud-red" : "text-white"}">${value}</div>
             </div>
-        `).join("");
+        `;
+        }).join("");
         const rowsHtml = groupedRows.map(({ job, depth, groupLabel }) => {
             const [tone, label] = badge(job.status);
             const siteBadge = job.site_name ? `<span class="badge cyan">${escapeHtml(job.site_name)}</span>` : "";
@@ -724,7 +745,7 @@
                 </tr>
             `;
         }).join("") || `<tr><td colspan="5" class="text-hud-muted text-center py-6">No jobs found.</td></tr>`;
-        return { metricsHtml, rowsHtml, jobsCount: jobs.length };
+        return { metricsHtml, rowsHtml, jobsCount: visibleJobs.length };
     }
 
     function applyJobsMarkup(section, jobsPayload, stats) {
@@ -752,6 +773,16 @@
                 } catch (error) {
                     alert(`Retry failed: ${error.message}`);
                 }
+            });
+        });
+        section.querySelectorAll(".jobs-status-filter").forEach((card) => {
+            if (card.dataset.bound) return;
+            card.dataset.bound = "1";
+            card.addEventListener("click", () => {
+                const nextFilter = normalizeJobsStatusFilter(card.dataset.statusFilter);
+                state.jobsStatusFilter = normalizeJobsStatusFilter(state.jobsStatusFilter) === nextFilter ? "" : nextFilter;
+                state.jobsSignature = "";
+                refreshJobsSnapshot(section).catch(() => renderJobsPage());
             });
         });
     }

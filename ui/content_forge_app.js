@@ -2010,15 +2010,15 @@
                         Đang đồng bộ inbox Facebook trong nền. Tin nhắn đã lưu vẫn hiển thị, sync xong sẽ tự cập nhật.
                     </div>
                     ${facebookWarningBanner(payload.warnings)}
-                    <div class="grid gap-4" style="grid-template-columns: 340px 1fr; min-height: calc(100vh - 210px);">
-                        <div class="hud-card flex flex-col overflow-hidden fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                    <div class="grid gap-4" style="grid-template-columns: 340px minmax(0, 1fr); height: calc(100vh - 210px); min-height: 560px;">
+                        <div class="hud-card flex flex-col overflow-hidden fade-in min-h-0" style="border-color: rgba(74, 158, 255, 0.3);">
                             <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
                             <div class="header-strip px-4 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
                                 <i class="fa-solid fa-inbox text-hud-fb"></i>
                                 <span class="font-display font-black text-[10px] text-white uppercase-widest">INBOX · ${formatNumber(unread)} UNREAD</span>
                                 <button id="fb-messages-refresh" class="ml-auto btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i></button>
                             </div>
-                            <div class="flex-1 overflow-y-auto">
+                            <div class="flex-1 min-h-0 overflow-y-auto">
                                 ${conversations.map((conversation) => {
                                     const active = selected && selected.conversation_id === conversation.conversation_id;
                                     const hasUnread = Number(conversation.unread_count || 0) > 0;
@@ -2045,7 +2045,7 @@
                                 }).join("") || `<div class="p-6 text-center text-hud-muted text-sm">Chưa có hội thoại trong DB. Hệ thống sẽ sync nền nếu page token có quyền inbox.</div>`}
                             </div>
                         </div>
-                        <div class="hud-card flex flex-col overflow-hidden fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                        <div class="hud-card flex flex-col overflow-hidden fade-in min-h-0" style="border-color: rgba(74, 158, 255, 0.3);">
                             <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
                             ${selected ? `
                                 <div class="header-strip px-4 py-3 flex items-center gap-3" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
@@ -2058,7 +2058,7 @@
                                     </div>
                                     <span class="badge ${Number(selected.unread_count || 0) ? "amber" : "cyan"} ml-auto">${Number(selected.unread_count || 0) ? "UNREAD" : "OPEN"}</span>
                                 </div>
-                                <div class="flex-1 overflow-y-auto p-5 space-y-3">
+                                <div class="flex-1 min-h-0 overflow-y-auto p-5 space-y-3">
                                     ${messages.map((message) => `
                                         <div class="flex gap-2 max-w-[80%] ${message.direction === "outbound" ? "ml-auto flex-row-reverse" : ""}">
                                             <div class="w-7 h-7 rounded-full ${message.direction === "outbound" ? "bg-hud-fb/30 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0 mt-0.5">

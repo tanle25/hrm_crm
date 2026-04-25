@@ -948,6 +948,30 @@ def _message_fallback_label(message_text: str, attachments: list[dict[str, Any]]
     return "Tin nhắn đặc biệt"
 
 
+def _normalize_reply_to(raw: dict[str, Any] | None) -> dict[str, Any]:
+    payload = raw or {}
+    attachments = [
+        _normalize_message_attachment(item)
+        for item in (((payload.get("attachments") or {}).get("data")) or [])
+        if isinstance(item, dict)
+    ]
+    message_text = str(payload.get("message") or "")
+    return {
+        "mid": str(payload.get("id") or payload.get("mid") or ""),
+        "message": message_text,
+        "created_time": str(payload.get("created_time") or ""),
+        "from_id": str((payload.get("from") or {}).get("id") or ""),
+        "from_name": _message_participant_name(payload.get("from") or {}),
+        "attachments": attachments,
+        "fallback_label": _message_fallback_label(
+            message_text,
+            attachments,
+            payload.get("shares") or {},
+            payload.get("sticker") or {},
+        ),
+    }
+
+
 def _merge_message_attachments(primary: list[dict[str, Any]], fallback: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
     for item in fallback + primary:
@@ -973,14 +997,14 @@ def _fetch_message_extras(
     access_token: str,
     message_id: str,
 ) -> dict[str, Any]:
-    extras: dict[str, Any] = {"attachments": [], "shares": {}, "sticker": {}}
+    extras: dict[str, Any] = {"attachments": [], "shares": {}, "sticker": {}, "reply_to": {}}
     if not message_id:
         return extras
     try:
         response = client.get(
             f"{base_url}/{message_id}",
             params={
-                "fields": "attachments{type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data},shares,sticker",
+                "fields": "attachments{type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data},shares,sticker,reply_to{id,message,created_time,from,attachments{type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data},sticker}",
                 "access_token": access_token,
             },
         )
@@ -988,6 +1012,7 @@ def _fetch_message_extras(
         payload = response.json()
         extras["shares"] = payload.get("shares") or {}
         extras["sticker"] = payload.get("sticker") or {}
+        extras["reply_to"] = _normalize_reply_to(payload.get("reply_to") or {})
         extras["attachments"] = [
             _normalize_message_attachment(item)
             for item in (((payload.get("attachments") or {}).get("data")) or [])
@@ -1034,6 +1059,7 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
         ]
         message_text = str(message.get("message") or "")
         fallback_label = _message_fallback_label(message_text, attachments, message.get("shares") or {}, message.get("sticker") or {})
+        reply_to = _normalize_reply_to(message.get("reply_to") or {})
         messages.append(
             {
                 "message_id": str(message.get("id") or ""),
@@ -1046,6 +1072,7 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
                 "direction": "outbound" if sender_id == page_id else "inbound",
                 "attachments": attachments,
                 "fallback_label": fallback_label,
+                "reply_to": reply_to,
             }
         )
     messages.sort(key=lambda item: item.get("created_time") or "")
@@ -1163,7 +1190,7 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[st
     base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
     conversations: list[dict[str, Any]] = []
     warnings: list[str] = []
-    fields = "id,snippet,updated_time,unread_count,message_count,participants,messages.limit(30){id,message,created_time,from,to,shares,sticker,attachments{type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data}}"
+    fields = "id,snippet,updated_time,unread_count,message_count,participants,messages.limit(30){id,message,created_time,from,to,shares,sticker,reply_to{id},attachments{type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data}}"
 
     with httpx.Client(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
         for page in pages:
@@ -1209,6 +1236,8 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[st
                                 message["shares"] = extras["shares"]
                             if extras.get("sticker"):
                                 message["sticker"] = extras["sticker"]
+                            if extras.get("reply_to"):
+                                message["reply_to"] = extras["reply_to"]
                         conversation = _normalize_conversation(page, item)
                         conversations.append(conversation)
                         fetched_for_page += 1

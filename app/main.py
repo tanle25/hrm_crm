@@ -101,7 +101,17 @@ def _request_api_token(request: Request) -> str:
     auth_header = str(request.headers.get("authorization") or "").strip()
     if auth_header.lower().startswith("bearer "):
         return auth_header[7:].strip()
-    return str(request.headers.get("x-api-token") or "").strip()
+    return str(
+        request.headers.get("x-api-token")
+        or request.query_params.get("token")
+        or request.query_params.get("api_token")
+        or ""
+    ).strip()
+
+
+def _is_shopee_extension_path(path: str) -> bool:
+    normalized = path.rstrip("/")
+    return normalized == f"{settings.api_prefix}/shopee/products"
 
 
 def _extension_authorized(request: Request) -> bool:
@@ -113,11 +123,13 @@ def _extension_authorized(request: Request) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+    if request.method.upper() == "OPTIONS":
+        return await call_next(request)
     if _is_exempt_path(path):
         return await call_next(request)
     if _is_authenticated_request(request):
         return await call_next(request)
-    if path == f"{settings.api_prefix}/shopee/products" and request.method.upper() == "POST" and verify_api_token(_request_api_token(request)):
+    if _is_shopee_extension_path(path) and request.method.upper() == "POST" and verify_api_token(_request_api_token(request)):
         return await call_next(request)
     if path.startswith(settings.api_prefix):
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})

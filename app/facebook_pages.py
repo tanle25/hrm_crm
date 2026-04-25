@@ -1210,6 +1210,38 @@ def facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[str, An
     }
 
 
+def debug_facebook_messages(conversation_id: str = "", message_id: str = "") -> dict[str, Any]:
+    message_id = (message_id or "").strip()
+    conversation_id = (conversation_id or "").strip()
+    if message_id:
+        message = _get_cached_facebook_message(message_id)
+        return {"message_id": message_id, "message": message or {}, "found": bool(message)}
+    if not conversation_id:
+        raise RuntimeError("conversation_id or message_id is required.")
+    conversation = _get_cached_facebook_conversation(conversation_id) or {}
+    stored_messages = _list_cached_facebook_messages(conversation_id, 200)
+    graph_messages = conversation.get("messages") or []
+    merged_messages = _merge_conversation_messages(graph_messages, stored_messages)
+    return {
+        "conversation_id": conversation_id,
+        "conversation_found": bool(conversation),
+        "stored_count": len(stored_messages),
+        "graph_count": len(graph_messages),
+        "messages": [
+            {
+                "message_id": item.get("message_id"),
+                "message": item.get("message"),
+                "direction": item.get("direction"),
+                "attachments": item.get("attachments") or [],
+                "fallback_label": item.get("fallback_label"),
+                "reply_to": item.get("reply_to") or {},
+                "raw": item.get("raw") or {},
+            }
+            for item in merged_messages
+        ],
+    }
+
+
 def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
     settings = get_settings()
     limit = max(1, min(limit, 100))

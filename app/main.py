@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.dlq import publish_anyway
 from app.facebook_pages import (
     connect_facebook_pages,
+    debug_facebook_messages,
     facebook_aggregate_stats,
     facebook_comments,
     facebook_conversations,
@@ -588,6 +589,15 @@ async def send_facebook_message_endpoint(request: FacebookMessageSendRequest) ->
     except RuntimeError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return FacebookMessageSendResponse(**result)
+
+
+@app.get(f"{settings.api_prefix}/facebook/messages/debug")
+async def debug_facebook_messages_endpoint(conversation_id: str = "", message_id: str = "") -> JSONResponse:
+    try:
+        result = await asyncio.to_thread(debug_facebook_messages, conversation_id, message_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return JSONResponse(result)
 
 
 @app.get(f"{settings.api_prefix}/facebook/webhook")

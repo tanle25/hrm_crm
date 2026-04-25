@@ -66,6 +66,7 @@ class FacebookPageItem(BaseModel):
     name: str = ""
     category: str = ""
     picture_url: str = ""
+    cover_url: str = ""
     tasks: List[str] = Field(default_factory=list)
     status: str = "connected"
     token_prefix: str = ""

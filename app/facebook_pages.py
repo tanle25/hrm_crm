@@ -58,6 +58,7 @@ def _public_page(item: dict[str, Any]) -> dict[str, Any]:
         "name": item.get("name", ""),
         "category": item.get("category", ""),
         "picture_url": item.get("picture_url", ""),
+        "cover_url": item.get("cover_url", ""),
         "tasks": item.get("tasks") or [],
         "status": item.get("status", "connected"),
         "token_prefix": _mask_token(str(item.get("page_access_token") or "")),
@@ -130,7 +131,7 @@ def connect_facebook_pages(short_lived_token: str) -> dict[str, Any]:
         pages_response = client.get(
             f"{base_url}/me/accounts",
             params={
-                "fields": "id,name,category,access_token,tasks,picture{url}",
+                "fields": "id,name,category,access_token,tasks,picture.width(256).height(256){url},cover{source}",
                 "access_token": long_lived_user_token,
                 "limit": 100,
             },
@@ -151,6 +152,7 @@ def connect_facebook_pages(short_lived_token: str) -> dict[str, Any]:
             "name": page.get("name") or "",
             "category": page.get("category") or "",
             "picture_url": ((page.get("picture") or {}).get("data") or {}).get("url") or "",
+            "cover_url": (page.get("cover") or {}).get("source") or "",
             "tasks": page.get("tasks") or [],
             "page_access_token": page_token,
             "long_lived_user_token": long_lived_user_token,

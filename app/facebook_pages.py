@@ -814,15 +814,38 @@ def _normalize_message_attachment(raw: dict[str, Any]) -> dict[str, Any]:
         }
     image_data = raw.get("image_data") or {}
     video_data = raw.get("video_data") or {}
-    mime_type = str(raw.get("mime_type") or image_data.get("mime_type") or video_data.get("mime_type") or "")
-    image_url = str(image_data.get("url") or image_data.get("preview_url") or "")
-    video_url = str(video_data.get("url") or video_data.get("preview_url") or "")
-    file_url = str(raw.get("file_url") or image_url or video_url or raw.get("url") or "")
+    payload = raw.get("payload") or {}
+    target = raw.get("target") or {}
+    subattachments = ((raw.get("subattachments") or {}).get("data")) or []
+    first_subattachment = subattachments[0] if subattachments and isinstance(subattachments[0], dict) else {}
+    first_sub_payload = first_subattachment.get("payload") or {}
+    mime_type = str(raw.get("mime_type") or image_data.get("mime_type") or video_data.get("mime_type") or payload.get("mime_type") or "")
+    image_url = str(
+        image_data.get("url")
+        or image_data.get("preview_url")
+        or payload.get("url")
+        or payload.get("src")
+        or ((payload.get("media") or {}).get("image") or {}).get("src")
+        or first_sub_payload.get("url")
+        or first_sub_payload.get("src")
+        or ""
+    )
+    video_url = str(video_data.get("url") or video_data.get("preview_url") or payload.get("url") or "")
+    file_url = str(
+        raw.get("file_url")
+        or image_url
+        or video_url
+        or raw.get("url")
+        or target.get("url")
+        or first_subattachment.get("url")
+        or ""
+    )
     raw_type = str(raw.get("type") or "").lower()
     url_for_guess = file_url.lower()
     attachment_type = "file"
     if (
         raw_type == "image"
+        or raw_type == "photo"
         or mime_type.startswith("image/")
         or image_url
         or any(url_for_guess.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"])
@@ -883,7 +906,10 @@ def _fetch_message_extras(
     try:
         response = client.get(
             f"{base_url}/{message_id}",
-            params={"fields": "attachments,shares,sticker", "access_token": access_token},
+            params={
+                "fields": "attachments{type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data},shares,sticker",
+                "access_token": access_token,
+            },
         )
         response.raise_for_status()
         payload = response.json()
@@ -899,7 +925,13 @@ def _fetch_message_extras(
     if extras["attachments"] and all(_attachment_has_media_url(item) for item in extras["attachments"]):
         return extras
     try:
-        response = client.get(f"{base_url}/{message_id}/attachments", params={"access_token": access_token})
+        response = client.get(
+            f"{base_url}/{message_id}/attachments",
+            params={
+                "fields": "type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data",
+                "access_token": access_token,
+            },
+        )
         response.raise_for_status()
         payload = response.json()
         attachment_items = [
@@ -988,7 +1020,7 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[st
     base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
     conversations: list[dict[str, Any]] = []
     warnings: list[str] = []
-    fields = "id,snippet,updated_time,unread_count,message_count,participants,messages.limit(30){id,message,created_time,from,to,attachments{mime_type,name,file_url,image_data,video_data}}"
+    fields = "id,snippet,updated_time,unread_count,message_count,participants,messages.limit(30){id,message,created_time,from,to,shares,sticker,attachments{type,mime_type,name,file_url,url,target,payload,subattachments,image_data,video_data}}"
 
     with httpx.Client(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
         for page in pages:

@@ -2038,7 +2038,10 @@
                                         <th class="px-4 py-3">Page</th>
                                         <th class="px-4 py-3">Thời gian</th>
                                         <th class="px-4 py-3 text-right">Reach</th>
+                                        <th class="px-4 py-3 text-right">Views</th>
                                         <th class="px-4 py-3 text-right">Engaged</th>
+                                        <th class="px-4 py-3 text-right">Clicks</th>
+                                        <th class="px-4 py-3 text-right">Cmt/React</th>
                                         <th class="px-4 py-3">Status</th>
                                         <th class="px-4 py-3 text-right">Actions</th>
                                     </tr>
@@ -2058,7 +2061,10 @@
                                             <td class="px-4 py-4 text-[11px] text-white">${escapeHtml(post.page_name || "Facebook Page")}</td>
                                             <td class="px-4 py-4 text-[11px] text-hud-muted">${escapeHtml(formatDate(post.created_time))}</td>
                                             <td class="px-4 py-4 text-right text-white font-mono">${formatCompact(post.reach || 0)}</td>
+                                            <td class="px-4 py-4 text-right text-white font-mono">${formatCompact(post.views || post.impressions || 0)}</td>
                                             <td class="px-4 py-4 text-right text-hud-green font-mono">${formatCompact(post.engagement || 0)}</td>
+                                            <td class="px-4 py-4 text-right text-hud-cyan font-mono">${formatCompact(post.clicks || 0)}</td>
+                                            <td class="px-4 py-4 text-right text-white/80 font-mono">${formatCompact(post.comments || 0)} / ${formatCompact(post.reactions || 0)}</td>
                                             <td class="px-4 py-4"><span class="badge green">POSTED</span></td>
                                             <td class="px-4 py-4 text-right">
                                                 <div class="flex items-center justify-end gap-3">
@@ -2067,7 +2073,7 @@
                                                 </div>
                                             </td>
                                         </tr>
-                                    `).join("") || `<tr><td colspan="7" class="px-5 py-10 text-center text-hud-muted text-sm">Chưa có bài viết trong DB. Hệ thống sẽ đồng bộ nền; có bao nhiêu bài sẽ hiển thị bấy nhiêu sau khi sync xong.</td></tr>`}
+                                    `).join("") || `<tr><td colspan="10" class="px-5 py-10 text-center text-hud-muted text-sm">Chưa có bài viết trong DB. Hệ thống sẽ đồng bộ nền; có bao nhiêu bài sẽ hiển thị bấy nhiêu sau khi sync xong.</td></tr>`}
                                 </tbody>
                             </table>
                         </div>

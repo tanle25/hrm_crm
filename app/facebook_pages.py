@@ -489,6 +489,69 @@ def _facebook_comments_payload(comments: list[dict[str, Any]], page_count: int, 
     }
 
 
+def _fetch_post_analytics(client: httpx.Client, base_url: str, post_id: str, token: str) -> tuple[dict[str, int], list[str]]:
+    metrics = {
+        "reach": 0,
+        "impressions": 0,
+        "engagement": 0,
+        "clicks": 0,
+        "comments": 0,
+        "reactions": 0,
+        "shares": 0,
+    }
+    warnings: list[str] = []
+    try:
+        response = client.get(
+            f"{base_url}/{post_id}/insights",
+            params={
+                "metric": "post_impressions_unique,post_impressions,post_engaged_users,post_clicks",
+                "access_token": token,
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        metrics["reach"] = _post_insight_total(payload, "post_impressions_unique")
+        metrics["impressions"] = _post_insight_total(payload, "post_impressions")
+        metrics["engagement"] = _post_insight_total(payload, "post_engaged_users")
+        metrics["clicks"] = _post_insight_total(payload, "post_clicks")
+    except httpx.HTTPError as error:
+        warnings.append(f"{post_id}: insights unavailable - {_graph_error_message(error)}")
+
+    try:
+        response = client.get(
+            f"{base_url}/{post_id}/comments",
+            params={"summary": "true", "limit": 0, "access_token": token},
+        )
+        response.raise_for_status()
+        metrics["comments"] = _safe_int(((response.json().get("summary") or {}).get("total_count")))
+    except httpx.HTTPError as error:
+        object_id = post_id.split("_", 1)[1] if "_" in post_id else ""
+        if object_id:
+            try:
+                response = client.get(
+                    f"{base_url}/{object_id}/comments",
+                    params={"summary": "true", "limit": 0, "access_token": token},
+                )
+                response.raise_for_status()
+                metrics["comments"] = _safe_int(((response.json().get("summary") or {}).get("total_count")))
+            except httpx.HTTPError as fallback_error:
+                warnings.append(f"{post_id}: comments count unavailable - {_graph_error_message(fallback_error)}")
+        else:
+            warnings.append(f"{post_id}: comments count unavailable - {_graph_error_message(error)}")
+
+    try:
+        response = client.get(
+            f"{base_url}/{post_id}/reactions",
+            params={"summary": "true", "limit": 0, "access_token": token},
+        )
+        response.raise_for_status()
+        metrics["reactions"] = _safe_int(((response.json().get("summary") or {}).get("total_count")))
+    except httpx.HTTPError as error:
+        warnings.append(f"{post_id}: reactions count unavailable - {_graph_error_message(error)}")
+
+    return metrics, warnings
+
+
 def _empty_facebook_stats(days: int, page_count: int, warnings: list[str] | None = None) -> dict[str, Any]:
     normalized_days = max(1, min(days, 30))
     now = datetime.now(timezone.utc)
@@ -548,27 +611,32 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                     for post in batch:
                         created_time = str(post.get("created_time") or "")
                         created_dt = _parse_graph_time(created_time)
-                        posts.append(
-                            {
-                                "post_id": str(post.get("id") or ""),
-                                "page_id": str(page.get("page_id") or ""),
-                                "page_name": page.get("name") or "",
-                                "page_picture_url": page.get("picture_url") or "",
-                                "message": post.get("message") or "",
-                                "created_time": created_time,
-                                "type": post.get("type") or post.get("status_type") or "post",
-                                "status": "posted",
-                                "permalink_url": post.get("permalink_url") or "",
-                                "full_picture": post.get("full_picture") or "",
-                                "reach": 0,
-                                "impressions": 0,
-                                "engagement": 0,
-                                "comments": 0,
-                                "shares": 0,
-                                "posted_7d": bool(created_dt and created_dt >= since_7d),
-                            }
-                        )
-                        _upsert_facebook_post(posts[-1])
+                        post_id = str(post.get("id") or "")
+                        analytics, analytics_warnings = _fetch_post_analytics(client, base_url, post_id, str(page["page_access_token"]))
+                        warnings.extend(analytics_warnings)
+                        post_record = {
+                            "post_id": post_id,
+                            "page_id": str(page.get("page_id") or ""),
+                            "page_name": page.get("name") or "",
+                            "page_picture_url": page.get("picture_url") or "",
+                            "message": post.get("message") or "",
+                            "created_time": created_time,
+                            "type": post.get("type") or post.get("status_type") or "post",
+                            "status": "posted",
+                            "permalink_url": post.get("permalink_url") or "",
+                            "full_picture": post.get("full_picture") or "",
+                            "reach": analytics["reach"],
+                            "impressions": analytics["impressions"],
+                            "views": analytics["impressions"],
+                            "engagement": analytics["engagement"],
+                            "clicks": analytics["clicks"],
+                            "comments": analytics["comments"],
+                            "reactions": analytics["reactions"],
+                            "shares": analytics["shares"],
+                            "posted_7d": bool(created_dt and created_dt >= since_7d),
+                        }
+                        posts.append(post_record)
+                        _upsert_facebook_post(post_record)
                     remaining -= len(batch)
                     after = ((posts_payload.get("paging") or {}).get("cursors") or {}).get("after")
                     if not after:

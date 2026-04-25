@@ -415,6 +415,60 @@ def _list_cached_facebook_comments(limit: int) -> list[dict[str, Any]]:
         return [json.loads(row[0]) for row in cur.fetchall()]
 
 
+def _upsert_facebook_conversation(item: dict[str, Any]) -> None:
+    conn = _postgres_conn()
+    if conn is None:
+        return
+    conversation_id = str(item.get("conversation_id") or "")
+    if not conversation_id:
+        return
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO facebook_conversations (conversation_id, page_id, updated_time, updated_at, data)
+            VALUES (%s, %s, %s, NOW(), %s::jsonb)
+            ON CONFLICT (conversation_id) DO UPDATE SET
+                page_id = EXCLUDED.page_id,
+                updated_time = EXCLUDED.updated_time,
+                updated_at = NOW(),
+                data = EXCLUDED.data
+            """,
+            (
+                conversation_id,
+                str(item.get("page_id") or ""),
+                _parse_graph_time_for_db(str(item.get("updated_time") or "")),
+                serialize_json(item),
+            ),
+        )
+
+
+def _list_cached_facebook_conversations(limit: int) -> list[dict[str, Any]]:
+    conn = _postgres_conn()
+    if conn is None:
+        return []
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data::text
+            FROM facebook_conversations
+            ORDER BY updated_time DESC NULLS LAST, updated_at DESC
+            LIMIT %s
+            """,
+            (max(1, min(limit, 100)),),
+        )
+        return [json.loads(row[0]) for row in cur.fetchall()]
+
+
+def _get_cached_facebook_conversation(conversation_id: str) -> dict[str, Any] | None:
+    conn = _postgres_conn()
+    if conn is None:
+        return None
+    with conn, conn.cursor() as cur:
+        cur.execute("SELECT data::text FROM facebook_conversations WHERE conversation_id = %s", (conversation_id,))
+        row = cur.fetchone()
+        return json.loads(row[0]) if row else None
+
+
 def _upsert_facebook_stats(stat_key: str, payload: dict[str, Any]) -> None:
     conn = _postgres_conn()
     if conn is None:
@@ -741,6 +795,163 @@ def sync_facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, An
 
     comments.sort(key=lambda item: item.get("created_time") or "", reverse=True)
     return _facebook_comments_payload(comments[:limit], len(pages), warnings)
+
+
+def _message_participant_name(participant: dict[str, Any]) -> str:
+    return str(participant.get("name") or participant.get("email") or participant.get("id") or "Facebook User")
+
+
+def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any]:
+    participants = (((raw.get("participants") or {}).get("data")) or [])
+    page_id = str(page.get("page_id") or "")
+    customer = next((item for item in participants if str(item.get("id") or "") != page_id), participants[0] if participants else {})
+    messages = []
+    for message in (((raw.get("messages") or {}).get("data")) or []):
+        sender = message.get("from") or {}
+        recipient = ((message.get("to") or {}).get("data") or [{}])[0]
+        sender_id = str(sender.get("id") or "")
+        messages.append(
+            {
+                "message_id": str(message.get("id") or ""),
+                "message": str(message.get("message") or ""),
+                "created_time": str(message.get("created_time") or ""),
+                "from_id": sender_id,
+                "from_name": _message_participant_name(sender),
+                "to_id": str(recipient.get("id") or ""),
+                "to_name": _message_participant_name(recipient),
+                "direction": "outbound" if sender_id == page_id else "inbound",
+            }
+        )
+    messages.sort(key=lambda item: item.get("created_time") or "")
+    last_message = messages[-1] if messages else {}
+    return {
+        "conversation_id": str(raw.get("id") or ""),
+        "page_id": page_id,
+        "page_name": page.get("name") or "",
+        "page_picture_url": page.get("picture_url") or "",
+        "customer_id": str(customer.get("id") or ""),
+        "customer_name": _message_participant_name(customer),
+        "snippet": raw.get("snippet") or last_message.get("message") or "",
+        "updated_time": str(raw.get("updated_time") or last_message.get("created_time") or ""),
+        "unread_count": _safe_int(raw.get("unread_count")),
+        "message_count": _safe_int(raw.get("message_count")) or len(messages),
+        "messages": messages,
+        "status": "unread" if _safe_int(raw.get("unread_count")) else "open",
+    }
+
+
+def facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
+    conversations = _list_cached_facebook_conversations(limit)
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
+    warnings = [] if conversations else ["No cached Facebook conversations yet. Run sync to fetch inbox from Graph API."]
+    return {
+        "total": len(conversations),
+        "page_count": len(pages),
+        "conversations": conversations,
+        "warnings": warnings[:20],
+    }
+
+
+def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
+    settings = get_settings()
+    limit = max(1, min(limit, 100))
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
+    base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
+    conversations: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    fields = "id,snippet,updated_time,unread_count,message_count,participants,messages.limit(30){id,message,created_time,from,to}"
+
+    with httpx.Client(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
+        for page in pages:
+            after = None
+            fetched_for_page = 0
+            try:
+                while len(conversations) < limit:
+                    params = {
+                        "fields": fields,
+                        "limit": min(25, limit - len(conversations)),
+                        "access_token": page["page_access_token"],
+                    }
+                    if after:
+                        params["after"] = after
+                    response = client.get(f"{base_url}/{page['page_id']}/conversations", params=params)
+                    response.raise_for_status()
+                    payload = response.json()
+                    batch = payload.get("data") or []
+                    if not batch:
+                        break
+                    for item in batch:
+                        conversation = _normalize_conversation(page, item)
+                        conversations.append(conversation)
+                        fetched_for_page += 1
+                        _upsert_facebook_conversation(conversation)
+                    after = ((payload.get("paging") or {}).get("cursors") or {}).get("after")
+                    if not after or fetched_for_page >= limit:
+                        break
+            except httpx.HTTPError as error:
+                warnings.append(f"{page.get('name') or page.get('page_id')}: conversations unavailable - {_graph_error_message(error)}")
+                continue
+            if len(conversations) >= limit:
+                break
+
+    conversations.sort(key=lambda item: item.get("updated_time") or "", reverse=True)
+    return {
+        "total": len(conversations),
+        "page_count": len(pages),
+        "conversations": conversations[:limit],
+        "warnings": warnings[:20],
+    }
+
+
+def send_facebook_message(conversation_id: str, message: str) -> dict[str, Any]:
+    conversation_id = (conversation_id or "").strip()
+    message = (message or "").strip()
+    if not conversation_id:
+        raise RuntimeError("conversation_id is required.")
+    if not message:
+        raise RuntimeError("Message is required.")
+    conversation = _get_cached_facebook_conversation(conversation_id)
+    if not conversation:
+        raise RuntimeError("Conversation not found in local cache. Sync inbox first.")
+    customer_id = str(conversation.get("customer_id") or "")
+    page_id = str(conversation.get("page_id") or "")
+    page = next((item for item in _list_facebook_page_records() if str(item.get("page_id") or "") == page_id), None)
+    if not page or not page.get("page_access_token"):
+        raise RuntimeError("Page token not found for this conversation.")
+    if not customer_id:
+        raise RuntimeError("Customer id is missing for this conversation.")
+
+    settings = get_settings()
+    base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
+    with httpx.Client(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
+        response = client.post(
+            f"{base_url}/{page_id}/messages",
+            params={"access_token": page["page_access_token"]},
+            json={
+                "recipient": {"id": customer_id},
+                "messaging_type": "RESPONSE",
+                "message": {"text": message},
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+    sent_message = {
+        "message_id": str(payload.get("message_id") or ""),
+        "message": message,
+        "created_time": _now(),
+        "from_id": page_id,
+        "from_name": conversation.get("page_name") or "Page",
+        "to_id": customer_id,
+        "to_name": conversation.get("customer_name") or "Facebook User",
+        "direction": "outbound",
+    }
+    conversation["messages"] = (conversation.get("messages") or []) + [sent_message]
+    conversation["snippet"] = message
+    conversation["updated_time"] = sent_message["created_time"]
+    conversation["status"] = "open"
+    _upsert_facebook_conversation(conversation)
+    return {"sent": True, "conversation_id": conversation_id, "message_id": sent_message["message_id"]}
 
 
 def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:

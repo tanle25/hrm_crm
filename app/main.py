@@ -18,10 +18,13 @@ from app.facebook_pages import (
     connect_facebook_pages,
     facebook_aggregate_stats,
     facebook_comments,
+    facebook_conversations,
     facebook_posts,
     list_facebook_pages,
+    send_facebook_message,
     sync_facebook_comments,
     sync_facebook_aggregate_stats,
+    sync_facebook_conversations,
     sync_facebook_posts,
 )
 from app.graph import retry_from_dlq, run_pipeline_async
@@ -45,7 +48,10 @@ from app.schemas import (
     FacebookConnectRequest,
     FacebookConnectResponse,
     FacebookCommentListResponse,
+    FacebookConversationListResponse,
     FacebookPageListResponse,
+    FacebookMessageSendRequest,
+    FacebookMessageSendResponse,
     FacebookPostListResponse,
     FacebookStatsResponse,
     LoginRequest,
@@ -555,6 +561,30 @@ async def get_facebook_comments(limit: int = 50) -> FacebookCommentListResponse:
 async def sync_facebook_comments_endpoint(limit: int = 50) -> FacebookCommentListResponse:
     result = await asyncio.to_thread(sync_facebook_comments, max(1, min(limit, 100)))
     return FacebookCommentListResponse(**result)
+
+
+@app.get(f"{settings.api_prefix}/facebook/conversations", response_model=FacebookConversationListResponse)
+async def get_facebook_conversations(limit: int = 50) -> FacebookConversationListResponse:
+    result = await asyncio.to_thread(facebook_conversations, max(1, min(limit, 100)))
+    return FacebookConversationListResponse(**result)
+
+
+@app.post(f"{settings.api_prefix}/facebook/conversations/sync", response_model=FacebookConversationListResponse)
+async def sync_facebook_conversations_endpoint(limit: int = 50) -> FacebookConversationListResponse:
+    result = await asyncio.to_thread(sync_facebook_conversations, max(1, min(limit, 100)))
+    return FacebookConversationListResponse(**result)
+
+
+@app.post(f"{settings.api_prefix}/facebook/messages/send", response_model=FacebookMessageSendResponse)
+async def send_facebook_message_endpoint(request: FacebookMessageSendRequest) -> FacebookMessageSendResponse:
+    try:
+        result = await asyncio.to_thread(send_facebook_message, request.conversation_id, request.message)
+    except httpx.HTTPStatusError as error:
+        detail = error.response.text[:500] if error.response is not None else str(error)
+        raise HTTPException(status_code=400, detail=f"Facebook message send failed: {detail}") from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return FacebookMessageSendResponse(**result)
 
 
 @app.post(f"{settings.api_prefix}/rag/ingest", response_model=RAGIngestResponse)

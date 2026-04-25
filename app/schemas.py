@@ -119,6 +119,24 @@ class FacebookCommentListResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list)
 
 
+class FacebookConversationListResponse(BaseModel):
+    total: int = 0
+    page_count: int = 0
+    conversations: List[Dict[str, Any]] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
+class FacebookMessageSendRequest(BaseModel):
+    conversation_id: str
+    message: str
+
+
+class FacebookMessageSendResponse(BaseModel):
+    sent: bool
+    conversation_id: str
+    message_id: str = ""
+
+
 class SubmitResponse(BaseModel):
     job_id: str
     status: str

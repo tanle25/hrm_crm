@@ -107,6 +107,14 @@ def init_schema() -> None:
                 data JSONB NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS facebook_conversations (
+                conversation_id TEXT PRIMARY KEY,
+                page_id TEXT NOT NULL DEFAULT '',
+                updated_time TIMESTAMPTZ,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                data JSONB NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS job_meta (
                 key TEXT PRIMARY KEY,
                 value BIGINT NOT NULL DEFAULT 0

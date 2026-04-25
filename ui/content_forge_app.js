@@ -45,6 +45,9 @@
         facebookPostsLimit: 20,
         facebookStatsSyncing: false,
         facebookStatsAutoSynced: false,
+        selectedFacebookConversationId: "",
+        facebookMessagesSyncing: false,
+        facebookMessagesAutoSynced: false,
     };
 
     function escapeHtml(value) {
@@ -1987,6 +1990,157 @@
         return `<div class="mb-5 border border-hud-amber/30 bg-hud-amber/10 text-hud-amber text-[11px] p-3">Một số dữ liệu Facebook không lấy được do quyền Meta API hoặc page không có dữ liệu: ${escapeHtml(redactSensitiveText(items.slice(0, 3).join(" | ")))}</div>`;
     }
 
+    async function renderFacebookMessagesPage() {
+        const section = document.getElementById("page-fb-messages");
+        if (!section) return;
+        if (!section.dataset.hydrated) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Đang đọc cache tin nhắn...</div>`;
+        }
+        try {
+            const payload = await fetchJSON("/facebook/conversations?limit=50");
+            const conversations = payload.conversations || [];
+            if (!state.selectedFacebookConversationId && conversations[0]) state.selectedFacebookConversationId = conversations[0].conversation_id;
+            const selected = conversations.find((item) => item.conversation_id === state.selectedFacebookConversationId) || conversations[0] || null;
+            const messages = selected?.messages || [];
+            const unread = conversations.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
+            section.dataset.hydrated = "1";
+            section.innerHTML = `
+                <div class="max-w-7xl mx-auto h-full">
+                    <div id="fb-messages-sync-status" class="${state.facebookMessagesSyncing ? "" : "hidden"} mb-4 border border-hud-cyan/30 bg-hud-cyan/10 text-hud-cyan text-[11px] p-3">
+                        Đang đồng bộ inbox Facebook trong nền. Tin nhắn đã lưu vẫn hiển thị, sync xong sẽ tự cập nhật.
+                    </div>
+                    ${facebookWarningBanner(payload.warnings)}
+                    <div class="grid gap-4" style="grid-template-columns: 340px 1fr; min-height: calc(100vh - 210px);">
+                        <div class="hud-card flex flex-col overflow-hidden fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                            <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                            <div class="header-strip px-4 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                                <i class="fa-solid fa-inbox text-hud-fb"></i>
+                                <span class="font-display font-black text-[10px] text-white uppercase-widest">INBOX · ${formatNumber(unread)} UNREAD</span>
+                                <button id="fb-messages-refresh" class="ml-auto btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i></button>
+                            </div>
+                            <div class="flex-1 overflow-y-auto">
+                                ${conversations.map((conversation) => {
+                                    const active = selected && selected.conversation_id === conversation.conversation_id;
+                                    const hasUnread = Number(conversation.unread_count || 0) > 0;
+                                    return `
+                                        <button class="fb-conversation-item block w-full text-left p-3 border-b border-hud-fb/10 hover:bg-hud-fb/5 ${active ? "bg-hud-fb/10" : ""}" data-conversation-id="${escapeHtml(conversation.conversation_id)}">
+                                            <div class="flex items-start gap-3">
+                                                <div class="w-10 h-10 rounded-full ${hasUnread ? "bg-hud-fb/20 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0">
+                                                    <i class="fa-solid fa-user ${hasUnread ? "text-hud-fb" : "text-hud-muted"} text-xs"></i>
+                                                </div>
+                                                <div class="flex-1 min-w-0">
+                                                    <div class="flex items-center gap-1 mb-0.5">
+                                                        <span class="text-xs font-bold text-white truncate">${escapeHtml(conversation.customer_name || "Facebook User")}</span>
+                                                        <span class="text-[9px] text-hud-muted ml-auto">${escapeHtml(formatDate(conversation.updated_time))}</span>
+                                                    </div>
+                                                    <div class="text-[10px] text-white/70 truncate">${escapeHtml(conversation.snippet || "Không có nội dung text")}</div>
+                                                    <div class="flex items-center gap-1 mt-1.5">
+                                                        <span class="badge ${hasUnread ? "amber" : "cyan"}" style="font-size:8px;">${hasUnread ? `${formatNumber(conversation.unread_count)} UNREAD` : "OPEN"}</span>
+                                                        <span class="text-[8px] text-hud-muted uppercase-wide ml-1">${escapeHtml(conversation.page_name || "Page")} · ${formatNumber(conversation.message_count || 0)} msgs</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                    `;
+                                }).join("") || `<div class="p-6 text-center text-hud-muted text-sm">Chưa có hội thoại trong DB. Hệ thống sẽ sync nền nếu page token có quyền inbox.</div>`}
+                            </div>
+                        </div>
+                        <div class="hud-card flex flex-col overflow-hidden fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                            <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                            ${selected ? `
+                                <div class="header-strip px-4 py-3 flex items-center gap-3" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                                    <div class="w-8 h-8 rounded-full bg-hud-fb/20 border border-hud-fb flex items-center justify-center flex-shrink-0">
+                                        <i class="fa-solid fa-user text-hud-fb text-[10px]"></i>
+                                    </div>
+                                    <div class="min-w-0">
+                                        <div class="text-sm text-white font-bold truncate">${escapeHtml(selected.customer_name || "Facebook User")}</div>
+                                        <div class="text-[9px] uppercase-wide" style="color:#4a9eff;">${escapeHtml(selected.page_name || "Facebook Page")} · ${escapeHtml(selected.customer_id || "")}</div>
+                                    </div>
+                                    <span class="badge ${Number(selected.unread_count || 0) ? "amber" : "cyan"} ml-auto">${Number(selected.unread_count || 0) ? "UNREAD" : "OPEN"}</span>
+                                </div>
+                                <div class="flex-1 overflow-y-auto p-5 space-y-3">
+                                    ${messages.map((message) => `
+                                        <div class="flex gap-2 max-w-[80%] ${message.direction === "outbound" ? "ml-auto flex-row-reverse" : ""}">
+                                            <div class="w-7 h-7 rounded-full ${message.direction === "outbound" ? "bg-hud-fb/30 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0 mt-0.5">
+                                                <i class="fa-solid ${message.direction === "outbound" ? "fa-robot text-hud-fb" : "fa-user text-hud-muted"} text-[9px]"></i>
+                                            </div>
+                                            <div>
+                                                <div class="px-4 py-2 text-[12px] text-white ${message.direction === "outbound" ? "" : "bg-black/50 border border-hud-cyan/20"}" style="${message.direction === "outbound" ? "background: rgba(74, 158, 255, 0.2); border: 1px solid rgba(74, 158, 255, 0.5);" : ""}">
+                                                    ${escapeHtml(message.message || "[non-text message]")}
+                                                </div>
+                                                <div class="text-[9px] text-hud-muted mt-1 px-1 ${message.direction === "outbound" ? "text-right" : ""}">${escapeHtml(formatDate(message.created_time))} · ${escapeHtml(message.from_name || "")}</div>
+                                            </div>
+                                        </div>
+                                    `).join("") || `<div class="text-center text-hud-muted text-sm py-10">Hội thoại chưa có tin nhắn text.</div>`}
+                                </div>
+                                <div class="border-t border-hud-fb/20 p-3 space-y-2">
+                                    <div id="fb-message-feedback" class="hidden text-[11px] border p-2"></div>
+                                    <div class="flex gap-2">
+                                        <input id="fb-message-input" type="text" placeholder="Gõ phản hồi của bạn..." class="hud-input flex-1 px-3 py-2 text-xs"/>
+                                        <button id="fb-message-send" class="px-4 py-2 text-xs uppercase-wide font-bold" style="background:#4a9eff;color:#fff;border:1px solid #4a9eff;"><i class="fa-solid fa-paper-plane"></i></button>
+                                    </div>
+                                </div>
+                            ` : `<div class="p-10 text-center text-hud-muted">Chọn một hội thoại để xem tin nhắn.</div>`}
+                        </div>
+                    </div>
+                </div>
+            `;
+            const syncMessages = async () => {
+                if (state.facebookMessagesSyncing) return;
+                state.facebookMessagesSyncing = true;
+                section.querySelector("#fb-messages-sync-status")?.classList.remove("hidden");
+                const button = section.querySelector("#fb-messages-refresh");
+                if (button) button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>`;
+                try {
+                    await fetchJSON("/facebook/conversations/sync?limit=50", { method: "POST" });
+                } finally {
+                    state.facebookMessagesSyncing = false;
+                    await renderFacebookMessagesPage();
+                }
+            };
+            section.querySelector("#fb-messages-refresh")?.addEventListener("click", syncMessages);
+            if (!conversations.length && !state.facebookMessagesAutoSynced) {
+                state.facebookMessagesAutoSynced = true;
+                setTimeout(syncMessages, 50);
+            }
+            section.querySelectorAll(".fb-conversation-item").forEach((button) => {
+                button.addEventListener("click", () => {
+                    state.selectedFacebookConversationId = button.dataset.conversationId || "";
+                    renderFacebookMessagesPage();
+                });
+            });
+            const sendSelectedMessage = async () => {
+                const input = section.querySelector("#fb-message-input");
+                const feedback = section.querySelector("#fb-message-feedback");
+                const message = String(input?.value || "").trim();
+                if (!selected || !message) return;
+                try {
+                    await fetchJSON("/facebook/messages/send", {
+                        method: "POST",
+                        body: JSON.stringify({ conversation_id: selected.conversation_id, message }),
+                    });
+                    if (input) input.value = "";
+                    await renderFacebookMessagesPage();
+                } catch (error) {
+                    if (feedback) {
+                        feedback.className = "text-[11px] border p-2 text-hud-red border-hud-red/30 bg-hud-red/10";
+                        feedback.textContent = `Send failed: ${error.message}`;
+                        feedback.classList.remove("hidden");
+                    }
+                }
+            };
+            section.querySelector("#fb-message-send")?.addEventListener("click", sendSelectedMessage);
+            section.querySelector("#fb-message-input")?.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    sendSelectedMessage();
+                }
+            });
+        } catch (error) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook messages: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
     async function renderFacebookPostsPage() {
         const section = document.getElementById("page-fb-posts");
         if (!section) return;
@@ -2483,6 +2637,7 @@
         if (pageKey === "fb-stats") await renderFacebookStatsPage();
         if (pageKey === "fb-posts") await renderFacebookPostsPage();
         if (pageKey === "fb-comments") await renderFacebookCommentsPage();
+        if (pageKey === "fb-messages") await renderFacebookMessagesPage();
         if (pageKey === "stats") await renderStatsPage();
         if (pageKey === "settings") await renderSettingsPage();
     }

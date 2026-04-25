@@ -2061,32 +2061,36 @@
     function renderReplyQuote(message) {
         const replyTo = message?.reply_to || {};
         if (!replyTo.mid) return "";
-        const quoteText = String(replyTo.message || replyTo.fallback_label || "").trim();
         const quoteAttachments = Array.isArray(replyTo.attachments) ? replyTo.attachments : [];
         const imageAttachment = quoteAttachments.find((item) => isImageAttachment(item));
         const videoAttachment = quoteAttachments.find((item) => isVideoAttachment(item));
         const audioAttachment = quoteAttachments.find((item) => isAudioAttachment(item));
         const fileAttachment = quoteAttachments.find((item) => item && !isImageAttachment(item) && !isVideoAttachment(item) && !isAudioAttachment(item));
-        const tone = message.direction === "outbound" ? "border-hud-fb/40 bg-hud-fb/10" : "border-hud-cyan/20 bg-black/40";
         const quoteLabel = imageAttachment
-            ? "Trả lời ảnh"
+            ? "Quote · ảnh của bạn"
             : videoAttachment
-                ? "Trả lời video"
+                ? "Quote · video"
                 : audioAttachment
-                    ? "Trả lời audio"
+                    ? "Quote · audio"
                     : fileAttachment
-                        ? "Trả lời tệp đính kèm"
-                        : "Trả lời tin nhắn trước đó";
-        const displayText = quoteText === "Tin nhắn đặc biệt" && quoteAttachments.length ? "" : quoteText;
-        return `<div class="mb-2 border-l-2 ${tone} px-3 py-2 text-[10px]">
-            <div class="uppercase-wide mb-1 ${message.direction === "outbound" ? "text-hud-fb" : "text-hud-cyan"}">
-                <i class="fa-solid fa-reply"></i> ${replyTo.direction === "outbound" ? `${quoteLabel} của bạn` : quoteLabel}
+                        ? "Quote · tệp đính kèm"
+                        : "Quote · tin nhắn";
+        const quoteMeta = replyTo.created_time ? formatDate(replyTo.created_time) : (replyTo.from_name || "");
+        const thumbUrl = imageAttachment ? String(imageAttachment.preview_url || imageAttachment.url || "") : "";
+        return `<div class="reply-msg__quote">
+            <span class="reply-msg__corner reply-msg__corner--tl"></span>
+            <span class="reply-msg__corner reply-msg__corner--tr"></span>
+            <span class="reply-msg__corner reply-msg__corner--bl"></span>
+            <span class="reply-msg__corner reply-msg__corner--br"></span>
+            <div class="reply-msg__quote-inner">
+                <div class="reply-msg__thumb">
+                    ${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" alt="" loading="lazy" />` : `<i class="fa-solid fa-paperclip text-hud-fb text-[11px]"></i>`}
+                </div>
+                <div class="reply-msg__quote-info">
+                    <div class="reply-msg__quote-label"><i class="fa-solid fa-reply"></i> ${escapeHtml(quoteLabel)}</div>
+                    <div class="reply-msg__quote-meta">${escapeHtml(quoteMeta || replyTo.fallback_label || "Tin nhắn trước đó")}</div>
+                </div>
             </div>
-            ${imageAttachment ? `<img src="${escapeHtml(imageAttachment.preview_url || imageAttachment.url)}" alt="quoted" loading="lazy" class="w-20 h-20 object-cover rounded border border-white/10 mb-2"/>` : ""}
-            ${!imageAttachment && videoAttachment ? `<div class="text-white/80"><i class="fa-solid fa-video"></i> Video đính kèm</div>` : ""}
-            ${!imageAttachment && !videoAttachment && audioAttachment ? `<div class="text-white/80"><i class="fa-solid fa-microphone"></i> Audio đính kèm</div>` : ""}
-            ${!imageAttachment && !videoAttachment && !audioAttachment && fileAttachment ? `<div class="text-white/80"><i class="fa-solid fa-paperclip"></i> Tệp đính kèm</div>` : ""}
-            ${displayText ? `<div class="text-white/80 line-clamp-2">${escapeHtml(displayText)}</div>` : ""}
         </div>`;
     }
 

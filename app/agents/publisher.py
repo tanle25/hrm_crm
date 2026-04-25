@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import re
 import unicodedata
+from pathlib import Path
 
 import httpx
 
 from app.config import get_settings
 from app.site_store import get_site
+
+
+IMAGE_CONTENT_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 
 def _source_origin(state: dict) -> str:
@@ -53,6 +63,101 @@ def _publisher_site_config(state: dict) -> dict:
     if not (config["consumer_key"] and config["consumer_secret"]):
         raise RuntimeError("Site profile is missing WooCommerce consumer credentials")
     return config
+
+
+def _image_extension(content_type: str, content: bytes, url: str) -> str:
+    normalized_type = content_type.split(";", 1)[0].strip().lower()
+    if normalized_type in IMAGE_CONTENT_TYPES:
+        return IMAGE_CONTENT_TYPES[normalized_type]
+    lowered_url = url.lower().split("?", 1)[0]
+    for extension in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
+        if lowered_url.endswith(extension):
+            return ".jpg" if extension == ".jpeg" else extension
+    if content.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return ".webp"
+    if content.startswith(b"GIF87a") or content.startswith(b"GIF89a"):
+        return ".gif"
+    return ""
+
+
+def _upload_wp_media_from_temp(site_config: dict, image_url: str, alt_text: str, index: int) -> dict | None:
+    if not (site_config.get("username") and site_config.get("app_password")):
+        return None
+    try:
+        with httpx.Client(follow_redirects=True, timeout=45) as client:
+            download = client.get(
+                image_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 ContentForge/1.0",
+                    "Accept": "image/webp,image/jpeg,image/png,image/gif,image/*;q=0.8,*/*;q=0.5",
+                },
+            )
+            download.raise_for_status()
+            content = download.content
+            if not content or len(content) > 12_000_000:
+                return None
+            extension = _image_extension(download.headers.get("content-type", ""), content, image_url)
+            if not extension:
+                return None
+            filename = f"content-forge-shopee-{index}{extension}"
+            with tempfile.NamedTemporaryFile(prefix="content-forge-shopee-", suffix=extension, delete=False) as tmp_file:
+                tmp_file.write(content)
+                tmp_path = Path(tmp_file.name)
+            try:
+                media_url = f"{site_config['woo_url'].rstrip('/')}/wp-json/wp/v2/media"
+                with tmp_path.open("rb") as file_obj:
+                    upload = client.post(
+                        media_url,
+                        auth=(site_config["username"], site_config["app_password"]),
+                        headers={
+                            "Content-Disposition": f'attachment; filename="{filename}"',
+                            "Content-Type": download.headers.get("content-type", "application/octet-stream").split(";", 1)[0],
+                        },
+                        content=file_obj.read(),
+                    )
+                upload.raise_for_status()
+                data = upload.json()
+                media_id = data.get("id")
+                if not media_id:
+                    return None
+                media_item = {"id": int(media_id), "alt": alt_text}
+                try:
+                    client.post(
+                        f"{media_url}/{media_id}",
+                        auth=(site_config["username"], site_config["app_password"]),
+                        json={"alt_text": alt_text},
+                    )
+                except Exception:
+                    pass
+                return media_item
+            finally:
+                tmp_path.unlink(missing_ok=True)
+    except Exception:
+        return None
+
+
+def _upload_shopee_images_if_needed(state: dict, payload: dict) -> None:
+    if payload.get("images"):
+        return
+    image_data = state.get("image_data", {}) or {}
+    image_urls = [str(url).strip() for url in (image_data.get("gallery") or []) if str(url).strip()]
+    if not image_urls:
+        return
+    site_config = _publisher_site_config(state)
+    alt_text = str(image_data.get("alt_text") or state.get("plan", {}).get("focus_keyword") or state.get("plan", {}).get("title") or "Shopee product")
+    uploaded = []
+    for index, image_url in enumerate(image_urls[:6], start=1):
+        media_item = _upload_wp_media_from_temp(site_config, image_url, alt_text, index)
+        if media_item:
+            uploaded.append(media_item)
+    if uploaded:
+        payload["images"] = uploaded
+        payload["featured_image_id"] = uploaded[0]["id"]
+        payload["gallery_image_ids"] = [item["id"] for item in uploaded]
 
 
 def _faq_schema(state: dict) -> dict | None:
@@ -654,6 +759,7 @@ def run_shopee(state: dict) -> dict:
 
     schema = build_schema(state)
     payload = _build_shopee_product_payload(state)
+    _upload_shopee_images_if_needed(state, payload)
     publish_result = _publish_via_rest(state, payload)
 
     return {

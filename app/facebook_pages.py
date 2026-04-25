@@ -1103,6 +1103,25 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
             }
         )
     messages.sort(key=lambda item: item.get("created_time") or "")
+    by_mid = {str(item.get("message_id") or ""): item for item in messages if item.get("message_id")}
+    for item in messages:
+        reply_to = item.get("reply_to") or {}
+        reply_mid = str(reply_to.get("mid") or "")
+        if not reply_mid or _reply_has_displayable_content(reply_to):
+            continue
+        source = by_mid.get(reply_mid)
+        if not source:
+            continue
+        item["reply_to"] = {
+            "mid": reply_mid,
+            "message": str(source.get("message") or ""),
+            "created_time": str(source.get("created_time") or ""),
+            "from_id": str(source.get("from_id") or ""),
+            "from_name": str(source.get("from_name") or ""),
+            "attachments": source.get("attachments") or [],
+            "fallback_label": str(source.get("fallback_label") or ""),
+            "direction": str(source.get("direction") or ""),
+        }
     last_message = messages[-1] if messages else {}
     return {
         "conversation_id": str(raw.get("id") or ""),
@@ -1154,7 +1173,29 @@ def _merge_conversation_messages(graph_messages: list[dict[str, Any]], stored_me
             "reply_to": item.get("reply_to") or existing.get("reply_to") or {},
             "fallback_label": item.get("fallback_label") or existing.get("fallback_label") or "",
         }
-    return sorted(merged.values(), key=lambda item: item.get("created_time") or "")
+    ordered = sorted(merged.values(), key=lambda item: item.get("created_time") or "")
+    by_mid = {str(item.get("message_id") or ""): item for item in ordered if item.get("message_id")}
+    for item in ordered:
+        reply_to = item.get("reply_to") or {}
+        reply_mid = str(reply_to.get("mid") or "")
+        if not reply_mid:
+            continue
+        if _reply_has_displayable_content(reply_to):
+            continue
+        source = by_mid.get(reply_mid) or _get_cached_facebook_message(reply_mid) or {}
+        if not source:
+            continue
+        item["reply_to"] = {
+            "mid": reply_mid,
+            "message": str(source.get("message") or ""),
+            "created_time": str(source.get("created_time") or ""),
+            "from_id": str(source.get("from_id") or ""),
+            "from_name": str(source.get("from_name") or ""),
+            "attachments": source.get("attachments") or [],
+            "fallback_label": str(source.get("fallback_label") or ""),
+            "direction": str(source.get("direction") or ""),
+        }
+    return ordered
 
 
 def _refresh_conversation_cache(

@@ -2033,6 +2033,22 @@
         </div>`;
     }
 
+    function renderMessageFallback(message) {
+        const label = String(message?.fallback_label || "").trim();
+        if (!label) return "";
+        const normalized = label.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const icon = normalized.includes("sticker")
+            ? "fa-face-smile"
+            : normalized.includes("lien ket")
+                ? "fa-link"
+                : normalized.includes("dinh kem")
+                    ? "fa-paperclip"
+                    : "fa-envelope-open-text";
+        return `<div class="px-4 py-2 text-[11px] text-hud-cyan bg-black/50 border border-hud-cyan/20 uppercase-wide">
+            <i class="fa-solid ${icon}"></i> ${escapeHtml(label)}
+        </div>`;
+    }
+
     async function renderFacebookMessagesPage() {
         const section = document.getElementById("page-fb-messages");
         if (!section) return;
@@ -2076,7 +2092,7 @@
                                                         <span class="text-xs font-bold text-white truncate">${escapeHtml(conversation.customer_name || "Facebook User")}</span>
                                                         <span class="text-[9px] text-hud-muted ml-auto">${escapeHtml(formatDate(conversation.updated_time))}</span>
                                                     </div>
-                                                    <div class="text-[10px] text-white/70 truncate">${escapeHtml(conversation.snippet || "Không có nội dung text")}</div>
+                                                    <div class="text-[10px] text-white/70 truncate">${escapeHtml(conversation.snippet || "Không có nội dung hiển thị")}</div>
                                                     <div class="flex items-center gap-1 mt-1.5">
                                                         <span class="badge ${hasUnread ? "amber" : "cyan"}" style="font-size:8px;">${hasUnread ? `${formatNumber(conversation.unread_count)} UNREAD` : "OPEN"}</span>
                                                         <span class="text-[8px] text-hud-muted uppercase-wide ml-1">${escapeHtml(conversation.page_name || "Page")} · ${formatNumber(conversation.message_count || 0)} msgs</span>
@@ -2118,9 +2134,7 @@
                                                     </div>
                                                 ` : ""}
                                                 ${renderMessageAttachments(message)}
-                                                ${!message.message && !(message.attachments || []).length ? `
-                                                    <div class="px-4 py-2 text-[12px] text-hud-muted bg-black/50 border border-hud-cyan/20 italic">Tin nhắn không có nội dung text</div>
-                                                ` : ""}
+                                                ${!message.message && !(message.attachments || []).length ? renderMessageFallback(message) : ""}
                                                 <div class="text-[9px] text-hud-muted mt-1 px-1 ${message.direction === "outbound" ? "text-right" : ""}">${escapeHtml(formatDate(message.created_time))} · ${escapeHtml(message.from_name || "")}</div>
                                             </div>
                                         </div>

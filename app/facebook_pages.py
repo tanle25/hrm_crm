@@ -840,6 +840,16 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
             for item in (((message.get("attachments") or {}).get("data")) or [])
             if isinstance(item, dict)
         ]
+        fallback_label = ""
+        if not message.get("message"):
+            if attachments:
+                fallback_label = "Đã gửi tệp đính kèm"
+            elif message.get("shares"):
+                fallback_label = "Đã chia sẻ liên kết"
+            elif message.get("sticker"):
+                fallback_label = "Đã gửi sticker"
+            else:
+                fallback_label = "Tin nhắn đặc biệt"
         messages.append(
             {
                 "message_id": str(message.get("id") or ""),
@@ -851,6 +861,7 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
                 "to_name": _message_participant_name(recipient),
                 "direction": "outbound" if sender_id == page_id else "inbound",
                 "attachments": attachments,
+                "fallback_label": fallback_label,
             }
         )
     messages.sort(key=lambda item: item.get("created_time") or "")
@@ -862,7 +873,7 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
         "page_picture_url": page.get("picture_url") or "",
         "customer_id": str(customer.get("id") or ""),
         "customer_name": _message_participant_name(customer),
-        "snippet": raw.get("snippet") or last_message.get("message") or "",
+        "snippet": raw.get("snippet") or last_message.get("message") or last_message.get("fallback_label") or "",
         "updated_time": str(raw.get("updated_time") or last_message.get("created_time") or ""),
         "unread_count": _safe_int(raw.get("unread_count")),
         "message_count": _safe_int(raw.get("message_count")) or len(messages),

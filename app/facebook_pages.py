@@ -462,12 +462,11 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
 
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
         for page in pages:
-            posts_payload: dict[str, Any] | None = None
             try:
                 response = client.get(
                     f"{base_url}/{page['page_id']}/posts",
                     params={
-                        "fields": "id,message,created_time,status_type,type,permalink_url,full_picture,insights.metric(post_impressions_unique,post_impressions,post_engaged_users)",
+                        "fields": "id,message,created_time,permalink_url",
                         "limit": min(25, limit),
                         "access_token": page["page_access_token"],
                     },
@@ -475,28 +474,12 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                 response.raise_for_status()
                 posts_payload = response.json()
             except httpx.HTTPError as error:
-                warnings.append(f"{page.get('name') or page.get('page_id')}: post insights unavailable - {_graph_error_message(error)}")
-                try:
-                    response = client.get(
-                        f"{base_url}/{page['page_id']}/posts",
-                        params={
-                            "fields": "id,message,created_time,status_type,type,permalink_url,full_picture",
-                            "limit": min(25, limit),
-                            "access_token": page["page_access_token"],
-                        },
-                    )
-                    response.raise_for_status()
-                    posts_payload = response.json()
-                except httpx.HTTPError as fallback_error:
-                    warnings.append(f"{page.get('name') or page.get('page_id')}: posts unavailable - {_graph_error_message(fallback_error)}")
-                    continue
+                warnings.append(f"{page.get('name') or page.get('page_id')}: posts unavailable - {_graph_error_message(error)}")
+                continue
 
             for post in (posts_payload or {}).get("data") or []:
                 created_time = str(post.get("created_time") or "")
                 created_dt = _parse_graph_time(created_time)
-                reach = _post_insight_total(post.get("insights"), "post_impressions_unique")
-                impressions = _post_insight_total(post.get("insights"), "post_impressions")
-                engagement = _post_insight_total(post.get("insights"), "post_engaged_users")
                 posts.append(
                     {
                         "post_id": str(post.get("id") or ""),
@@ -509,9 +492,9 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                         "status": "posted",
                         "permalink_url": post.get("permalink_url") or "",
                         "full_picture": post.get("full_picture") or "",
-                        "reach": reach,
-                        "impressions": impressions,
-                        "engagement": engagement,
+                        "reach": 0,
+                        "impressions": 0,
+                        "engagement": 0,
                         "comments": 0,
                         "shares": 0,
                         "posted_7d": bool(created_dt and created_dt >= since_7d),

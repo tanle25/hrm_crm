@@ -403,6 +403,24 @@ def _list_cached_facebook_posts(limit: int, offset: int = 0) -> list[dict[str, A
         return [json.loads(row[0]) for row in cur.fetchall()]
 
 
+def _list_cached_facebook_posts_since(since: datetime, limit: int = 500) -> list[dict[str, Any]]:
+    conn = _postgres_conn()
+    if conn is None:
+        return []
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data::text
+            FROM facebook_posts
+            WHERE created_time >= %s
+            ORDER BY created_time DESC NULLS LAST, updated_at DESC
+            LIMIT %s
+            """,
+            (since, max(1, min(limit, 1000))),
+        )
+        return [json.loads(row[0]) for row in cur.fetchall()]
+
+
 def _list_cached_facebook_comments(limit: int) -> list[dict[str, Any]]:
     conn = _postgres_conn()
     if conn is None:
@@ -1609,145 +1627,91 @@ def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, An
         cached["cached"] = True
         return cached
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
-    return _empty_facebook_stats(days, len(pages), ["No cached Facebook stats yet. Run sync to fetch stats from Graph API."])
+    payload = _facebook_stats_from_cached_posts(days, len(pages), ["Using cached post analytics. Sync Facebook posts to refresh source metrics."])
+    if _safe_int((payload.get("totals") or {}).get("posts")):
+        payload["cached"] = True
+        _upsert_facebook_stats(cache_key, payload)
+        return payload
+    return _empty_facebook_stats(days, len(pages), ["No cached Facebook stats yet. Sync Facebook posts first to populate local analytics."])
 
 
-def sync_facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:
-    cache_key = f"{max(1, min(days, 30))}:{max(1, min(max_pages, 100))}"
-
-    settings = get_settings()
-    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
-    base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
+def _facebook_stats_from_cached_posts(days: int, page_count: int, warnings: list[str] | None = None) -> dict[str, Any]:
+    normalized_days = max(1, min(days, 30))
     now = datetime.now(timezone.utc)
-    since = now - timedelta(days=max(1, min(days, 30)))
-    warnings: list[str] = []
+    since = now - timedelta(days=normalized_days)
+    posts = _list_cached_facebook_posts_since(since, 1000)
     reach_by_day: defaultdict[str, int] = defaultdict(int)
     engagement_by_day: defaultdict[str, int] = defaultdict(int)
-    fan_count = 0
     comments = 0
     shares = 0
-    post_count = 0
-    top_posts: list[dict[str, Any]] = []
     content_types: defaultdict[str, dict[str, int]] = defaultdict(lambda: {"posts": 0, "reach": 0})
     hour_buckets: defaultdict[int, int] = defaultdict(int)
+    top_posts: list[dict[str, Any]] = []
 
-    with httpx.Client(timeout=httpx.Timeout(8.0, connect=3.0)) as client:
-        for page in pages:
-            insight_values, metric_warnings = _fetch_metrics_payload(
-                client,
-                base_url,
-                page,
-                ["page_impressions_unique", "page_post_engagements"],
-                since,
-                now,
-            )
-            warnings.extend(metric_warnings)
-            for metric, target in [
-                ("page_impressions_unique", reach_by_day),
-                ("page_post_engagements", engagement_by_day),
-            ]:
-                for item in insight_values.get(metric, []):
-                    key = _date_key(item.get("end_time"))
-                    if key:
-                        target[key] += _safe_int(item.get("value"))
-
-            try:
-                page_response = client.get(
-                    f"{base_url}/{page['page_id']}",
-                    params={
-                        "fields": "followers_count,fan_count",
-                        "access_token": page["page_access_token"],
-                    },
-                )
-                page_response.raise_for_status()
-                page_payload = page_response.json()
-                fan_count += _safe_int(page_payload.get("followers_count") or page_payload.get("fan_count"))
-            except httpx.HTTPError as error:
-                warnings.append(f"{page.get('name') or page.get('page_id')}: follower count unavailable - {_graph_error_message(error)}")
-
-            try:
-                posts_response = client.get(
-                    f"{base_url}/{page['page_id']}/posts",
-                    params={
-                        "fields": "id,message,created_time,status_type,type,insights.metric(post_impressions_unique,post_engaged_users)",
-                        "limit": 10,
-                        "access_token": page["page_access_token"],
-                    },
-                )
-                posts_response.raise_for_status()
-                for post in posts_response.json().get("data") or []:
-                    post_count += 1
-                    post_comments = 0
-                    post_shares = 0
-                    post_reach = _post_insight_total(post.get("insights"), "post_impressions_unique")
-                    post_engagement = _post_insight_total(post.get("insights"), "post_engaged_users")
-                    comments += post_comments
-                    shares += post_shares
-                    content_type = str(post.get("type") or post.get("status_type") or "unknown").replace("_", " ").title()
-                    content_types[content_type]["posts"] += 1
-                    content_types[content_type]["reach"] += post_reach
-                    created_time = str(post.get("created_time") or "")
-                    if "T" in created_time:
-                        try:
-                            hour_buckets[datetime.fromisoformat(created_time.replace("Z", "+00:00")).hour] += post_engagement
-                        except ValueError:
-                            pass
-                    top_posts.append(
-                        {
-                            "page_name": page.get("name") or "",
-                            "message": (post.get("message") or "Untitled post")[:120],
-                            "reach": post_reach,
-                            "engagement": post_engagement,
-                            "comments": post_comments,
-                            "shares": post_shares,
-                        }
-                    )
-            except httpx.HTTPError as error:
-                warnings.append(f"{page.get('name') or page.get('page_id')}: posts unavailable - {_graph_error_message(error)}")
+    for post in posts:
+        created_time = str(post.get("created_time") or "")
+        created_dt = _parse_graph_time(created_time)
+        label = _date_key(created_time)
+        reach = _safe_int(post.get("reach"))
+        engagement = _safe_int(post.get("engagement"))
+        post_comments = _safe_int(post.get("comments"))
+        post_shares = _safe_int(post.get("shares"))
+        if label:
+            reach_by_day[label] += reach
+            engagement_by_day[label] += engagement
+        comments += post_comments
+        shares += post_shares
+        content_type = str(post.get("type") or post.get("status") or "unknown").replace("_", " ").title()
+        content_types[content_type]["posts"] += 1
+        content_types[content_type]["reach"] += reach
+        if created_dt:
+            hour_buckets[created_dt.hour] += engagement
+        top_posts.append(
+            {
+                "page_name": post.get("page_name") or "",
+                "message": (post.get("message") or "Untitled post")[:120],
+                "reach": reach,
+                "engagement": engagement,
+                "comments": post_comments,
+                "shares": post_shares,
+            }
+        )
 
     reach_total = sum(reach_by_day.values())
     engagement_total = sum(engagement_by_day.values())
     ctr = round((engagement_total / reach_total) * 100, 2) if reach_total else 0.0
-    labels = [(since + timedelta(days=index + 1)).date().isoformat() for index in range(max(1, min(days, 30)))]
+    labels = [(since + timedelta(days=index + 1)).date().isoformat() for index in range(normalized_days)]
     best_hour = max(hour_buckets.items(), key=lambda item: item[1])[0] if hour_buckets else None
     content_performance = []
     for label, data in content_types.items():
-        posts = data["posts"]
-        content_performance.append(
-            {
-                "type": label,
-                "posts": posts,
-                "avg_reach": round(data["reach"] / posts) if posts else 0,
-            }
-        )
+        count = data["posts"]
+        content_performance.append({"type": label, "posts": count, "avg_reach": round(data["reach"] / count) if count else 0})
     content_performance.sort(key=lambda item: item["avg_reach"], reverse=True)
     top_posts.sort(key=lambda item: item["reach"] + item["engagement"], reverse=True)
-
-    payload = {
-        "days": max(1, min(days, 30)),
-        "page_count": len(pages),
+    return {
+        "days": normalized_days,
+        "page_count": page_count,
         "totals": {
             "reach": reach_total,
             "engagement": engagement_total,
-            "likes": fan_count,
+            "likes": 0,
             "shares": shares,
             "comments": comments,
             "ctr": ctr,
-            "posts": post_count,
+            "posts": len(posts),
         },
-        "series": [
-            {
-                "date": label,
-                "reach": reach_by_day.get(label, 0),
-                "engagement": engagement_by_day.get(label, 0),
-            }
-            for label in labels
-        ],
+        "series": [{"date": label, "reach": reach_by_day.get(label, 0), "engagement": engagement_by_day.get(label, 0)} for label in labels],
         "top_posts": top_posts[:5],
         "best_posting_time": f"{best_hour:02d}:00" if best_hour is not None else "",
         "content_performance": content_performance[:6],
-        "warnings": warnings[:20],
-        "cached": False,
+        "warnings": (warnings or [])[:20],
+        "cached": True,
     }
+
+
+def sync_facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:
+    cache_key = f"{max(1, min(days, 30))}:{max(1, min(max_pages, 100))}"
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
+    payload = _facebook_stats_from_cached_posts(days, len(pages), ["Stats recomputed from cached Facebook posts. Use Posts sync to refresh Graph metrics."])
     _upsert_facebook_stats(cache_key, payload)
     return payload

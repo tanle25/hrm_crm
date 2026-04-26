@@ -143,6 +143,12 @@ def init_schema() -> None:
             ON facebook_messages (conversation_id, created_time DESC NULLS LAST, updated_at DESC);
             """
         )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_facebook_posts_created_time
+            ON facebook_posts (created_time DESC NULLS LAST, updated_at DESC);
+            """
+        )
         cur.execute("INSERT INTO job_meta (key, value) VALUES ('jobs_version', 0) ON CONFLICT (key) DO NOTHING;")
 
 

@@ -61,12 +61,17 @@ class FacebookConnectRequest(BaseModel):
     short_lived_token: str
 
 
+class FacebookPageGroupUpdateRequest(BaseModel):
+    group: str = ""
+
+
 class FacebookPageItem(BaseModel):
     page_id: str
     name: str = ""
     category: str = ""
     picture_url: str = ""
     cover_url: str = ""
+    group: str = ""
     tasks: List[str] = Field(default_factory=list)
     status: str = "connected"
     token_prefix: str = ""

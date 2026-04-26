@@ -45,6 +45,7 @@
         facebookPostsLimit: 20,
         facebookStatsSyncing: false,
         facebookStatsAutoSynced: false,
+        facebookPageGroupFilter: "",
         selectedFacebookConversationId: "",
         facebookMessagesSyncing: false,
         facebookMessagesAutoSynced: false,
@@ -1672,6 +1673,7 @@
     function facebookPageCard(page) {
         const isConnected = page.status === "connected";
         const tasks = (page.tasks || []).slice(0, 4);
+        const group = page.group || "";
         const coverStyle = page.cover_url
             ? `background-image: linear-gradient(180deg, rgba(0,0,0,0.18), rgba(0,0,0,0.72)), url('${escapeHtml(page.cover_url)}'); background-size: cover; background-position: center;`
             : "background: radial-gradient(circle at top left, rgba(74,158,255,0.22), rgba(0,0,0,0.15));";
@@ -1694,6 +1696,13 @@
                     </div>
                 </div>
                 <div class="py-3 border-t" style="border-color: rgba(74, 158, 255, 0.15);">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="badge ${group ? "amber" : "cyan"}">${escapeHtml(group || "Chưa nhóm")}</span>
+                        <div class="input-wrap flex-1">
+                            <input class="facebook-page-group-input hud-input w-full px-3 py-1.5 text-[10px]" data-page-id="${escapeHtml(page.page_id || "")}" value="${escapeHtml(group)}" placeholder="Nhóm/chủ đề, ví dụ: Thuốc lào"/>
+                        </div>
+                        <button class="facebook-page-group-save btn-ghost px-3 py-1.5 text-[9px] uppercase-wide font-bold" data-page-id="${escapeHtml(page.page_id || "")}">SAVE</button>
+                    </div>
                     <div class="text-[9px] text-hud-muted uppercase-wide mb-2">PAGE TASKS</div>
                     <div class="flex flex-wrap gap-2">
                         ${tasks.map((task) => `<span class="badge cyan">${escapeHtml(task)}</span>`).join("") || `<span class="text-[10px] text-hud-muted">No task metadata</span>`}
@@ -1715,6 +1724,9 @@
         try {
             const payload = await fetchJSON("/facebook/pages");
             const pages = payload.pages || [];
+            const groups = [...new Set(pages.map((page) => String(page.group || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+            const selectedGroup = state.facebookPageGroupFilter || "";
+            const visiblePages = selectedGroup ? pages.filter((page) => String(page.group || "") === selectedGroup) : pages;
             const connectedCount = pages.filter((page) => page.status === "connected").length;
             const issueCount = pages.length - connectedCount;
             const taskCount = pages.reduce((sum, page) => sum + ((page.tasks || []).length), 0);
@@ -1731,12 +1743,16 @@
                         <div class="header-strip px-5 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
                             <i class="fa-solid fa-users-viewfinder text-hud-fb"></i>
                             <span class="font-display font-black text-xs text-white uppercase-widest">CONNECTED FANPAGES</span>
-                            <button id="fb-connect-open" class="ml-auto px-4 py-2 text-[10px] uppercase-wide font-bold" style="background: #4a9eff; color: #fff; border: 1px solid #4a9eff;">
+                            <select id="facebook-page-group-filter" class="hud-input ml-auto px-3 py-2 text-[10px] uppercase-wide">
+                                <option value="">TẤT CẢ NHÓM</option>
+                                ${groups.map((group) => `<option value="${escapeHtml(group)}" ${group === selectedGroup ? "selected" : ""}>${escapeHtml(group)}</option>`).join("")}
+                            </select>
+                            <button id="fb-connect-open" class="px-4 py-2 text-[10px] uppercase-wide font-bold" style="background: #4a9eff; color: #fff; border: 1px solid #4a9eff;">
                                 <i class="fa-brands fa-facebook"></i> CONNECT NEW PAGE
                             </button>
                         </div>
                         <div class="p-5 grid grid-cols-2 gap-4">
-                            ${pages.map(facebookPageCard).join("") || `<div class="col-span-2 text-center py-10 text-hud-muted text-sm border border-hud-cyan/10 bg-black/30">Chưa có fanpage nào. Bấm Connect New Page để nhập short-lived token.</div>`}
+                            ${visiblePages.map(facebookPageCard).join("") || `<div class="col-span-2 text-center py-10 text-hud-muted text-sm border border-hud-cyan/10 bg-black/30">${selectedGroup ? "Không có fanpage trong nhóm này." : "Chưa có fanpage nào. Bấm Connect New Page để nhập short-lived token."}</div>`}
                         </div>
                     </div>
                     <div id="fb-connect-dialog" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -1772,6 +1788,29 @@
                 section.querySelector("#fb-short-token")?.focus();
             };
             section.querySelector("#fb-connect-open")?.addEventListener("click", openDialog);
+            section.querySelector("#facebook-page-group-filter")?.addEventListener("change", (event) => {
+                state.facebookPageGroupFilter = event.target.value || "";
+                renderFacebookPagesPage();
+            });
+            section.querySelectorAll(".facebook-page-group-save").forEach((button) => {
+                button.addEventListener("click", async () => {
+                    const pageId = button.dataset.pageId || "";
+                    const input = section.querySelector(`.facebook-page-group-input[data-page-id="${CSS.escape(pageId)}"]`);
+                    await fetchJSON(`/facebook/pages/${encodeURIComponent(pageId)}/group`, {
+                        method: "PATCH",
+                        body: JSON.stringify({ group: String(input?.value || "").trim() }),
+                    });
+                    await renderFacebookPagesPage();
+                });
+            });
+            section.querySelectorAll(".facebook-page-group-input").forEach((input) => {
+                input.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter") {
+                        event.preventDefault();
+                        section.querySelector(`.facebook-page-group-save[data-page-id="${CSS.escape(input.dataset.pageId || "")}"]`)?.click();
+                    }
+                });
+            });
             section.querySelector("#fb-connect-close")?.addEventListener("click", closeDialog);
             section.querySelector("#fb-connect-cancel")?.addEventListener("click", closeDialog);
             dialog?.addEventListener("click", (event) => {

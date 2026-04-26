@@ -63,6 +63,7 @@ def _public_page(item: dict[str, Any]) -> dict[str, Any]:
         "category": item.get("category", ""),
         "picture_url": item.get("picture_url", ""),
         "cover_url": item.get("cover_url", ""),
+        "group": item.get("group", ""),
         "tasks": item.get("tasks") or [],
         "status": item.get("status", "connected"),
         "token_prefix": _mask_token(str(item.get("page_access_token") or "")),
@@ -74,6 +75,38 @@ def _public_page(item: dict[str, Any]) -> dict[str, Any]:
 
 def list_facebook_pages() -> list[dict[str, Any]]:
     return [_public_page(item) for item in _list_facebook_page_records()]
+
+
+def update_facebook_page_group(page_id: str, group: str) -> dict[str, Any]:
+    page_id = str(page_id or "").strip()
+    if not page_id:
+        raise RuntimeError("page_id is required.")
+    group = " ".join(str(group or "").strip().split())[:80]
+    conn = _postgres_conn()
+    if conn is not None:
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT data::text FROM facebook_pages WHERE page_id = %s", (page_id,))
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError("Facebook page not found.")
+            item = json.loads(row[0])
+            item["group"] = group
+            item["updated_at"] = _now()
+            cur.execute(
+                "UPDATE facebook_pages SET updated_at = NOW(), data = %s::jsonb WHERE page_id = %s",
+                (serialize_json(item), page_id),
+            )
+            return _public_page(item)
+    with STORE_LOCK:
+        items = _load_pages()
+        for item in items:
+            if str(item.get("page_id") or "") != page_id:
+                continue
+            item["group"] = group
+            item["updated_at"] = _now()
+            _save_pages(items)
+            return _public_page(item)
+    raise RuntimeError("Facebook page not found.")
 
 
 def _list_facebook_page_records() -> list[dict[str, Any]]:

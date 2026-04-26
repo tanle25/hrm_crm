@@ -29,6 +29,7 @@ from app.facebook_pages import (
     sync_facebook_aggregate_stats,
     sync_facebook_conversations,
     sync_facebook_posts,
+    update_facebook_page_group,
     verify_facebook_webhook_signature,
 )
 from app.graph import retry_from_dlq, run_pipeline_async
@@ -53,6 +54,7 @@ from app.schemas import (
     FacebookConnectResponse,
     FacebookCommentListResponse,
     FacebookConversationListResponse,
+    FacebookPageGroupUpdateRequest,
     FacebookPageListResponse,
     FacebookMessageSendRequest,
     FacebookMessageSendResponse,
@@ -532,6 +534,15 @@ async def connect_facebook_pages_endpoint(request: FacebookConnectRequest) -> Fa
         raise HTTPException(status_code=400, detail=str(error)) from error
     log.info("facebook_pages_connected", total=result.get("total"), batch_id=result.get("batch_id"))
     return FacebookConnectResponse(**result)
+
+
+@app.patch(f"{settings.api_prefix}/facebook/pages/{{page_id}}/group")
+async def update_facebook_page_group_endpoint(page_id: str, request: FacebookPageGroupUpdateRequest) -> dict:
+    try:
+        page = await asyncio.to_thread(update_facebook_page_group, page_id, request.group)
+    except RuntimeError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return page
 
 
 @app.get(f"{settings.api_prefix}/facebook/stats", response_model=FacebookStatsResponse)

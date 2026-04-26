@@ -655,9 +655,13 @@ def _facebook_posts_payload(
             "posted_7d": sum(1 for post in selected if post.get("posted_7d")),
             "scheduled": 0,
             "reach": sum(_safe_int(post.get("reach")) for post in selected),
+            "views": sum(_safe_int(post.get("views") or post.get("impressions")) for post in selected),
             "engagement": sum(_safe_int(post.get("engagement")) for post in selected),
+            "clicks": sum(_safe_int(post.get("clicks")) for post in selected),
             "comments": sum(_safe_int(post.get("comments")) for post in selected),
+            "reactions": sum(_safe_int(post.get("reactions")) for post in selected),
             "shares": sum(_safe_int(post.get("shares")) for post in selected),
+            "analytics_available": sum(1 for post in selected if post.get("analytics_status") == "available"),
         },
         "posts": selected,
         "warnings": (warnings or [])[:20],
@@ -744,6 +748,26 @@ def _fetch_post_analytics(client: httpx.Client, base_url: str, post_id: str, tok
     return metrics, warnings
 
 
+def _post_analytics_from_graph_payload(post: dict[str, Any]) -> dict[str, int]:
+    insights = post.get("insights") if isinstance(post.get("insights"), dict) else {}
+    comments_summary = ((post.get("comments") or {}).get("summary") or {}) if isinstance(post.get("comments"), dict) else {}
+    reactions_summary = ((post.get("reactions") or {}).get("summary") or {}) if isinstance(post.get("reactions"), dict) else {}
+    shares_payload = post.get("shares") if isinstance(post.get("shares"), dict) else {}
+    return {
+        "reach": _post_insight_total(insights, "post_impressions_unique"),
+        "impressions": _post_insight_total(insights, "post_impressions"),
+        "engagement": _post_insight_total(insights, "post_engaged_users"),
+        "clicks": _post_insight_total(insights, "post_clicks"),
+        "comments": _safe_int(comments_summary.get("total_count")),
+        "reactions": _safe_int(reactions_summary.get("total_count")),
+        "shares": _safe_int(shares_payload.get("count")),
+    }
+
+
+def _merge_post_analytics(primary: dict[str, int], fallback: dict[str, int]) -> dict[str, int]:
+    return {key: _safe_int(primary.get(key)) or _safe_int(fallback.get(key)) for key in ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"]}
+
+
 def _empty_facebook_stats(days: int, page_count: int, warnings: list[str] | None = None) -> dict[str, Any]:
     normalized_days = max(1, min(days, 30))
     now = datetime.now(timezone.utc)
@@ -788,7 +812,11 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
             try:
                 while remaining > 0:
                     params = {
-                        "fields": "id,message,created_time,permalink_url",
+                        "fields": (
+                            "id,message,created_time,permalink_url,full_picture,status_type,type,shares,"
+                            "comments.limit(0).summary(true),reactions.limit(0).summary(true),"
+                            "insights.metric(post_impressions_unique,post_impressions,post_engaged_users,post_clicks)"
+                        ),
                         "limit": min(25, remaining),
                         "access_token": page["page_access_token"],
                     }
@@ -804,8 +832,11 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                         created_time = str(post.get("created_time") or "")
                         created_dt = _parse_graph_time(created_time)
                         post_id = str(post.get("id") or "")
-                        analytics, analytics_warnings = _fetch_post_analytics(client, base_url, post_id, str(page["page_access_token"]))
-                        warnings.extend(analytics_warnings)
+                        analytics = _post_analytics_from_graph_payload(post)
+                        if not any(_safe_int(analytics.get(key)) for key in ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"]):
+                            fallback_analytics, analytics_warnings = _fetch_post_analytics(client, base_url, post_id, str(page["page_access_token"]))
+                            analytics = _merge_post_analytics(analytics, fallback_analytics)
+                            warnings.extend(analytics_warnings)
                         post_record = {
                             "post_id": post_id,
                             "page_id": str(page.get("page_id") or ""),
@@ -825,6 +856,7 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                             "comments": analytics["comments"],
                             "reactions": analytics["reactions"],
                             "shares": analytics["shares"],
+                            "analytics_status": "available" if any(_safe_int(analytics.get(key)) for key in ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"]) else "empty",
                             "posted_7d": bool(created_dt and created_dt >= since_7d),
                         }
                         posts.append(post_record)

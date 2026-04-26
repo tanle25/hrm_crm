@@ -2398,13 +2398,14 @@
                     <div id="fb-posts-sync-status" class="${state.facebookPostsSyncing ? "" : "hidden"} mb-4 border border-hud-cyan/30 bg-hud-cyan/10 text-hud-cyan text-[11px] p-3">
                         Đang đồng bộ bài viết Facebook trong nền. Dữ liệu đã lưu sẽ vẫn hiển thị, sync xong sẽ tự cập nhật.
                     </div>
-                    <div class="grid grid-cols-5 gap-4 mb-6">
+                    <div class="grid grid-cols-6 gap-4 mb-6">
                         ${[
                             ["TOTAL POSTS", formatNumber(payload.total || 0), "white"],
                             ["POSTED 7D", formatNumber(totals.posted_7d || 0), "green"],
-                            ["SCHEDULED", formatNumber(totals.scheduled || 0), "amber"],
                             ["REACH", formatCompact(totals.reach || 0), "white"],
+                            ["VIEWS", formatCompact(totals.views || 0), "white"],
                             ["ENGAGEMENT", formatCompact(totals.engagement || 0), "white"],
+                            ["ANALYTICS", `${formatNumber(totals.analytics_available || 0)}/${formatNumber(posts.length || 0)}`, "amber"],
                         ].map(([label, value, tone]) => `
                             <div class="hud-card ${tone === "green" ? "green" : tone === "amber" ? "amber" : ""} p-4 fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
                                 <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
@@ -2434,13 +2435,15 @@
                                         <th class="px-4 py-3 text-right">Views</th>
                                         <th class="px-4 py-3 text-right">Engaged</th>
                                         <th class="px-4 py-3 text-right">Clicks</th>
-                                        <th class="px-4 py-3 text-right">Cmt/React</th>
+                                        <th class="px-4 py-3 text-right">Cmt/React/Share</th>
                                         <th class="px-4 py-3">Status</th>
                                         <th class="px-4 py-3 text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${posts.map((post) => `
+                                    ${posts.map((post) => {
+                                        const analyticsAvailable = post.analytics_status === "available" || Number(post.reach || post.views || post.impressions || post.engagement || post.clicks || post.comments || post.reactions || post.shares || 0) > 0;
+                                        return `
                                         <tr class="border-b border-hud-fb/10 hover:bg-hud-fb/5">
                                             <td class="px-5 py-4">
                                                 <div class="flex items-start gap-3">
@@ -2457,8 +2460,8 @@
                                             <td class="px-4 py-4 text-right text-white font-mono">${formatCompact(post.views || post.impressions || 0)}</td>
                                             <td class="px-4 py-4 text-right text-hud-green font-mono">${formatCompact(post.engagement || 0)}</td>
                                             <td class="px-4 py-4 text-right text-hud-cyan font-mono">${formatCompact(post.clicks || 0)}</td>
-                                            <td class="px-4 py-4 text-right text-white/80 font-mono">${formatCompact(post.comments || 0)} / ${formatCompact(post.reactions || 0)}</td>
-                                            <td class="px-4 py-4"><span class="badge green">POSTED</span></td>
+                                            <td class="px-4 py-4 text-right text-white/80 font-mono">${formatCompact(post.comments || 0)} / ${formatCompact(post.reactions || 0)} / ${formatCompact(post.shares || 0)}</td>
+                                            <td class="px-4 py-4"><span class="badge ${analyticsAvailable ? "green" : "amber"}">${analyticsAvailable ? "ANALYTICS" : "NO DATA"}</span></td>
                                             <td class="px-4 py-4 text-right">
                                                 <div class="flex items-center justify-end gap-3">
                                                     <a href="#" data-page="fb-comments" class="fb-post-comments text-xs hover:text-white" style="color:#4a9eff;"><i class="fa-solid fa-comment"></i></a>
@@ -2466,7 +2469,7 @@
                                                 </div>
                                             </td>
                                         </tr>
-                                    `).join("") || `<tr><td colspan="10" class="px-5 py-10 text-center text-hud-muted text-sm">Chưa có bài viết trong DB. Hệ thống sẽ đồng bộ nền; có bao nhiêu bài sẽ hiển thị bấy nhiêu sau khi sync xong.</td></tr>`}
+                                    `}).join("") || `<tr><td colspan="10" class="px-5 py-10 text-center text-hud-muted text-sm">Chưa có bài viết trong DB. Hệ thống sẽ đồng bộ nền; có bao nhiêu bài sẽ hiển thị bấy nhiêu sau khi sync xong.</td></tr>`}
                                 </tbody>
                             </table>
                         </div>

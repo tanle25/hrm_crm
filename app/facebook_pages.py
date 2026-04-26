@@ -745,6 +745,21 @@ def _fetch_post_analytics(client: httpx.Client, base_url: str, post_id: str, tok
         if not metrics[target] and last_error:
             warnings.append(f"{post_id}: {target} count unavailable - {last_error}")
 
+    last_error = ""
+    for graph_id in insight_ids:
+        try:
+            response = client.get(
+                f"{base_url}/{graph_id}",
+                params={"fields": "shares", "access_token": token},
+            )
+            response.raise_for_status()
+            metrics["shares"] = _safe_int(((response.json().get("shares") or {}).get("count")))
+            break
+        except httpx.HTTPError as error:
+            last_error = _graph_error_message(error)
+    if not metrics["shares"] and last_error:
+        warnings.append(f"{post_id}: shares count unavailable - {last_error}")
+
     return metrics, warnings
 
 
@@ -812,11 +827,7 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
             try:
                 while remaining > 0:
                     params = {
-                        "fields": (
-                            "id,message,created_time,permalink_url,full_picture,status_type,type,shares,"
-                            "comments.limit(0).summary(true),reactions.limit(0).summary(true),"
-                            "insights.metric(post_impressions_unique,post_impressions,post_engaged_users)"
-                        ),
+                        "fields": "id,message,created_time,permalink_url,full_picture,status_type,type",
                         "limit": min(25, remaining),
                         "access_token": page["page_access_token"],
                     }
@@ -832,11 +843,8 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                         created_time = str(post.get("created_time") or "")
                         created_dt = _parse_graph_time(created_time)
                         post_id = str(post.get("id") or "")
-                        analytics = _post_analytics_from_graph_payload(post)
-                        if not any(_safe_int(analytics.get(key)) for key in ["reach", "impressions", "engagement"]):
-                            fallback_analytics, analytics_warnings = _fetch_post_analytics(client, base_url, post_id, str(page["page_access_token"]))
-                            analytics = _merge_post_analytics(analytics, fallback_analytics)
-                            warnings.extend(analytics_warnings)
+                        analytics, analytics_warnings = _fetch_post_analytics(client, base_url, post_id, str(page["page_access_token"]))
+                        warnings.extend(analytics_warnings)
                         post_record = {
                             "post_id": post_id,
                             "page_id": str(page.get("page_id") or ""),

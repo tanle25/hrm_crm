@@ -2140,6 +2140,69 @@
         </div>`;
     }
 
+    function scrollFacebookMessagesToBottom(section) {
+        const list = section?.querySelector("#fb-message-thread");
+        if (!list) return;
+        const scroll = () => {
+            list.scrollTop = list.scrollHeight;
+        };
+        requestAnimationFrame(scroll);
+        setTimeout(scroll, 120);
+        list.querySelectorAll("img").forEach((image) => {
+            if (!image.complete) image.addEventListener("load", scroll, { once: true });
+        });
+    }
+
+    function renderFacebookConversationPanel(selected, detailLoading = false) {
+        if (!selected) {
+            return `<div class="p-10 text-center text-hud-muted">Chọn một hội thoại để xem tin nhắn.</div>`;
+        }
+        const messages = selected.messages || [];
+        return `
+            <div class="header-strip px-4 py-3 flex items-center gap-3" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                <div class="w-8 h-8 rounded-full bg-hud-fb/20 border border-hud-fb flex items-center justify-center flex-shrink-0">
+                    <i class="fa-solid fa-user text-hud-fb text-[10px]"></i>
+                </div>
+                <div class="min-w-0">
+                    <div class="text-sm text-white font-bold truncate">${escapeHtml(selected.customer_name || "Facebook User")}</div>
+                    <div class="text-[9px] uppercase-wide" style="color:#4a9eff;">${escapeHtml(selected.page_name || "Facebook Page")} · ${escapeHtml(selected.customer_id || "")}</div>
+                </div>
+                <div class="ml-auto flex gap-2 items-center">
+                    <span class="badge ${Number(selected.unread_count || 0) ? "amber" : "cyan"}">${Number(selected.unread_count || 0) ? "UNREAD" : "OPEN"}</span>
+                    <button class="btn-ghost px-2.5 py-1.5 text-[10px]" title="Gắn thẻ"><i class="fa-solid fa-user-tag"></i> TAG</button>
+                    <button class="btn-ghost px-2.5 py-1.5 text-[10px]" title="Báo cáo"><i class="fa-solid fa-flag"></i></button>
+                </div>
+            </div>
+            <div id="fb-message-thread" class="flex-1 min-h-0 overflow-y-auto p-5 space-y-3">
+                ${detailLoading ? `<div class="text-[10px] text-hud-fb uppercase-wide mb-3"><i class="fa-solid fa-spinner fa-spin"></i> Đang tải thêm tin nhắn trong hội thoại...</div>` : ""}
+                ${messages.map((message) => `
+                    <div class="flex gap-2 max-w-[80%] ${message.direction === "outbound" ? "ml-auto flex-row-reverse" : ""}">
+                        <div class="w-7 h-7 rounded-full ${message.direction === "outbound" ? "bg-hud-fb/30 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <i class="fa-solid ${message.direction === "outbound" ? "fa-robot text-hud-fb" : "fa-user text-hud-muted"} text-[9px]"></i>
+                        </div>
+                        <div>
+                            ${renderReplyMessage(message)}
+                            <div class="text-[9px] text-hud-muted mt-1 px-1 ${message.direction === "outbound" ? "text-right" : ""}">${escapeHtml(formatDate(message.created_time))} · ${escapeHtml(message.from_name || "")}</div>
+                        </div>
+                    </div>
+                `).join("") || `<div class="text-center text-hud-muted text-sm py-10">Hội thoại chưa có tin nhắn text.</div>`}
+            </div>
+            <div class="border-t border-hud-fb/20 p-3 space-y-2">
+                <div id="fb-message-feedback" class="hidden text-[11px] border p-2"></div>
+                <div class="bg-black/50 border-l-2 border-hud-cyan px-3 py-2 text-[11px]">
+                    <div class="text-[9px] uppercase-widest font-bold mb-1 text-hud-cyan"><i class="fa-solid fa-robot"></i> AI SUGGEST</div>
+                    <div class="text-white/90">Chọn một hội thoại để hệ thống gợi ý phản hồi theo ngữ cảnh. Bạn vẫn có thể chỉnh lại trước khi gửi.</div>
+                </div>
+                <div class="flex gap-2">
+                    <input id="fb-message-input" type="text" placeholder="Gõ phản hồi của bạn..." class="hud-input flex-1 px-3 py-2 text-xs"/>
+                    <button class="btn-ghost px-3 py-2 text-[10px]" title="Đính kèm"><i class="fa-solid fa-paperclip"></i></button>
+                    <button class="btn-ghost px-3 py-2 text-[10px] uppercase-wide font-bold" style="background: rgba(0, 240, 255, 0.15); color: #00f0ff;"><i class="fa-solid fa-robot"></i> AI</button>
+                    <button id="fb-message-send" class="px-4 py-2 text-xs uppercase-wide font-bold" style="background:#4a9eff;color:#fff;border:1px solid #4a9eff;"><i class="fa-solid fa-paper-plane"></i></button>
+                </div>
+            </div>
+        `;
+    }
+
     async function renderFacebookMessagesPage() {
         const section = document.getElementById("page-fb-messages");
         if (!section) return;
@@ -2154,7 +2217,6 @@
             const selectedDetail = selectedSummary?.conversation_id ? state.facebookConversationDetails[selectedSummary.conversation_id] : null;
             const selected = selectedDetail || selectedSummary;
             const detailLoading = Boolean(selectedSummary?.conversation_id && !selectedDetail);
-            const messages = selected?.messages || [];
             const unread = conversations.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
             section.dataset.hydrated = "1";
             section.innerHTML = `
@@ -2198,55 +2260,14 @@
                                 }).join("") || `<div class="p-6 text-center text-hud-muted text-sm">Chưa có hội thoại trong DB. Hệ thống sẽ sync nền nếu page token có quyền inbox.</div>`}
                             </div>
                         </div>
-                        <div class="hud-card flex flex-col overflow-hidden fade-in min-h-0" style="border-color: rgba(74, 158, 255, 0.3);">
+                        <div id="fb-conversation-panel" class="hud-card flex flex-col overflow-hidden fade-in min-h-0" style="border-color: rgba(74, 158, 255, 0.3);">
                             <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
-                            ${selected ? `
-                                <div class="header-strip px-4 py-3 flex items-center gap-3" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
-                                    <div class="w-8 h-8 rounded-full bg-hud-fb/20 border border-hud-fb flex items-center justify-center flex-shrink-0">
-                                        <i class="fa-solid fa-user text-hud-fb text-[10px]"></i>
-                                    </div>
-                                    <div class="min-w-0">
-                                        <div class="text-sm text-white font-bold truncate">${escapeHtml(selected.customer_name || "Facebook User")}</div>
-                                        <div class="text-[9px] uppercase-wide" style="color:#4a9eff;">${escapeHtml(selected.page_name || "Facebook Page")} · ${escapeHtml(selected.customer_id || "")}</div>
-                                    </div>
-                                    <div class="ml-auto flex gap-2 items-center">
-                                        <span class="badge ${Number(selected.unread_count || 0) ? "amber" : "cyan"}">${Number(selected.unread_count || 0) ? "UNREAD" : "OPEN"}</span>
-                                        <button class="btn-ghost px-2.5 py-1.5 text-[10px]" title="Gắn thẻ"><i class="fa-solid fa-user-tag"></i> TAG</button>
-                                        <button class="btn-ghost px-2.5 py-1.5 text-[10px]" title="Báo cáo"><i class="fa-solid fa-flag"></i></button>
-                                    </div>
-                                </div>
-                                <div class="flex-1 min-h-0 overflow-y-auto p-5 space-y-3">
-                                    ${detailLoading ? `<div class="text-[10px] text-hud-fb uppercase-wide mb-3"><i class="fa-solid fa-spinner fa-spin"></i> Đang tải thêm tin nhắn trong hội thoại...</div>` : ""}
-                                    ${messages.map((message) => `
-                                        <div class="flex gap-2 max-w-[80%] ${message.direction === "outbound" ? "ml-auto flex-row-reverse" : ""}">
-                                            <div class="w-7 h-7 rounded-full ${message.direction === "outbound" ? "bg-hud-fb/30 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0 mt-0.5">
-                                                <i class="fa-solid ${message.direction === "outbound" ? "fa-robot text-hud-fb" : "fa-user text-hud-muted"} text-[9px]"></i>
-                                            </div>
-                                            <div>
-                                                ${renderReplyMessage(message)}
-                                                <div class="text-[9px] text-hud-muted mt-1 px-1 ${message.direction === "outbound" ? "text-right" : ""}">${escapeHtml(formatDate(message.created_time))} · ${escapeHtml(message.from_name || "")}</div>
-                                            </div>
-                                        </div>
-                                    `).join("") || `<div class="text-center text-hud-muted text-sm py-10">Hội thoại chưa có tin nhắn text.</div>`}
-                                </div>
-                                <div class="border-t border-hud-fb/20 p-3 space-y-2">
-                                    <div id="fb-message-feedback" class="hidden text-[11px] border p-2"></div>
-                                    <div class="bg-black/50 border-l-2 border-hud-cyan px-3 py-2 text-[11px]">
-                                        <div class="text-[9px] uppercase-widest font-bold mb-1 text-hud-cyan"><i class="fa-solid fa-robot"></i> AI SUGGEST</div>
-                                        <div class="text-white/90">Chọn một hội thoại để hệ thống gợi ý phản hồi theo ngữ cảnh. Bạn vẫn có thể chỉnh lại trước khi gửi.</div>
-                                    </div>
-                                    <div class="flex gap-2">
-                                        <input id="fb-message-input" type="text" placeholder="Gõ phản hồi của bạn..." class="hud-input flex-1 px-3 py-2 text-xs"/>
-                                        <button class="btn-ghost px-3 py-2 text-[10px]" title="Đính kèm"><i class="fa-solid fa-paperclip"></i></button>
-                                        <button class="btn-ghost px-3 py-2 text-[10px] uppercase-wide font-bold" style="background: rgba(0, 240, 255, 0.15); color: #00f0ff;"><i class="fa-solid fa-robot"></i> AI</button>
-                                        <button id="fb-message-send" class="px-4 py-2 text-xs uppercase-wide font-bold" style="background:#4a9eff;color:#fff;border:1px solid #4a9eff;"><i class="fa-solid fa-paper-plane"></i></button>
-                                    </div>
-                                </div>
-                            ` : `<div class="p-10 text-center text-hud-muted">Chọn một hội thoại để xem tin nhắn.</div>`}
+                            ${renderFacebookConversationPanel(selected, detailLoading)}
                         </div>
                     </div>
                 </div>
             `;
+            scrollFacebookMessagesToBottom(section);
             const syncMessages = async () => {
                 if (state.facebookMessagesSyncing) return;
                 state.facebookMessagesSyncing = true;
@@ -2269,7 +2290,34 @@
             section.querySelectorAll(".fb-conversation-item").forEach((button) => {
                 button.addEventListener("click", () => {
                     state.selectedFacebookConversationId = button.dataset.conversationId || "";
-                    renderFacebookMessagesPage();
+                    section.querySelectorAll(".fb-conversation-item").forEach((item) => item.classList.remove("bg-hud-fb/10"));
+                    button.classList.add("bg-hud-fb/10");
+                    const conversationId = state.selectedFacebookConversationId;
+                    const summary = conversations.find((item) => item.conversation_id === conversationId) || null;
+                    const detail = summary ? state.facebookConversationDetails[summary.conversation_id] : null;
+                    const panel = section.querySelector("#fb-conversation-panel");
+                    if (panel) {
+                        panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(detail || summary, Boolean(summary && !detail))}`;
+                        scrollFacebookMessagesToBottom(section);
+                    }
+                    if (summary && !detail && !state.facebookConversationDetailPending[conversationId]) {
+                        state.facebookConversationDetailPending[conversationId] = true;
+                        fetchJSON(`/facebook/conversations/${encodeURIComponent(conversationId)}?message_limit=100`)
+                            .then((loadedDetail) => {
+                                state.facebookConversationDetails[conversationId] = loadedDetail;
+                                if (state.selectedFacebookConversationId === conversationId) {
+                                    const currentPanel = section.querySelector("#fb-conversation-panel");
+                                    if (currentPanel) {
+                                        currentPanel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(loadedDetail, false)}`;
+                                        scrollFacebookMessagesToBottom(section);
+                                    }
+                                }
+                            })
+                            .catch((error) => console.warn("Facebook conversation detail failed", error))
+                            .finally(() => {
+                                delete state.facebookConversationDetailPending[conversationId];
+                            });
+                    }
                 });
             });
             if (selectedSummary?.conversation_id && !selectedDetail && !state.facebookConversationDetailPending[selectedSummary.conversation_id]) {
@@ -2279,7 +2327,11 @@
                     .then((detail) => {
                         state.facebookConversationDetails[conversationId] = detail;
                         if (state.selectedFacebookConversationId === conversationId) {
-                            renderFacebookMessagesPage();
+                            const panel = section.querySelector("#fb-conversation-panel");
+                            if (panel) {
+                                panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(detail, false)}`;
+                                scrollFacebookMessagesToBottom(section);
+                            }
                         }
                     })
                     .catch((error) => console.warn("Facebook conversation detail failed", error))
@@ -2291,13 +2343,14 @@
                 const input = section.querySelector("#fb-message-input");
                 const feedback = section.querySelector("#fb-message-feedback");
                 const message = String(input?.value || "").trim();
-                if (!selected || !message) return;
+                const selectedConversationId = state.selectedFacebookConversationId;
+                if (!selectedConversationId || !message) return;
                 try {
                     await fetchJSON("/facebook/messages/send", {
                         method: "POST",
-                        body: JSON.stringify({ conversation_id: selected.conversation_id, message }),
+                        body: JSON.stringify({ conversation_id: selectedConversationId, message }),
                     });
-                    delete state.facebookConversationDetails[selected.conversation_id];
+                    delete state.facebookConversationDetails[selectedConversationId];
                     if (input) input.value = "";
                     await renderFacebookMessagesPage();
                 } catch (error) {
@@ -2308,13 +2361,20 @@
                     }
                 }
             };
-            section.querySelector("#fb-message-send")?.addEventListener("click", sendSelectedMessage);
-            section.querySelector("#fb-message-input")?.addEventListener("keydown", (event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    sendSelectedMessage();
-                }
-            });
+            if (!section.dataset.facebookComposerBound) {
+                section.dataset.facebookComposerBound = "1";
+                section.addEventListener("click", (event) => {
+                    if (event.target.closest("#fb-message-send")) {
+                        sendSelectedMessage();
+                    }
+                });
+                section.addEventListener("keydown", (event) => {
+                    if (event.target?.id === "fb-message-input" && event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        sendSelectedMessage();
+                    }
+                });
+            }
         } catch (error) {
             section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook messages: ${escapeHtml(error.message)}</div>`;
         }

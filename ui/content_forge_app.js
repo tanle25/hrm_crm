@@ -2725,8 +2725,8 @@
                         <span class="c-tl"></span><span class="c-br"></span>
                         <div class="header-strip px-5 py-3 flex items-center gap-2">
                             <i class="fa-solid fa-key text-hud-cyan"></i>
-                            <span class="font-display font-black text-xs text-white uppercase-widest">EXTENSION API TOKENS</span>
-                            <span class="badge amber ml-auto">SHOPEE EXTENSION</span>
+                            <span class="font-display font-black text-xs text-white uppercase-widest">API TOKENS</span>
+                            <span class="badge amber ml-auto">EXTENSION + FACEBOOK TEST</span>
                         </div>
                         <div class="p-6 space-y-5">
                             <div id="token-feedback" class="hidden text-[11px] border p-3"></div>
@@ -2741,8 +2741,9 @@
                                     <i class="fa-solid fa-plus"></i> CREATE TOKEN
                                 </button>
                             </div>
-                            <div class="text-[10px] text-hud-muted">
-                                Dùng token này cho extension khi gọi <span class="text-white font-mono">POST /api/shopee/products</span> qua header <span class="text-white font-mono">Authorization: Bearer &lt;token&gt;</span>.
+                            <div class="text-[10px] text-hud-muted space-y-1">
+                                <div>Dùng token này qua header <span class="text-white font-mono">Authorization: Bearer &lt;token&gt;</span>.</div>
+                                <div>Hiện hỗ trợ extension Shopee và các endpoint test Facebook như <span class="text-white font-mono">POST /api/facebook/posts/sync</span>.</div>
                             </div>
                             <div id="api-token-reveal-slot">
                                 ${createdToken ? `
@@ -2753,6 +2754,10 @@
                                                 <input id="new-api-token" type="text" readonly class="hud-input w-full px-4 py-2.5 text-xs font-mono" value="${escapeHtml(createdToken)}"/>
                                             </div>
                                             <button id="copy-api-token" class="btn-ghost px-4 py-2.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-copy"></i> COPY</button>
+                                        </div>
+                                        <div class="mt-3 text-[10px] text-hud-muted">
+                                            Test Facebook posts sync:
+                                            <code class="block mt-1 text-hud-cyan whitespace-pre-wrap break-all">curl -sS -X POST "$BASE_URL/api/facebook/posts/sync?limit=50" -H "Authorization: Bearer ${escapeHtml(createdToken)}"</code>
                                         </div>
                                     </div>
                                 ` : ""}

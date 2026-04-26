@@ -168,6 +168,8 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if _is_authenticated_request(request):
         return await call_next(request)
+    if path.startswith(f"{settings.api_prefix}/facebook/") and verify_api_token(_request_api_token(request)):
+        return await call_next(request)
     if _is_shopee_extension_path(path) and request.method.upper() == "POST" and verify_api_token(_request_api_token(request)):
         return await call_next(request)
     if _is_shopee_extension_path(path) and request.method.upper() == "POST":

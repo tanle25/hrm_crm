@@ -696,54 +696,54 @@ def _fetch_post_analytics(client: httpx.Client, base_url: str, post_id: str, tok
         "shares": 0,
     }
     warnings: list[str] = []
-    try:
-        response = client.get(
-            f"{base_url}/{post_id}/insights",
-            params={
-                "metric": "post_impressions_unique,post_impressions,post_engaged_users,post_clicks",
-                "access_token": token,
-            },
-        )
-        response.raise_for_status()
-        payload = response.json()
-        metrics["reach"] = _post_insight_total(payload, "post_impressions_unique")
-        metrics["impressions"] = _post_insight_total(payload, "post_impressions")
-        metrics["engagement"] = _post_insight_total(payload, "post_engaged_users")
-        metrics["clicks"] = _post_insight_total(payload, "post_clicks")
-    except httpx.HTTPError as error:
-        warnings.append(f"{post_id}: insights unavailable - {_graph_error_message(error)}")
+    insight_targets = {
+        "reach": ["post_impressions_unique"],
+        "impressions": ["post_impressions"],
+        "engagement": ["post_engaged_users"],
+        "clicks": ["post_clicks", "post_clicks_by_type"],
+    }
+    insight_ids = [post_id]
+    object_id = post_id.split("_", 1)[1] if "_" in post_id else ""
+    if object_id:
+        insight_ids.append(object_id)
+    for target, candidates in insight_targets.items():
+        last_error = ""
+        for graph_id in insight_ids:
+            for metric_name in candidates:
+                try:
+                    response = client.get(
+                        f"{base_url}/{graph_id}/insights",
+                        params={"metric": metric_name, "access_token": token},
+                    )
+                    response.raise_for_status()
+                    value = _post_insight_total(response.json(), metric_name)
+                    if value:
+                        metrics[target] = value
+                        raise StopIteration
+                except StopIteration:
+                    break
+                except httpx.HTTPError as error:
+                    last_error = _graph_error_message(error)
+            if metrics[target]:
+                break
+        if not metrics[target] and last_error:
+            warnings.append(f"{post_id}: {target} unavailable - {last_error}")
 
-    try:
-        response = client.get(
-            f"{base_url}/{post_id}/comments",
-            params={"summary": "true", "limit": 0, "access_token": token},
-        )
-        response.raise_for_status()
-        metrics["comments"] = _safe_int(((response.json().get("summary") or {}).get("total_count")))
-    except httpx.HTTPError as error:
-        object_id = post_id.split("_", 1)[1] if "_" in post_id else ""
-        if object_id:
+    for target, edge in [("comments", "comments"), ("reactions", "reactions")]:
+        last_error = ""
+        for graph_id in insight_ids:
             try:
                 response = client.get(
-                    f"{base_url}/{object_id}/comments",
+                    f"{base_url}/{graph_id}/{edge}",
                     params={"summary": "true", "limit": 0, "access_token": token},
                 )
                 response.raise_for_status()
-                metrics["comments"] = _safe_int(((response.json().get("summary") or {}).get("total_count")))
-            except httpx.HTTPError as fallback_error:
-                warnings.append(f"{post_id}: comments count unavailable - {_graph_error_message(fallback_error)}")
-        else:
-            warnings.append(f"{post_id}: comments count unavailable - {_graph_error_message(error)}")
-
-    try:
-        response = client.get(
-            f"{base_url}/{post_id}/reactions",
-            params={"summary": "true", "limit": 0, "access_token": token},
-        )
-        response.raise_for_status()
-        metrics["reactions"] = _safe_int(((response.json().get("summary") or {}).get("total_count")))
-    except httpx.HTTPError as error:
-        warnings.append(f"{post_id}: reactions count unavailable - {_graph_error_message(error)}")
+                metrics[target] = _safe_int(((response.json().get("summary") or {}).get("total_count")))
+                break
+            except httpx.HTTPError as error:
+                last_error = _graph_error_message(error)
+        if not metrics[target] and last_error:
+            warnings.append(f"{post_id}: {target} count unavailable - {last_error}")
 
     return metrics, warnings
 
@@ -815,7 +815,7 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                         "fields": (
                             "id,message,created_time,permalink_url,full_picture,status_type,type,shares,"
                             "comments.limit(0).summary(true),reactions.limit(0).summary(true),"
-                            "insights.metric(post_impressions_unique,post_impressions,post_engaged_users,post_clicks)"
+                            "insights.metric(post_impressions_unique,post_impressions,post_engaged_users)"
                         ),
                         "limit": min(25, remaining),
                         "access_token": page["page_access_token"],
@@ -833,7 +833,7 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                         created_dt = _parse_graph_time(created_time)
                         post_id = str(post.get("id") or "")
                         analytics = _post_analytics_from_graph_payload(post)
-                        if not any(_safe_int(analytics.get(key)) for key in ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"]):
+                        if not any(_safe_int(analytics.get(key)) for key in ["reach", "impressions", "engagement"]):
                             fallback_analytics, analytics_warnings = _fetch_post_analytics(client, base_url, post_id, str(page["page_access_token"]))
                             analytics = _merge_post_analytics(analytics, fallback_analytics)
                             warnings.extend(analytics_warnings)

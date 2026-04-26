@@ -552,6 +552,43 @@ def _list_latest_cached_facebook_messages(conversation_id: str, limit: int = 1) 
     return list(reversed(rows))
 
 
+def _list_latest_cached_facebook_messages_by_conversation(
+    conversation_ids: list[str], limit: int = 1
+) -> dict[str, list[dict[str, Any]]]:
+    ids = [str(item) for item in conversation_ids if item]
+    if not ids:
+        return {}
+    conn = _postgres_conn()
+    if conn is None:
+        return {}
+    limit = max(1, min(limit, 200))
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH ranked AS (
+                SELECT
+                    conversation_id,
+                    data::text AS payload,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY conversation_id
+                        ORDER BY created_time DESC NULLS LAST, updated_at DESC
+                    ) AS row_number
+                FROM facebook_messages
+                WHERE conversation_id = ANY(%s)
+            )
+            SELECT conversation_id, payload
+            FROM ranked
+            WHERE row_number <= %s
+            ORDER BY conversation_id, row_number ASC
+            """,
+            (ids, limit),
+        )
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for conversation_id, payload in cur.fetchall():
+            grouped[str(conversation_id)].append(json.loads(payload))
+    return {conversation_id: list(reversed(messages)) for conversation_id, messages in grouped.items()}
+
+
 def _upsert_facebook_stats(stat_key: str, payload: dict[str, Any]) -> None:
     conn = _postgres_conn()
     if conn is None:
@@ -1271,8 +1308,25 @@ def _conversation_with_cached_messages(conversation: dict[str, Any], message_lim
 def facebook_conversations(limit: int = 50, max_pages: int = 25, message_limit: int = 1) -> dict[str, Any]:
     conversations = _list_cached_facebook_conversations(limit)
     enriched: list[dict[str, Any]] = []
-    for conversation in conversations:
-        enriched.append(_conversation_with_cached_messages(conversation, message_limit))
+    if max(0, min(message_limit, 200)) == 1:
+        latest_by_conversation = _list_latest_cached_facebook_messages_by_conversation(
+            [str(item.get("conversation_id") or "") for item in conversations],
+            1,
+        )
+        for conversation in conversations:
+            conversation_id = str(conversation.get("conversation_id") or "")
+            graph_latest = (conversation.get("messages") or [])[-1:]
+            latest_messages = latest_by_conversation.get(conversation_id) or graph_latest
+            conversation["messages"] = latest_messages[-1:]
+            conversation["message_count"] = max(int(conversation.get("message_count") or 0), len(latest_messages))
+            if latest_messages:
+                last_message = latest_messages[-1]
+                conversation["snippet"] = last_message.get("message") or last_message.get("fallback_label") or conversation.get("snippet") or ""
+                conversation["updated_time"] = last_message.get("created_time") or conversation.get("updated_time") or ""
+            enriched.append(conversation)
+    else:
+        for conversation in conversations:
+            enriched.append(_conversation_with_cached_messages(conversation, message_limit))
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
     warnings = [] if enriched else ["No cached Facebook conversations yet. Run sync to fetch inbox from Graph API."]
     return {

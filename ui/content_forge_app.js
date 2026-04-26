@@ -48,6 +48,8 @@
         selectedFacebookConversationId: "",
         facebookMessagesSyncing: false,
         facebookMessagesAutoSynced: false,
+        facebookConversationDetails: {},
+        facebookConversationDetailPending: {},
     };
 
     function escapeHtml(value) {
@@ -2148,14 +2150,10 @@
             const payload = await fetchJSON("/facebook/conversations?limit=25&message_limit=1");
             const conversations = payload.conversations || [];
             if (!state.selectedFacebookConversationId && conversations[0]) state.selectedFacebookConversationId = conversations[0].conversation_id;
-            let selected = conversations.find((item) => item.conversation_id === state.selectedFacebookConversationId) || conversations[0] || null;
-            if (selected?.conversation_id) {
-                try {
-                    selected = await fetchJSON(`/facebook/conversations/${encodeURIComponent(selected.conversation_id)}?message_limit=100`);
-                } catch (error) {
-                    console.warn("Facebook conversation detail failed", error);
-                }
-            }
+            const selectedSummary = conversations.find((item) => item.conversation_id === state.selectedFacebookConversationId) || conversations[0] || null;
+            const selectedDetail = selectedSummary?.conversation_id ? state.facebookConversationDetails[selectedSummary.conversation_id] : null;
+            const selected = selectedDetail || selectedSummary;
+            const detailLoading = Boolean(selectedSummary?.conversation_id && !selectedDetail);
             const messages = selected?.messages || [];
             const unread = conversations.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
             section.dataset.hydrated = "1";
@@ -2218,6 +2216,7 @@
                                     </div>
                                 </div>
                                 <div class="flex-1 min-h-0 overflow-y-auto p-5 space-y-3">
+                                    ${detailLoading ? `<div class="text-[10px] text-hud-fb uppercase-wide mb-3"><i class="fa-solid fa-spinner fa-spin"></i> Đang tải thêm tin nhắn trong hội thoại...</div>` : ""}
                                     ${messages.map((message) => `
                                         <div class="flex gap-2 max-w-[80%] ${message.direction === "outbound" ? "ml-auto flex-row-reverse" : ""}">
                                             <div class="w-7 h-7 rounded-full ${message.direction === "outbound" ? "bg-hud-fb/30 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -2256,6 +2255,7 @@
                 if (button) button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>`;
                 try {
                     await fetchJSON("/facebook/conversations/sync?limit=25", { method: "POST" });
+                    state.facebookConversationDetails = {};
                 } finally {
                     state.facebookMessagesSyncing = false;
                     await renderFacebookMessagesPage();
@@ -2272,6 +2272,21 @@
                     renderFacebookMessagesPage();
                 });
             });
+            if (selectedSummary?.conversation_id && !selectedDetail && !state.facebookConversationDetailPending[selectedSummary.conversation_id]) {
+                const conversationId = selectedSummary.conversation_id;
+                state.facebookConversationDetailPending[conversationId] = true;
+                fetchJSON(`/facebook/conversations/${encodeURIComponent(conversationId)}?message_limit=100`)
+                    .then((detail) => {
+                        state.facebookConversationDetails[conversationId] = detail;
+                        if (state.selectedFacebookConversationId === conversationId) {
+                            renderFacebookMessagesPage();
+                        }
+                    })
+                    .catch((error) => console.warn("Facebook conversation detail failed", error))
+                    .finally(() => {
+                        delete state.facebookConversationDetailPending[conversationId];
+                    });
+            }
             const sendSelectedMessage = async () => {
                 const input = section.querySelector("#fb-message-input");
                 const feedback = section.querySelector("#fb-message-feedback");
@@ -2282,6 +2297,7 @@
                         method: "POST",
                         body: JSON.stringify({ conversation_id: selected.conversation_id, message }),
                     });
+                    delete state.facebookConversationDetails[selected.conversation_id];
                     if (input) input.value = "";
                     await renderFacebookMessagesPage();
                 } catch (error) {

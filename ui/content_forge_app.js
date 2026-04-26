@@ -2077,6 +2077,7 @@
                         : "Quote · tin nhắn";
         const quoteMeta = replyTo.created_time ? formatDate(replyTo.created_time) : (replyTo.from_name || "");
         const thumbUrl = imageAttachment ? String(imageAttachment.preview_url || imageAttachment.url || "") : "";
+        const mediaUrl = imageAttachment ? String(imageAttachment.url || imageAttachment.preview_url || "") : "";
         return `<div class="reply-msg__quote-inner">
             <div class="reply-msg__thumb">
                 ${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" alt="" loading="lazy" />` : `<i class="fa-solid fa-paperclip text-hud-fb text-sm"></i>`}
@@ -2085,7 +2086,10 @@
                 <div class="reply-msg__quote-label"><i class="fa-solid fa-reply"></i> ${escapeHtml(quoteLabel)}</div>
                 <div class="reply-msg__quote-meta">${escapeHtml(quoteMeta || replyTo.fallback_label || "Tin nhắn trước đó")}</div>
             </div>
-        </div>`;
+        </div>
+        ${mediaUrl ? `<a href="${escapeHtml(mediaUrl)}" target="_blank" rel="noopener noreferrer" class="reply-msg__quote-media block">
+            <img src="${escapeHtml(mediaUrl)}" alt="${escapeHtml(quoteLabel)}" loading="lazy" />
+        </a>` : ""}`;
     }
 
     function renderStandardMessageBody(message) {

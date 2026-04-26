@@ -2481,7 +2481,10 @@
                                 </thead>
                                 <tbody>
                                     ${posts.map((post) => {
-                                        const analyticsAvailable = post.analytics_status === "available" || Number(post.reach || post.views || post.impressions || post.engagement || post.clicks || post.comments || post.reactions || post.shares || 0) > 0;
+                                        const analyticsStatus = post.analytics_status || "";
+                                        const analyticsAvailable = ["available", "partial", "stale"].includes(analyticsStatus) || Number(post.reach || post.views || post.impressions || post.engagement || post.clicks || post.comments || post.reactions || post.shares || 0) > 0;
+                                        const analyticsLabel = analyticsStatus === "partial" ? "PARTIAL" : analyticsStatus === "stale" ? "STALE" : analyticsAvailable ? "ANALYTICS" : analyticsStatus === "error" ? "ERROR" : "NO DATA";
+                                        const analyticsTone = analyticsStatus === "partial" || analyticsStatus === "stale" ? "amber" : analyticsAvailable ? "green" : "amber";
                                         return `
                                         <tr class="border-b border-hud-fb/10 hover:bg-hud-fb/5">
                                             <td class="px-5 py-4">
@@ -2500,7 +2503,7 @@
                                             <td class="px-4 py-4 text-right text-hud-green font-mono">${formatCompact(post.engagement || 0)}</td>
                                             <td class="px-4 py-4 text-right text-hud-cyan font-mono">${formatCompact(post.clicks || 0)}</td>
                                             <td class="px-4 py-4 text-right text-white/80 font-mono">${formatCompact(post.comments || 0)} / ${formatCompact(post.reactions || 0)} / ${formatCompact(post.shares || 0)}</td>
-                                            <td class="px-4 py-4"><span class="badge ${analyticsAvailable ? "green" : "amber"}">${analyticsAvailable ? "ANALYTICS" : "NO DATA"}</span></td>
+                                            <td class="px-4 py-4"><span class="badge ${analyticsTone}" title="${escapeHtml(Object.values(post.analytics_errors || {}).join(" | "))}">${analyticsLabel}</span></td>
                                             <td class="px-4 py-4 text-right">
                                                 <div class="flex items-center justify-end gap-3">
                                                     <a href="#" data-page="fb-comments" class="fb-post-comments text-xs hover:text-white" style="color:#4a9eff;"><i class="fa-solid fa-comment"></i></a>

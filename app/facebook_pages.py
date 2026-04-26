@@ -5,6 +5,7 @@ import hmac
 import json
 import secrets
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
@@ -270,6 +271,97 @@ def _fetch_metrics_payload(
     return values_by_metric, warnings
 
 
+class FacebookGraphClient:
+    def __init__(self, client: httpx.Client, base_url: str, token: str) -> None:
+        self.client = client
+        self.base_url = base_url.rstrip("/")
+        self.token = token
+
+    def get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = dict(params or {})
+        payload["access_token"] = self.token
+        response = self.client.get(f"{self.base_url}/{path.lstrip('/')}", params=payload)
+        response.raise_for_status()
+        data = response.json()
+        return data if isinstance(data, dict) else {}
+
+    def fetch_post_page(self, page_id: str, *, limit: int, after: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "fields": "id,message,created_time,permalink_url",
+            "limit": max(1, min(limit, 25)),
+        }
+        if after:
+            params["after"] = after
+        return self.get_json(f"{page_id}/posts", params)
+
+    def fetch_post_analytics(self, post_id: str) -> tuple[dict[str, int], dict[str, str]]:
+        metrics = {
+            "reach": 0,
+            "impressions": 0,
+            "engagement": 0,
+            "clicks": 0,
+            "comments": 0,
+            "reactions": 0,
+            "shares": 0,
+        }
+        errors: dict[str, str] = {}
+        insight_targets = {
+            "reach": ["post_impressions_unique"],
+            "impressions": ["post_impressions"],
+            "engagement": ["post_engaged_users"],
+            "clicks": ["post_clicks", "post_clicks_by_type"],
+        }
+        insight_ids = [post_id]
+        object_id = post_id.split("_", 1)[1] if "_" in post_id else ""
+        if object_id:
+            insight_ids.append(object_id)
+
+        for target, candidates in insight_targets.items():
+            last_error = ""
+            found = False
+            for graph_id in insight_ids:
+                for metric_name in candidates:
+                    try:
+                        value = _post_insight_total(self.get_json(f"{graph_id}/insights", {"metric": metric_name}), metric_name)
+                        if value:
+                            metrics[target] = value
+                            found = True
+                            break
+                    except httpx.HTTPError as error:
+                        last_error = _graph_error_message(error)
+                if found:
+                    break
+            if not found and last_error:
+                errors[target] = last_error
+
+        for target, edge in [("comments", "comments"), ("reactions", "reactions")]:
+            last_error = ""
+            for graph_id in insight_ids:
+                try:
+                    payload = self.get_json(f"{graph_id}/{edge}", {"summary": "true", "limit": 0})
+                    metrics[target] = _safe_int(((payload.get("summary") or {}).get("total_count")))
+                    last_error = ""
+                    break
+                except httpx.HTTPError as error:
+                    last_error = _graph_error_message(error)
+            if last_error:
+                errors[target] = last_error
+
+        last_error = ""
+        for graph_id in insight_ids:
+            try:
+                payload = self.get_json(graph_id, {"fields": "shares"})
+                metrics["shares"] = _safe_int(((payload.get("shares") or {}).get("count")))
+                last_error = ""
+                break
+            except httpx.HTTPError as error:
+                last_error = _graph_error_message(error)
+        if last_error:
+            errors["shares"] = last_error
+
+        return metrics, errors
+
+
 def _safe_int(value: Any) -> int:
     if isinstance(value, dict):
         return sum(_safe_int(item) for item in value.values())
@@ -434,6 +526,19 @@ def _list_cached_facebook_posts(limit: int, offset: int = 0) -> list[dict[str, A
             (max(1, min(limit, 100)), max(0, offset)),
         )
         return [json.loads(row[0]) for row in cur.fetchall()]
+
+
+def _get_cached_facebook_post(post_id: str) -> dict[str, Any] | None:
+    post_id = str(post_id or "")
+    if not post_id:
+        return None
+    conn = _postgres_conn()
+    if conn is None:
+        return None
+    with conn, conn.cursor() as cur:
+        cur.execute("SELECT data::text FROM facebook_posts WHERE post_id = %s", (post_id,))
+        row = cur.fetchone()
+        return json.loads(row[0]) if row else None
 
 
 def _list_cached_facebook_posts_since(since: datetime, limit: int = 500) -> list[dict[str, Any]]:
@@ -694,7 +799,7 @@ def _facebook_posts_payload(
             "comments": sum(_safe_int(post.get("comments")) for post in selected),
             "reactions": sum(_safe_int(post.get("reactions")) for post in selected),
             "shares": sum(_safe_int(post.get("shares")) for post in selected),
-            "analytics_available": sum(1 for post in selected if post.get("analytics_status") == "available"),
+            "analytics_available": sum(1 for post in selected if post.get("analytics_status") in {"available", "partial", "stale"}),
         },
         "posts": selected,
         "warnings": (warnings or [])[:20],
@@ -719,81 +824,70 @@ def _facebook_comments_payload(comments: list[dict[str, Any]], page_count: int, 
 
 
 def _fetch_post_analytics(client: httpx.Client, base_url: str, post_id: str, token: str) -> tuple[dict[str, int], list[str]]:
-    metrics = {
-        "reach": 0,
-        "impressions": 0,
-        "engagement": 0,
-        "clicks": 0,
-        "comments": 0,
-        "reactions": 0,
-        "shares": 0,
-    }
-    warnings: list[str] = []
-    insight_targets = {
-        "reach": ["post_impressions_unique"],
-        "impressions": ["post_impressions"],
-        "engagement": ["post_engaged_users"],
-        "clicks": ["post_clicks", "post_clicks_by_type"],
-    }
-    insight_ids = [post_id]
-    object_id = post_id.split("_", 1)[1] if "_" in post_id else ""
-    if object_id:
-        insight_ids.append(object_id)
-    for target, candidates in insight_targets.items():
-        last_error = ""
-        for graph_id in insight_ids:
-            for metric_name in candidates:
-                try:
-                    response = client.get(
-                        f"{base_url}/{graph_id}/insights",
-                        params={"metric": metric_name, "access_token": token},
-                    )
-                    response.raise_for_status()
-                    value = _post_insight_total(response.json(), metric_name)
-                    if value:
-                        metrics[target] = value
-                        raise StopIteration
-                except StopIteration:
-                    break
-                except httpx.HTTPError as error:
-                    last_error = _graph_error_message(error)
-            if metrics[target]:
-                break
-        if not metrics[target] and last_error:
-            warnings.append(f"{post_id}: {target} unavailable - {last_error}")
-
-    for target, edge in [("comments", "comments"), ("reactions", "reactions")]:
-        last_error = ""
-        for graph_id in insight_ids:
-            try:
-                response = client.get(
-                    f"{base_url}/{graph_id}/{edge}",
-                    params={"summary": "true", "limit": 0, "access_token": token},
-                )
-                response.raise_for_status()
-                metrics[target] = _safe_int(((response.json().get("summary") or {}).get("total_count")))
-                break
-            except httpx.HTTPError as error:
-                last_error = _graph_error_message(error)
-        if not metrics[target] and last_error:
-            warnings.append(f"{post_id}: {target} count unavailable - {last_error}")
-
-    last_error = ""
-    for graph_id in insight_ids:
-        try:
-            response = client.get(
-                f"{base_url}/{graph_id}",
-                params={"fields": "shares", "access_token": token},
-            )
-            response.raise_for_status()
-            metrics["shares"] = _safe_int(((response.json().get("shares") or {}).get("count")))
-            break
-        except httpx.HTTPError as error:
-            last_error = _graph_error_message(error)
-    if not metrics["shares"] and last_error:
-        warnings.append(f"{post_id}: shares count unavailable - {last_error}")
-
+    metrics, errors = FacebookGraphClient(client, base_url, token).fetch_post_analytics(post_id)
+    warnings = [f"{post_id}: {target} unavailable - {message}" for target, message in errors.items()]
     return metrics, warnings
+
+
+def _post_analytics_status(metrics: dict[str, int], errors: dict[str, str]) -> str:
+    has_value = any(_safe_int(metrics.get(key)) for key in ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"])
+    if has_value and errors:
+        return "partial"
+    if has_value:
+        return "available"
+    return "error" if errors else "empty"
+
+
+def _preserve_cached_post_metrics(post_record: dict[str, Any]) -> dict[str, Any]:
+    cached = _get_cached_facebook_post(str(post_record.get("post_id") or ""))
+    if not cached:
+        return post_record
+    metric_keys = ["reach", "impressions", "views", "engagement", "clicks", "comments", "reactions", "shares"]
+    preserved = False
+    for key in metric_keys:
+        if _safe_int(post_record.get(key)) == 0 and _safe_int(cached.get(key)) > 0:
+            post_record[key] = _safe_int(cached.get(key))
+            preserved = True
+    if preserved and post_record.get("analytics_status") in {"empty", "error"}:
+        post_record["analytics_status"] = "stale"
+    return post_record
+
+
+def _facebook_post_record(
+    *,
+    page: dict[str, Any],
+    post: dict[str, Any],
+    analytics: dict[str, int],
+    analytics_errors: dict[str, str],
+    since_7d: datetime,
+) -> dict[str, Any]:
+    created_time = str(post.get("created_time") or "")
+    created_dt = _parse_graph_time(created_time)
+    post_record = {
+        "post_id": str(post.get("id") or ""),
+        "page_id": str(page.get("page_id") or ""),
+        "page_name": page.get("name") or "",
+        "page_picture_url": page.get("picture_url") or "",
+        "message": post.get("message") or "",
+        "created_time": created_time,
+        "type": post.get("type") or post.get("status_type") or "post",
+        "status": "posted",
+        "permalink_url": post.get("permalink_url") or "",
+        "full_picture": post.get("full_picture") or "",
+        "reach": analytics["reach"],
+        "impressions": analytics["impressions"],
+        "views": analytics["impressions"],
+        "engagement": analytics["engagement"],
+        "clicks": analytics["clicks"],
+        "comments": analytics["comments"],
+        "reactions": analytics["reactions"],
+        "shares": analytics["shares"],
+        "analytics_status": _post_analytics_status(analytics, analytics_errors),
+        "analytics_errors": analytics_errors,
+        "analytics_synced_at": _now(),
+        "posted_7d": bool(created_dt and created_dt >= since_7d),
+    }
+    return _preserve_cached_post_metrics(post_record)
 
 
 def _post_analytics_from_graph_payload(post: dict[str, Any]) -> dict[str, int]:
@@ -853,53 +947,42 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
     posts: list[dict[str, Any]] = []
     warnings: list[str] = []
 
-    with httpx.Client(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+    with httpx.Client(timeout=httpx.Timeout(10.0, connect=3.0)) as client, ThreadPoolExecutor(max_workers=8) as executor:
         for page in pages:
             remaining = limit
             after = None
+            graph = FacebookGraphClient(client, base_url, str(page["page_access_token"]))
             try:
                 while remaining > 0:
-                    params = {
-                        "fields": "id,message,created_time,permalink_url",
-                        "limit": min(25, remaining),
-                        "access_token": page["page_access_token"],
-                    }
-                    if after:
-                        params["after"] = after
-                    response = client.get(f"{base_url}/{page['page_id']}/posts", params=params)
-                    response.raise_for_status()
-                    posts_payload = response.json()
+                    posts_payload = graph.fetch_post_page(str(page["page_id"]), limit=min(25, remaining), after=after)
                     batch = posts_payload.get("data") or []
                     if not batch:
                         break
-                    for post in batch:
-                        created_time = str(post.get("created_time") or "")
-                        created_dt = _parse_graph_time(created_time)
+                    futures = {
+                        executor.submit(graph.fetch_post_analytics, str(post.get("id") or "")): post
+                        for post in batch
+                        if str(post.get("id") or "")
+                    }
+                    for future in as_completed(futures):
+                        post = futures[future]
                         post_id = str(post.get("id") or "")
-                        analytics, analytics_warnings = _fetch_post_analytics(client, base_url, post_id, str(page["page_access_token"]))
-                        warnings.extend(analytics_warnings)
-                        post_record = {
-                            "post_id": post_id,
-                            "page_id": str(page.get("page_id") or ""),
-                            "page_name": page.get("name") or "",
-                            "page_picture_url": page.get("picture_url") or "",
-                            "message": post.get("message") or "",
-                            "created_time": created_time,
-                            "type": post.get("type") or post.get("status_type") or "post",
-                            "status": "posted",
-                            "permalink_url": post.get("permalink_url") or "",
-                            "full_picture": post.get("full_picture") or "",
-                            "reach": analytics["reach"],
-                            "impressions": analytics["impressions"],
-                            "views": analytics["impressions"],
-                            "engagement": analytics["engagement"],
-                            "clicks": analytics["clicks"],
-                            "comments": analytics["comments"],
-                            "reactions": analytics["reactions"],
-                            "shares": analytics["shares"],
-                            "analytics_status": "available" if any(_safe_int(analytics.get(key)) for key in ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"]) else "empty",
-                            "posted_7d": bool(created_dt and created_dt >= since_7d),
-                        }
+                        try:
+                            analytics, analytics_errors = future.result()
+                        except httpx.HTTPError as error:
+                            analytics = {"reach": 0, "impressions": 0, "engagement": 0, "clicks": 0, "comments": 0, "reactions": 0, "shares": 0}
+                            analytics_errors = {"post": _graph_error_message(error)}
+                        except Exception as error:
+                            analytics = {"reach": 0, "impressions": 0, "engagement": 0, "clicks": 0, "comments": 0, "reactions": 0, "shares": 0}
+                            analytics_errors = {"post": str(error)}
+                        for target, message in analytics_errors.items():
+                            warnings.append(f"{post_id}: {target} unavailable - {message}")
+                        post_record = _facebook_post_record(
+                            page=page,
+                            post=post,
+                            analytics=analytics,
+                            analytics_errors=analytics_errors,
+                            since_7d=since_7d,
+                        )
                         posts.append(post_record)
                         _upsert_facebook_post(post_record)
                     remaining -= len(batch)

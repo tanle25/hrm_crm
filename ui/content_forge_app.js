@@ -2079,8 +2079,8 @@
         const thumbUrl = imageAttachment ? String(imageAttachment.preview_url || imageAttachment.url || "") : "";
         const mediaUrl = imageAttachment ? String(imageAttachment.url || imageAttachment.preview_url || "") : "";
         return `<div class="reply-msg__quote-inner">
-            <div class="reply-msg__thumb">
-                ${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" alt="" loading="lazy" />` : `<i class="fa-solid fa-paperclip text-hud-fb text-sm"></i>`}
+            <div class="reply-msg__thumb ${mediaUrl ? "is-media" : ""}">
+                ${thumbUrl ? `<i class="fa-solid fa-image text-hud-fb text-sm"></i>` : `<i class="fa-solid fa-paperclip text-hud-fb text-sm"></i>`}
             </div>
             <div class="reply-msg__quote-info">
                 <div class="reply-msg__quote-label"><i class="fa-solid fa-reply"></i> ${escapeHtml(quoteLabel)}</div>

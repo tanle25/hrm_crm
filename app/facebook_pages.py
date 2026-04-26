@@ -827,7 +827,7 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
             try:
                 while remaining > 0:
                     params = {
-                        "fields": "id,message,created_time,permalink_url,full_picture,status_type,type",
+                        "fields": "id,message,created_time,permalink_url",
                         "limit": min(25, remaining),
                         "access_token": page["page_access_token"],
                     }

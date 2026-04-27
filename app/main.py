@@ -804,6 +804,8 @@ async def submit_batch(request: SubmitBatchRequest) -> SubmitBatchResponse:
         focus_keyword=request.focus_keyword,
         priority=request.priority,
         publish_status=request.publish_status,
+        source_origin="facebook" if request.facebook_targets else "",
+        source_seed={"facebook_targets": request.facebook_targets} if request.facebook_targets else None,
     )
 
 

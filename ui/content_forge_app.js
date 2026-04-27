@@ -20,6 +20,9 @@
         selectedJobId: localStorage.getItem("content_forge_selected_job_id") || "",
         selectedSiteId: "",
         selectedSubmitSiteIds: JSON.parse(localStorage.getItem("content_forge_submit_site_ids") || "[]"),
+        selectedSubmitFacebookPageIds: JSON.parse(localStorage.getItem("content_forge_submit_facebook_page_ids") || "[]"),
+        selectedSubmitFacebookGroups: JSON.parse(localStorage.getItem("content_forge_submit_facebook_groups") || "[]"),
+        submitFacebookImages: [],
         selectedShopeeSiteIds: JSON.parse(localStorage.getItem("content_forge_shopee_site_ids") || "[]"),
         selectedShopeeItemId: localStorage.getItem("content_forge_shopee_item_id") || "",
         jobsSocket: null,
@@ -186,6 +189,16 @@
         localStorage.setItem("content_forge_submit_site_ids", JSON.stringify(state.selectedSubmitSiteIds));
     }
 
+    function setSelectedSubmitFacebookPages(pageIds) {
+        state.selectedSubmitFacebookPageIds = Array.isArray(pageIds) ? pageIds.filter(Boolean) : [];
+        localStorage.setItem("content_forge_submit_facebook_page_ids", JSON.stringify(state.selectedSubmitFacebookPageIds));
+    }
+
+    function setSelectedSubmitFacebookGroups(groups) {
+        state.selectedSubmitFacebookGroups = Array.isArray(groups) ? groups.filter(Boolean) : [];
+        localStorage.setItem("content_forge_submit_facebook_groups", JSON.stringify(state.selectedSubmitFacebookGroups));
+    }
+
     function setSelectedShopeeSites(siteIds) {
         state.selectedShopeeSiteIds = Array.isArray(siteIds) ? siteIds.filter(Boolean) : [];
         localStorage.setItem("content_forge_shopee_site_ids", JSON.stringify(state.selectedShopeeSiteIds));
@@ -297,6 +310,112 @@
         });
     }
 
+    function renderSubmitFacebookSummary() {
+        const help = document.getElementById("submit-facebook-help");
+        if (!help) return;
+        help.textContent = `${state.selectedSubmitFacebookGroups.length} nhóm · ${state.selectedSubmitFacebookPageIds.length} page · ${state.submitFacebookImages.length} ảnh đã chọn`;
+        help.className = "text-[10px] text-hud-muted mt-3";
+    }
+
+    async function renderSubmitFacebookTargets() {
+        const pageList = document.getElementById("submit-facebook-page-list");
+        const groupList = document.getElementById("submit-facebook-group-list");
+        if (!pageList || !groupList) return;
+        try {
+            const [pagesPayload, groupsPayload] = await Promise.all([
+                fetchJSON("/facebook/pages"),
+                fetchJSON("/facebook/page-groups").catch(() => ({ groups: [] })),
+            ]);
+            const pages = pagesPayload.pages || [];
+            const groups = groupsPayload.groups || [];
+            const validPageIds = state.selectedSubmitFacebookPageIds.filter((pageId) => pages.some((page) => String(page.page_id || "") === pageId));
+            const validGroups = state.selectedSubmitFacebookGroups.filter((group) => groups.some((item) => String(item.name || "") === group));
+            setSelectedSubmitFacebookPages(validPageIds);
+            setSelectedSubmitFacebookGroups(validGroups);
+            groupList.innerHTML = groups.length ? groups.map((group) => {
+                const name = String(group.name || "");
+                return `
+                    <label class="flex items-center gap-3 border border-hud-fb/12 bg-black/25 px-3 py-2 hover:border-hud-fb/40 transition cursor-pointer">
+                        <input type="checkbox" class="submit-facebook-group-checkbox" value="${escapeHtml(name)}" ${validGroups.includes(name) ? "checked" : ""}/>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-white text-[11px] font-bold truncate">${escapeHtml(name)}</div>
+                            <div class="text-[10px] text-hud-muted">${formatNumber(group.page_count || 0)} page</div>
+                        </div>
+                    </label>
+                `;
+            }).join("") : `<div class="text-[11px] text-hud-muted px-2 py-2">Chưa có nhóm page.</div>`;
+            pageList.innerHTML = pages.length ? pages.map((page) => {
+                const pageId = String(page.page_id || "");
+                return `
+                    <label class="flex items-center gap-3 border border-hud-fb/12 bg-black/25 px-3 py-2 hover:border-hud-fb/40 transition cursor-pointer">
+                        <input type="checkbox" class="submit-facebook-page-checkbox" value="${escapeHtml(pageId)}" ${validPageIds.includes(pageId) ? "checked" : ""}/>
+                        <div class="w-7 h-7 rounded-full overflow-hidden bg-hud-fb/10 flex items-center justify-center flex-shrink-0">
+                            ${page.picture_url ? `<img src="${escapeHtml(page.picture_url)}" alt="" class="w-full h-full object-cover"/>` : `<i class="fa-brands fa-facebook text-hud-fb text-xs"></i>`}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-white text-[11px] font-bold truncate">${escapeHtml(page.name || pageId)}</div>
+                            <div class="text-[10px] text-hud-muted truncate">${escapeHtml(page.group || "Chưa có nhóm")}</div>
+                        </div>
+                    </label>
+                `;
+            }).join("") : `<div class="text-[11px] text-hud-muted px-2 py-2">Chưa có fanpage nào.</div>`;
+            groupList.querySelectorAll(".submit-facebook-group-checkbox").forEach((checkbox) => {
+                checkbox.addEventListener("change", () => {
+                    setSelectedSubmitFacebookGroups(Array.from(groupList.querySelectorAll(".submit-facebook-group-checkbox:checked")).map((input) => input.value));
+                    renderSubmitFacebookSummary();
+                });
+            });
+            pageList.querySelectorAll(".submit-facebook-page-checkbox").forEach((checkbox) => {
+                checkbox.addEventListener("change", () => {
+                    setSelectedSubmitFacebookPages(Array.from(pageList.querySelectorAll(".submit-facebook-page-checkbox:checked")).map((input) => input.value));
+                    renderSubmitFacebookSummary();
+                });
+            });
+            renderSubmitFacebookSummary();
+        } catch (error) {
+            groupList.innerHTML = `<div class="text-[11px] text-hud-red px-2 py-2">Không tải được nhóm page.</div>`;
+            pageList.innerHTML = `<div class="text-[11px] text-hud-red px-2 py-2">Không tải được fanpage.</div>`;
+        }
+    }
+
+    function renderSubmitFacebookImagePreview() {
+        const preview = document.getElementById("submit-facebook-image-preview");
+        if (!preview) return;
+        preview.innerHTML = state.submitFacebookImages.map((image, index) => `
+            <div class="relative border border-hud-fb/20 bg-black/30">
+                <img src="${escapeHtml(image.data_url)}" alt="${escapeHtml(image.name)}" class="w-full aspect-square object-cover"/>
+                <button type="button" class="submit-facebook-image-remove absolute top-1 right-1 bg-black/70 text-hud-red text-[10px] px-1.5 py-0.5" data-index="${index}"><i class="fa-solid fa-xmark"></i></button>
+                <div class="text-[8px] text-hud-muted truncate px-1 py-1">${escapeHtml(image.name)}</div>
+            </div>
+        `).join("");
+        preview.querySelectorAll(".submit-facebook-image-remove").forEach((button) => {
+            button.addEventListener("click", () => {
+                state.submitFacebookImages.splice(Number(button.dataset.index || 0), 1);
+                renderSubmitFacebookImagePreview();
+                renderSubmitFacebookSummary();
+            });
+        });
+        renderSubmitFacebookSummary();
+    }
+
+    async function readSubmitFacebookImages(files) {
+        const selected = Array.from(files || []).filter((file) => file.type.startsWith("image/")).slice(0, 6);
+        const maxBytes = 2 * 1024 * 1024;
+        const images = [];
+        for (const file of selected) {
+            if (file.size > maxBytes) continue;
+            const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ""));
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            images.push({ name: file.name, type: file.type, size: file.size, data_url: dataUrl });
+        }
+        state.submitFacebookImages = images;
+        renderSubmitFacebookImagePreview();
+    }
+
     function updateSiteSummary(summary, selectedIds = [], sites = []) {
         if (!summary) return;
         const selected = selectedIds || [];
@@ -324,6 +443,8 @@
             .map((item) => item.trim())
             .filter(Boolean);
         const siteIds = Array.from(document.querySelectorAll(".submit-site-checkbox:checked")).map((input) => input.value.trim()).filter(Boolean);
+        const facebookPageIds = Array.from(document.querySelectorAll(".submit-facebook-page-checkbox:checked")).map((input) => input.value.trim()).filter(Boolean);
+        const facebookGroups = Array.from(document.querySelectorAll(".submit-facebook-group-checkbox:checked")).map((input) => input.value.trim()).filter(Boolean);
         if (!siteIds.length) {
             showFeedback("error", "Cần chọn ít nhất một website đích.");
             return;
@@ -333,6 +454,8 @@
             return;
         }
         setSelectedSubmitSites(siteIds);
+        setSelectedSubmitFacebookPages(facebookPageIds);
+        setSelectedSubmitFacebookGroups(facebookGroups);
         const enqueueButton = document.getElementById("submit-enqueue");
         if (enqueueButton) enqueueButton.disabled = true;
         try {
@@ -345,6 +468,11 @@
                     woo_category_id: 1,
                     priority: "normal",
                     publish_status: publishInput?.value || "draft",
+                    facebook_targets: {
+                        page_ids: facebookPageIds,
+                        groups: facebookGroups,
+                        images: state.submitFacebookImages,
+                    },
                 }),
             });
             const focusJobId = (payload.master_job_ids || [])[0] || (payload.child_job_ids || [])[0];
@@ -3081,6 +3209,7 @@
         if (pageKey !== "detail") closeDetailStream();
         if (pageKey === "submit") {
             await renderSubmitSiteOptions();
+            await renderSubmitFacebookTargets();
             await renderRecentSubmissions();
         }
         if (pageKey === "jobs") await renderJobsPage();
@@ -3112,6 +3241,9 @@
             dropdown.classList.add("hidden");
         });
         document.getElementById("submit-enqueue")?.addEventListener("click", () => submitJob());
+        document.getElementById("submit-facebook-images")?.addEventListener("change", (event) => {
+            readSubmitFacebookImages(event.target.files).catch((error) => showFeedback("error", `Không đọc được ảnh: ${error.message}`));
+        });
     }
 
     document.addEventListener("DOMContentLoaded", () => {

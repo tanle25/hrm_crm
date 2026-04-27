@@ -172,6 +172,7 @@ class SubmitBatchRequest(BaseModel):
     focus_keyword: Optional[str] = None
     priority: Literal["normal", "high"] = "normal"
     publish_status: Literal["draft", "publish"] = "draft"
+    facebook_targets: Dict[str, Any] = Field(default_factory=dict)
 
 
 class SubmitBatchResponse(BaseModel):

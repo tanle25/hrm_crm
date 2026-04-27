@@ -1679,7 +1679,7 @@
             ? `background-image: linear-gradient(180deg, rgba(0,0,0,0.18), rgba(0,0,0,0.72)), url('${escapeHtml(page.cover_url)}'); background-size: cover; background-position: center;`
             : "background: radial-gradient(circle at top left, rgba(74,158,255,0.22), rgba(0,0,0,0.15));";
         return `
-            <div class="bg-black/40 border ${isConnected ? "hover:border-hud-fb" : "border-hud-red/40 hover:border-hud-red"} transition overflow-hidden" style="border-color: ${isConnected ? "rgba(74, 158, 255, 0.3)" : "rgba(255, 0, 60, 0.4)"};">
+            <div class="facebook-page-card bg-black/40 border ${isConnected ? "hover:border-hud-fb" : "border-hud-red/40 hover:border-hud-red"} transition overflow-hidden" data-page-id="${escapeHtml(page.page_id || "")}" style="border-color: ${isConnected ? "rgba(74, 158, 255, 0.3)" : "rgba(255, 0, 60, 0.4)"};">
                 <div class="h-28 border-b border-hud-fb/20 relative" style="${coverStyle}">
                     <div class="absolute top-3 right-3"><span class="badge ${isConnected ? "green" : "red"}"><span class="status-dot ${isConnected ? "green" : "red"}" style="width:5px;height:5px;"></span> ${isConnected ? "ACTIVE" : "ISSUE"}</span></div>
                 </div>
@@ -1726,7 +1726,7 @@
             const pages = payload.pages || [];
             const savedGroups = Array.isArray(state.facebookPageGroups) ? state.facebookPageGroups : [];
             const persistedGroups = (groupPayload.groups || []).map((item) => String(item.name || "").trim()).filter(Boolean);
-            const groups = [...new Set([...savedGroups, ...persistedGroups, ...pages.map((page) => String(page.group || "").trim()).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
+            let groups = [...new Set([...savedGroups, ...persistedGroups, ...pages.map((page) => String(page.group || "").trim()).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
             state.facebookPageGroups = groups;
             const selectedGroup = state.facebookPageGroupFilter || "";
             const visiblePages = selectedGroup === "__ungrouped__"
@@ -1741,7 +1741,7 @@
                     <div class="grid grid-cols-4 gap-4 mb-6">
                         <div class="hud-card p-4 fade-in" style="border-color: rgba(74, 158, 255, 0.3);"><span class="c-tl" style="border-color: #4a9eff;"></span><span class="c-br" style="border-color: #4a9eff;"></span><div class="text-[9px] uppercase-widest mb-1" style="color:#4a9eff;">TỔNG FANPAGE</div><div class="metric-num text-2xl text-white">${pages.length}</div></div>
                         <div class="hud-card green p-4 fade-in"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-green uppercase-widest mb-1">CONNECTED</div><div class="metric-num text-2xl text-hud-green">${connectedCount}</div></div>
-                        <div class="hud-card p-4 fade-in"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-cyan uppercase-widest mb-1">GROUPED</div><div class="metric-num text-2xl text-white">${groupedCount}/${pages.length}</div></div>
+                        <div class="hud-card p-4 fade-in"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-cyan uppercase-widest mb-1">GROUPED</div><div id="fb-pages-grouped-count" class="metric-num text-2xl text-white">${groupedCount}/${pages.length}</div></div>
                         <div class="hud-card danger p-4 fade-in"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-red uppercase-widest mb-1">ISSUES</div><div class="metric-num text-2xl text-hud-red">${issueCount}</div></div>
                     </div>
                     <div class="hud-card fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
@@ -1832,6 +1832,39 @@
             const clearPageGroupButton = section.querySelector("#fb-group-clear-page");
             let groupTargetPageId = "";
             let groupTargetPageName = "";
+            const refreshGroupFilterOptions = () => {
+                const filter = section.querySelector("#facebook-page-group-filter");
+                if (!filter) return;
+                const selected = filter.value || "";
+                filter.innerHTML = `
+                    <option value="">TẤT CẢ NHÓM</option>
+                    <option value="__ungrouped__" ${selected === "__ungrouped__" ? "selected" : ""}>CHƯA CÓ NHÓM</option>
+                    ${groups.map((group) => `<option value="${escapeHtml(group)}" ${group === selected ? "selected" : ""}>${escapeHtml(group)}</option>`).join("")}
+                `;
+            };
+            const shouldHideForCurrentFilter = (group) => {
+                const selected = state.facebookPageGroupFilter || "";
+                if (!selected) return false;
+                if (selected === "__ungrouped__") return Boolean(group);
+                return selected !== group;
+            };
+            const updateGroupSummary = () => {
+                const groupedNow = pages.filter((page) => String(page.group || "").trim()).length;
+                const groupedMetric = section.querySelector("#fb-pages-grouped-count");
+                if (groupedMetric) groupedMetric.textContent = `${groupedNow}/${pages.length}`;
+            };
+            const updatePageGroupDom = (pageId, group) => {
+                const label = section.querySelector(`.facebook-page-group-label[data-page-id="${CSS.escape(pageId)}"]`);
+                if (!label) return;
+                label.dataset.currentGroup = group || "";
+                label.classList.toggle("amber", Boolean(group));
+                label.classList.toggle("cyan", !group);
+                label.innerHTML = `<i class="fa-solid fa-layer-group"></i> ${escapeHtml(group || "Chưa có nhóm")}`;
+                const card = label.closest(".facebook-page-card");
+                if (card && shouldHideForCurrentFilter(group)) {
+                    card.classList.add("hidden");
+                }
+            };
             const closeGroupDialog = () => {
                 groupDialog?.classList.add("hidden");
                 groupTargetPageId = "";
@@ -1843,10 +1876,19 @@
                     method: "PATCH",
                     body: JSON.stringify({ group }),
                 });
+                const page = pages.find((item) => String(item.page_id || "") === groupTargetPageId);
+                if (page) page.group = group;
                 if (group && !state.facebookPageGroups.includes(group)) {
                     state.facebookPageGroups = [...state.facebookPageGroups, group].sort((a, b) => a.localeCompare(b));
                 }
-                await renderFacebookPagesPage();
+                if (group && !groups.includes(group)) {
+                    groups = [...groups, group].sort((a, b) => a.localeCompare(b));
+                    refreshGroupFilterOptions();
+                }
+                updatePageGroupDom(groupTargetPageId, group);
+                updateGroupSummary();
+                if (groupSubtitle) groupSubtitle.textContent = `${groupTargetPageName || groupTargetPageId} · hiện tại: ${group || "Chưa có nhóm"}`;
+                renderGroupList();
             };
             const renderGroupList = () => {
                 const counts = new Map();
@@ -1904,7 +1946,10 @@
                     await assignPageGroup(group);
                     return;
                 }
-                await renderFacebookPagesPage();
+                groups = [...new Set([...groups, group])].sort((a, b) => a.localeCompare(b));
+                refreshGroupFilterOptions();
+                renderGroupList();
+                if (groupInput) groupInput.value = "";
             });
             groupInput?.addEventListener("keydown", (event) => {
                 if (event.key === "Enter") {

@@ -1909,6 +1909,8 @@
             const totals = stats.totals || {};
             const topPosts = stats.top_posts || [];
             const contentPerformance = stats.content_performance || [];
+            const analyticsBreakdown = stats.analytics_breakdown || {};
+            const analyticsErrorTypes = stats.analytics_error_types || {};
             const maxAvgReach = Math.max(1, ...contentPerformance.map((item) => Number(item.avg_reach || 0)));
             section.dataset.hydrated = "1";
             section.innerHTML = `
@@ -1920,7 +1922,7 @@
                         ${[
                             ["TOTAL REACH", formatCompact(totals.reach), "white", "hud-fb"],
                             ["ENGAGEMENT", formatCompact(totals.engagement), "white", "hud-cyan"],
-                            ["PAGE LIKES", formatCompact(totals.likes), "white", "hud-cyan"],
+                            ["REACTIONS", formatCompact(totals.reactions || totals.likes || 0), "white", "hud-cyan"],
                             ["SHARES", formatCompact(totals.shares), "white", "hud-cyan"],
                             ["COMMENTS", formatCompact(totals.comments), "white", "hud-cyan"],
                             ["ENG / REACH", `${formatNumber(totals.ctr || 0, 2)}%`, "white", "hud-cyan"],
@@ -1932,6 +1934,19 @@
                                 <div class="text-[9px] text-hud-muted">${formatNumber(stats.page_count || 0)} pages · ${formatNumber(totals.posts || 0)} posts</div>
                             </div>
                         `).join("")}
+                    </div>
+                    <div class="hud-card mb-6 p-4 fade-in" style="border-color: rgba(74, 158, 255, 0.25);">
+                        <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                        <div class="flex flex-wrap items-center gap-3 text-[10px] uppercase-wide">
+                            <span class="text-hud-muted">ANALYTICS COVERAGE</span>
+                            <span class="badge green">${formatNumber(totals.analytics_coverage || 0, 1)}%</span>
+                            <span class="badge green">available ${formatNumber(totals.analytics_available || analyticsBreakdown.available || 0)}</span>
+                            <span class="badge amber">partial ${formatNumber(totals.analytics_partial || analyticsBreakdown.partial || 0)}</span>
+                            <span class="badge amber">stale ${formatNumber(totals.analytics_stale || analyticsBreakdown.stale || 0)}</span>
+                            <span class="badge red">error ${formatNumber(totals.analytics_error || analyticsBreakdown.error || 0)}</span>
+                            <span class="badge cyan">empty ${formatNumber(totals.analytics_empty || analyticsBreakdown.empty || 0)}</span>
+                            ${Object.keys(analyticsErrorTypes).length ? `<span class="text-hud-muted">errors: ${escapeHtml(Object.entries(analyticsErrorTypes).map(([key, value]) => `${key} ${value}`).join(" · "))}</span>` : ""}
+                        </div>
                     </div>
 
                     ${(stats.warnings || []).length ? `<div class="mb-5 border border-hud-amber/30 bg-hud-amber/10 text-hud-amber text-[11px] p-3">Một số metric không lấy được do quyền Meta API hoặc page không có dữ liệu: ${escapeHtml(redactSensitiveText((stats.warnings || []).slice(0, 3).join(" | ")))}</div>` : ""}
@@ -1957,7 +1972,7 @@
                                     <div class="border-l-2 ${index === 0 ? "border-hud-amber" : ""} pl-3" style="${index === 0 ? "" : "border-color:#4a9eff;"}">
                                         <div class="text-[9px] text-hud-muted uppercase-wide">${escapeHtml(post.page_name || "Facebook page")}</div>
                                         <div class="text-[11px] text-white font-bold truncate">${escapeHtml(post.message || "Untitled post")}</div>
-                                        <div class="text-[10px] ${index === 0 ? "text-hud-amber" : ""}" ${index === 0 ? "" : `style="color:#4a9eff;"`}><i class="fa-solid fa-eye"></i> ${formatCompact(post.reach)} · <i class="fa-solid fa-heart"></i> ${formatCompact(post.engagement)} · <i class="fa-solid fa-comment"></i> ${formatCompact(post.comments)}</div>
+                                        <div class="text-[10px] ${index === 0 ? "text-hud-amber" : ""}" ${index === 0 ? "" : `style="color:#4a9eff;"`}><i class="fa-solid fa-eye"></i> ${formatCompact(post.reach)} · <i class="fa-solid fa-heart"></i> ${formatCompact(post.engagement)} · <i class="fa-solid fa-thumbs-up"></i> ${formatCompact(post.reactions || 0)} · <i class="fa-solid fa-comment"></i> ${formatCompact(post.comments)}</div>
                                     </div>
                                 `).join("") || `<div class="text-[11px] text-hud-muted">Chưa có dữ liệu top post.</div>`}
                             </div>

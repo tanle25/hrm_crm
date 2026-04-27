@@ -20,6 +20,13 @@ from app.postgres import get_connection as _pg_connection, postgres_available, s
 DATA_PATH = Path("data/facebook_pages.json")
 STORE_LOCK = Lock()
 MESSAGE_DETAIL_FIELDS = "id,created_time,from,to,message,attachments,shares,sticker,reply_to{id,message,created_time,from,attachments,shares,sticker}"
+POST_ANALYTICS_KEYS = ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"]
+POST_INSIGHT_TARGETS = {
+    "reach": ["post_impressions_unique"],
+    "impressions": ["post_impressions"],
+    "engagement": ["post_engaged_users"],
+    "clicks": ["post_clicks", "post_clicks_by_type"],
+}
 
 
 def _now() -> str:
@@ -242,6 +249,17 @@ def _graph_error_message(error: httpx.HTTPError, fallback: str = "Graph API requ
     return f"{fallback}: HTTP {response.status_code}"
 
 
+def _graph_error_kind(message: str) -> str:
+    lowered = (message or "").lower()
+    if "permission" in lowered or "permissions" in lowered or "cannot" in lowered or "not authorized" in lowered:
+        return "permission_denied"
+    if "deprecated" in lowered or "valid insights metric" in lowered or "unsupported" in lowered:
+        return "unsupported"
+    if "rate" in lowered or "too many" in lowered:
+        return "rate_limited"
+    return "api_error"
+
+
 def _fetch_metrics_payload(
     client: httpx.Client,
     base_url: str,
@@ -295,28 +313,14 @@ class FacebookGraphClient:
         return self.get_json(f"{page_id}/posts", params)
 
     def fetch_post_analytics(self, post_id: str) -> tuple[dict[str, int], dict[str, str]]:
-        metrics = {
-            "reach": 0,
-            "impressions": 0,
-            "engagement": 0,
-            "clicks": 0,
-            "comments": 0,
-            "reactions": 0,
-            "shares": 0,
-        }
+        metrics = {key: 0 for key in POST_ANALYTICS_KEYS}
         errors: dict[str, str] = {}
-        insight_targets = {
-            "reach": ["post_impressions_unique"],
-            "impressions": ["post_impressions"],
-            "engagement": ["post_engaged_users"],
-            "clicks": ["post_clicks", "post_clicks_by_type"],
-        }
         insight_ids = [post_id]
         object_id = post_id.split("_", 1)[1] if "_" in post_id else ""
         if object_id:
             insight_ids.append(object_id)
 
-        for target, candidates in insight_targets.items():
+        for target, candidates in POST_INSIGHT_TARGETS.items():
             last_error = ""
             found = False
             for graph_id in insight_ids:
@@ -830,7 +834,7 @@ def _fetch_post_analytics(client: httpx.Client, base_url: str, post_id: str, tok
 
 
 def _post_analytics_status(metrics: dict[str, int], errors: dict[str, str]) -> str:
-    has_value = any(_safe_int(metrics.get(key)) for key in ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"])
+    has_value = any(_safe_int(metrics.get(key)) for key in POST_ANALYTICS_KEYS)
     if has_value and errors:
         return "partial"
     if has_value:
@@ -842,7 +846,7 @@ def _preserve_cached_post_metrics(post_record: dict[str, Any]) -> dict[str, Any]
     cached = _get_cached_facebook_post(str(post_record.get("post_id") or ""))
     if not cached:
         return post_record
-    metric_keys = ["reach", "impressions", "views", "engagement", "clicks", "comments", "reactions", "shares"]
+    metric_keys = [*POST_ANALYTICS_KEYS, "views"]
     preserved = False
     for key in metric_keys:
         if _safe_int(post_record.get(key)) == 0 and _safe_int(cached.get(key)) > 0:
@@ -863,6 +867,7 @@ def _facebook_post_record(
 ) -> dict[str, Any]:
     created_time = str(post.get("created_time") or "")
     created_dt = _parse_graph_time(created_time)
+    analytics_error_types = {key: _graph_error_kind(value) for key, value in analytics_errors.items()}
     post_record = {
         "post_id": str(post.get("id") or ""),
         "page_id": str(page.get("page_id") or ""),
@@ -884,6 +889,7 @@ def _facebook_post_record(
         "shares": analytics["shares"],
         "analytics_status": _post_analytics_status(analytics, analytics_errors),
         "analytics_errors": analytics_errors,
+        "analytics_error_types": analytics_error_types,
         "analytics_synced_at": _now(),
         "posted_7d": bool(created_dt and created_dt >= since_7d),
     }
@@ -969,10 +975,10 @@ def sync_facebook_posts(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
                         try:
                             analytics, analytics_errors = future.result()
                         except httpx.HTTPError as error:
-                            analytics = {"reach": 0, "impressions": 0, "engagement": 0, "clicks": 0, "comments": 0, "reactions": 0, "shares": 0}
+                            analytics = {key: 0 for key in POST_ANALYTICS_KEYS}
                             analytics_errors = {"post": _graph_error_message(error)}
                         except Exception as error:
-                            analytics = {"reach": 0, "impressions": 0, "engagement": 0, "clicks": 0, "comments": 0, "reactions": 0, "shares": 0}
+                            analytics = {key: 0 for key in POST_ANALYTICS_KEYS}
                             analytics_errors = {"post": str(error)}
                         for target, message in analytics_errors.items():
                             warnings.append(f"{post_id}: {target} unavailable - {message}")
@@ -1800,6 +1806,10 @@ def _facebook_stats_from_cached_posts(days: int, page_count: int, warnings: list
     engagement_by_day: defaultdict[str, int] = defaultdict(int)
     comments = 0
     shares = 0
+    reactions = 0
+    clicks = 0
+    analytics_counts: defaultdict[str, int] = defaultdict(int)
+    analytics_error_types: defaultdict[str, int] = defaultdict(int)
     content_types: defaultdict[str, dict[str, int]] = defaultdict(lambda: {"posts": 0, "reach": 0})
     hour_buckets: defaultdict[int, int] = defaultdict(int)
     top_posts: list[dict[str, Any]] = []
@@ -1812,11 +1822,19 @@ def _facebook_stats_from_cached_posts(days: int, page_count: int, warnings: list
         engagement = _safe_int(post.get("engagement"))
         post_comments = _safe_int(post.get("comments"))
         post_shares = _safe_int(post.get("shares"))
+        post_reactions = _safe_int(post.get("reactions"))
+        post_clicks = _safe_int(post.get("clicks"))
+        analytics_status = str(post.get("analytics_status") or "empty")
+        analytics_counts[analytics_status] += 1
+        for kind in (post.get("analytics_error_types") or {}).values():
+            analytics_error_types[str(kind or "api_error")] += 1
         if label:
             reach_by_day[label] += reach
             engagement_by_day[label] += engagement
         comments += post_comments
         shares += post_shares
+        reactions += post_reactions
+        clicks += post_clicks
         content_type = str(post.get("type") or post.get("status") or "unknown").replace("_", " ").title()
         content_types[content_type]["posts"] += 1
         content_types[content_type]["reach"] += reach
@@ -1829,13 +1847,17 @@ def _facebook_stats_from_cached_posts(days: int, page_count: int, warnings: list
                 "reach": reach,
                 "engagement": engagement,
                 "comments": post_comments,
+                "reactions": post_reactions,
                 "shares": post_shares,
+                "analytics_status": analytics_status,
             }
         )
 
     reach_total = sum(reach_by_day.values())
     engagement_total = sum(engagement_by_day.values())
     ctr = round((engagement_total / reach_total) * 100, 2) if reach_total else 0.0
+    covered_posts = sum(analytics_counts.get(status, 0) for status in ["available", "partial", "stale"])
+    analytics_coverage = round((covered_posts / len(posts)) * 100, 2) if posts else 0.0
     labels = [(since + timedelta(days=index + 1)).date().isoformat() for index in range(normalized_days)]
     best_hour = max(hour_buckets.items(), key=lambda item: item[1])[0] if hour_buckets else None
     content_performance = []
@@ -1851,11 +1873,21 @@ def _facebook_stats_from_cached_posts(days: int, page_count: int, warnings: list
             "reach": reach_total,
             "engagement": engagement_total,
             "likes": 0,
+            "reactions": reactions,
             "shares": shares,
             "comments": comments,
+            "clicks": clicks,
             "ctr": ctr,
             "posts": len(posts),
+            "analytics_coverage": analytics_coverage,
+            "analytics_available": analytics_counts.get("available", 0),
+            "analytics_partial": analytics_counts.get("partial", 0),
+            "analytics_stale": analytics_counts.get("stale", 0),
+            "analytics_error": analytics_counts.get("error", 0),
+            "analytics_empty": analytics_counts.get("empty", 0),
         },
+        "analytics_breakdown": dict(analytics_counts),
+        "analytics_error_types": dict(analytics_error_types),
         "series": [{"date": label, "reach": reach_by_day.get(label, 0), "engagement": engagement_by_day.get(label, 0)} for label in labels],
         "top_posts": top_posts[:5],
         "best_posting_time": f"{best_hour:02d}:00" if best_hour is not None else "",

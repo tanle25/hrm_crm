@@ -65,6 +65,10 @@ class FacebookPageGroupUpdateRequest(BaseModel):
     group: str = ""
 
 
+class FacebookPageGroupCreateRequest(BaseModel):
+    name: str
+
+
 class FacebookPageItem(BaseModel):
     page_id: str
     name: str = ""
@@ -83,6 +87,16 @@ class FacebookPageItem(BaseModel):
 class FacebookPageListResponse(BaseModel):
     total: int
     pages: List[FacebookPageItem] = Field(default_factory=list)
+
+
+class FacebookPageGroupItem(BaseModel):
+    name: str
+    page_count: int = 0
+
+
+class FacebookPageGroupListResponse(BaseModel):
+    total: int = 0
+    groups: List[FacebookPageGroupItem] = Field(default_factory=list)
 
 
 class FacebookConnectResponse(BaseModel):

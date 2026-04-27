@@ -18,6 +18,7 @@ from app.postgres import get_connection as _pg_connection, postgres_available, s
 
 
 DATA_PATH = Path("data/facebook_pages.json")
+GROUPS_PATH = Path("data/facebook_page_groups.json")
 STORE_LOCK = Lock()
 MESSAGE_DETAIL_FIELDS = "id,created_time,from,to,message,attachments,shares,sticker,reply_to{id,message,created_time,from,attachments,shares,sticker}"
 POST_ANALYTICS_KEYS = ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"]
@@ -53,6 +54,25 @@ def _save_pages(items: list[dict[str, Any]]) -> None:
     DATA_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _load_page_groups() -> list[str]:
+    GROUPS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not GROUPS_PATH.exists():
+        return []
+    try:
+        payload = json.loads(GROUPS_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return sorted({" ".join(str(item or "").strip().split())[:80] for item in payload if str(item or "").strip()})
+
+
+def _save_page_groups(groups: list[str]) -> None:
+    GROUPS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    cleaned = sorted({" ".join(str(item or "").strip().split())[:80] for item in groups if str(item or "").strip()})
+    GROUPS_PATH.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _postgres_conn():
     return _pg_connection() if postgres_available() else None
 
@@ -85,11 +105,56 @@ def list_facebook_pages() -> list[dict[str, Any]]:
     return [_public_page(item) for item in _list_facebook_page_records()]
 
 
+def list_facebook_page_groups() -> list[dict[str, Any]]:
+    pages = _list_facebook_page_records()
+    counts: defaultdict[str, int] = defaultdict(int)
+    for page in pages:
+        group = " ".join(str(page.get("group") or "").strip().split())[:80]
+        if group:
+            counts[group] += 1
+    group_names = set(counts.keys())
+    conn = _postgres_conn()
+    if conn is not None:
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT group_name FROM facebook_page_groups ORDER BY group_name ASC")
+            group_names.update(str(row[0] or "") for row in cur.fetchall())
+    else:
+        group_names.update(_load_page_groups())
+    return [{"name": name, "page_count": counts.get(name, 0)} for name in sorted(name for name in group_names if name)]
+
+
+def create_facebook_page_group(group: str) -> dict[str, Any]:
+    group = " ".join(str(group or "").strip().split())[:80]
+    if not group:
+        raise RuntimeError("Group name is required.")
+    payload = {"name": group, "created_at": _now(), "updated_at": _now()}
+    conn = _postgres_conn()
+    if conn is not None:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO facebook_page_groups (group_name, updated_at, data)
+                VALUES (%s, NOW(), %s::jsonb)
+                ON CONFLICT (group_name) DO UPDATE SET updated_at = NOW(), data = EXCLUDED.data
+                """,
+                (group, serialize_json(payload)),
+            )
+    else:
+        with STORE_LOCK:
+            groups = _load_page_groups()
+            if group not in groups:
+                groups.append(group)
+            _save_page_groups(groups)
+    return {"name": group, "page_count": 0}
+
+
 def update_facebook_page_group(page_id: str, group: str) -> dict[str, Any]:
     page_id = str(page_id or "").strip()
     if not page_id:
         raise RuntimeError("page_id is required.")
     group = " ".join(str(group or "").strip().split())[:80]
+    if group:
+        create_facebook_page_group(group)
     conn = _postgres_conn()
     if conn is not None:
         with conn, conn.cursor() as cur:

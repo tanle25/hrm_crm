@@ -84,6 +84,12 @@ def init_schema() -> None:
                 data JSONB NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS facebook_page_groups (
+                group_name TEXT PRIMARY KEY,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                data JSONB NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS facebook_posts (
                 post_id TEXT PRIMARY KEY,
                 page_id TEXT NOT NULL DEFAULT '',

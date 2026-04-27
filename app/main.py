@@ -16,12 +16,14 @@ from app.config import get_settings
 from app.dlq import publish_anyway
 from app.facebook_pages import (
     connect_facebook_pages,
+    create_facebook_page_group,
     debug_facebook_messages,
     facebook_aggregate_stats,
     facebook_comments,
     facebook_conversation_detail,
     facebook_conversations,
     facebook_posts,
+    list_facebook_page_groups,
     list_facebook_pages,
     process_facebook_webhook,
     send_facebook_message,
@@ -54,6 +56,8 @@ from app.schemas import (
     FacebookConnectResponse,
     FacebookCommentListResponse,
     FacebookConversationListResponse,
+    FacebookPageGroupCreateRequest,
+    FacebookPageGroupListResponse,
     FacebookPageGroupUpdateRequest,
     FacebookPageListResponse,
     FacebookMessageSendRequest,
@@ -534,6 +538,20 @@ async def connect_facebook_pages_endpoint(request: FacebookConnectRequest) -> Fa
         raise HTTPException(status_code=400, detail=str(error)) from error
     log.info("facebook_pages_connected", total=result.get("total"), batch_id=result.get("batch_id"))
     return FacebookConnectResponse(**result)
+
+
+@app.get(f"{settings.api_prefix}/facebook/page-groups", response_model=FacebookPageGroupListResponse)
+async def get_facebook_page_groups() -> FacebookPageGroupListResponse:
+    groups = await asyncio.to_thread(list_facebook_page_groups)
+    return FacebookPageGroupListResponse(total=len(groups), groups=groups)
+
+
+@app.post(f"{settings.api_prefix}/facebook/page-groups")
+async def create_facebook_page_group_endpoint(request: FacebookPageGroupCreateRequest) -> dict:
+    try:
+        return await asyncio.to_thread(create_facebook_page_group, request.name)
+    except RuntimeError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.patch(f"{settings.api_prefix}/facebook/pages/{{page_id}}/group")

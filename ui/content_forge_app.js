@@ -2923,7 +2923,7 @@
         if (!state.facebookMessagesFallbackActive || state.facebookMessagesSyncing) return;
         state.facebookMessagesSyncing = true;
         try {
-            await fetchJSON("/facebook/conversations/sync?limit=10", { method: "POST" });
+            await fetchJSON("/facebook/conversations/sync?limit=25", { method: "POST" });
             const payload = await fetchJSON("/facebook/conversations?limit=25&message_limit=1");
             const conversations = payload.conversations || [];
             for (const conversation of conversations) {

@@ -1645,16 +1645,17 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[st
     conversations: list[dict[str, Any]] = []
     warnings: list[str] = []
     fields = "id,snippet,updated_time,unread_count,message_count,participants,messages.limit(30){id,message,created_time,from,to,shares,sticker,reply_to{id},attachments}"
+    per_page_limit = max(1, min(limit, 25))
 
     with httpx.Client(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
         for page in pages:
             after = None
             fetched_for_page = 0
             try:
-                while len(conversations) < limit:
+                while fetched_for_page < per_page_limit:
                     params = {
                         "fields": fields,
-                        "limit": min(25, limit - len(conversations)),
+                        "limit": min(25, per_page_limit - fetched_for_page),
                         "access_token": page["page_access_token"],
                     }
                     if after:
@@ -1696,14 +1697,23 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[st
                         conversations.append(conversation)
                         fetched_for_page += 1
                         _upsert_facebook_conversation(conversation)
+                        for normalized_message in conversation.get("messages") or []:
+                            if not isinstance(normalized_message, dict):
+                                continue
+                            _upsert_facebook_message(
+                                {
+                                    **normalized_message,
+                                    "conversation_id": conversation.get("conversation_id") or "",
+                                    "page_id": conversation.get("page_id") or "",
+                                    "customer_id": conversation.get("customer_id") or "",
+                                }
+                            )
                     after = ((payload.get("paging") or {}).get("cursors") or {}).get("after")
-                    if not after or fetched_for_page >= limit:
+                    if not after or fetched_for_page >= per_page_limit:
                         break
             except httpx.HTTPError as error:
                 warnings.append(f"{page.get('name') or page.get('page_id')}: conversations unavailable - {_graph_error_message(error)}")
                 continue
-            if len(conversations) >= limit:
-                break
 
     conversations.sort(key=lambda item: item.get("updated_time") or "", reverse=True)
     return {

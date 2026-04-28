@@ -59,6 +59,7 @@
         facebookMessagesStreamActive: false,
         facebookMessagesFallbackTimer: null,
         facebookMessagesFallbackActive: false,
+        facebookMessagesSyncJobId: "",
         facebookMessagesSyncing: false,
         facebookMessagesAutoSynced: false,
         facebookConversationDetails: {},
@@ -2889,6 +2890,46 @@
         updateRealtimeFacebookConversationList(conversation.conversation_id);
     }
 
+    async function patchFacebookConversationsFromCache(conversations) {
+        for (const conversation of conversations || []) {
+            patchFacebookConversationFromSummary(conversation);
+            await refreshFacebookSelectedConversationIfNeeded(conversation);
+        }
+    }
+
+    async function startFacebookConversationSyncJob(limit = 25) {
+        if (state.facebookMessagesSyncJobId) return state.facebookMessagesSyncJobId;
+        const result = await fetchJSON(`/facebook/conversations/sync?limit=${limit}`, { method: "POST" });
+        const jobId = result?.job?.job_id || "";
+        state.facebookMessagesSyncJobId = jobId;
+        state.facebookMessagesSyncing = Boolean(jobId);
+        return jobId;
+    }
+
+    async function pollFacebookConversationSyncJob() {
+        const jobId = state.facebookMessagesSyncJobId;
+        if (!jobId) return false;
+        const result = await fetchJSON(`/facebook/conversations/sync/${encodeURIComponent(jobId)}`);
+        const job = result?.job || {};
+        if (!["completed", "failed"].includes(job.status)) return false;
+        state.facebookMessagesSyncJobId = "";
+        state.facebookMessagesSyncing = false;
+        if (job.status === "completed") {
+            const payload = await fetchJSON("/facebook/conversations?limit=25&message_limit=1");
+            await patchFacebookConversationsFromCache(payload.conversations || []);
+        }
+        return true;
+    }
+
+    async function applyFacebookConversationSyncCompleted(payload) {
+        state.facebookMessagesSyncJobId = "";
+        state.facebookMessagesSyncing = false;
+        await patchFacebookConversationsFromCache(payload?.conversations || []);
+        document.querySelector("#fb-messages-sync-status")?.classList.add("hidden");
+        const button = document.querySelector("#fb-messages-refresh");
+        if (button) button.innerHTML = `<i class="fa-solid fa-rotate"></i>`;
+    }
+
     async function refreshFacebookSelectedConversationIfNeeded(conversation) {
         const conversationId = conversation?.conversation_id || "";
         if (!conversationId || conversationId !== state.selectedFacebookConversationId) return;
@@ -2920,24 +2961,17 @@
     }
 
     async function runFacebookMessagesFallbackSync() {
-        if (!state.facebookMessagesFallbackActive || state.facebookMessagesSyncing) return;
-        state.facebookMessagesSyncing = true;
+        if (!state.facebookMessagesFallbackActive) return;
+        if (state.facebookMessagesSyncing && !state.facebookMessagesSyncJobId) return;
         try {
-            await fetchJSON("/facebook/conversations/sync?limit=25", { method: "POST" });
-            const payload = await fetchJSON("/facebook/conversations?limit=25&message_limit=1");
-            const conversations = payload.conversations || [];
-            for (const conversation of conversations) {
-                const previous = state.facebookConversations.find((item) => item.conversation_id === conversation.conversation_id);
-                const previousLatest = (previous?.messages || [])[0]?.message_id || "";
-                const nextLatest = (conversation.messages || [])[0]?.message_id || "";
-                const changed = !previous || previous.updated_time !== conversation.updated_time || (nextLatest && previousLatest !== nextLatest);
-                if (!changed) continue;
-                patchFacebookConversationFromSummary(conversation);
-                await refreshFacebookSelectedConversationIfNeeded(conversation);
+            if (state.facebookMessagesSyncJobId) {
+                await pollFacebookConversationSyncJob();
+                return;
             }
+            await startFacebookConversationSyncJob(25);
         } catch (error) {
             console.warn("Facebook messages fallback sync failed", error);
-        } finally {
+            state.facebookMessagesSyncJobId = "";
             state.facebookMessagesSyncing = false;
         }
     }
@@ -2995,6 +3029,15 @@
     }
 
     function applyFacebookMessageRealtime(payload) {
+        if (payload?.type === "facebook.conversations.sync.completed") {
+            applyFacebookConversationSyncCompleted(payload).catch((error) => console.warn("Facebook sync completed handler failed", error));
+            return;
+        }
+        if (payload?.type === "facebook.conversations.sync.failed") {
+            state.facebookMessagesSyncJobId = "";
+            state.facebookMessagesSyncing = false;
+            return;
+        }
         const conversation = payload?.conversation || {};
         const message = payload?.message || {};
         const conversationId = payload?.conversation_id || conversation.conversation_id || message.conversation_id || "";
@@ -3109,11 +3152,13 @@
                 const button = section.querySelector("#fb-messages-refresh");
                 if (button) button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>`;
                 try {
-                    await fetchJSON("/facebook/conversations/sync?limit=25", { method: "POST" });
-                    state.facebookConversationDetails = {};
+                    const jobId = await startFacebookConversationSyncJob(25);
+                    const status = section.querySelector("#fb-messages-sync-status");
+                    if (status) status.textContent = jobId
+                        ? `Đã xếp hàng sync inbox Facebook (${jobId.slice(0, 8)}). Có thể chuyển trang, worker sẽ xử lý nền.`
+                        : "Đã bắt đầu sync inbox Facebook.";
                 } finally {
-                    state.facebookMessagesSyncing = false;
-                    await renderFacebookMessagesPage();
+                    if (button) button.innerHTML = `<i class="fa-solid fa-rotate"></i>`;
                 }
             };
             section.querySelector("#fb-messages-refresh")?.addEventListener("click", syncMessages);

@@ -19,18 +19,20 @@ from app.facebook_pages import (
     connect_facebook_pages,
     create_facebook_page_group,
     debug_facebook_messages,
+    enqueue_facebook_conversation_sync,
     facebook_aggregate_stats,
     facebook_comments,
     facebook_conversation_detail,
     facebook_conversations,
     facebook_posts,
+    get_facebook_sync_job,
+    latest_facebook_sync_jobs,
     list_facebook_page_groups,
     list_facebook_pages,
     process_facebook_webhook,
     send_facebook_message,
     sync_facebook_comments,
     sync_facebook_aggregate_stats,
-    sync_facebook_conversations,
     sync_facebook_posts,
     update_facebook_page_group,
     verify_facebook_webhook_signature,
@@ -620,10 +622,33 @@ async def get_facebook_conversation_detail(conversation_id: str, message_limit: 
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-@app.post(f"{settings.api_prefix}/facebook/conversations/sync", response_model=FacebookConversationListResponse)
-async def sync_facebook_conversations_endpoint(limit: int = 50) -> FacebookConversationListResponse:
-    result = await asyncio.to_thread(sync_facebook_conversations, max(1, min(limit, 100)))
-    return FacebookConversationListResponse(**result)
+@app.post(f"{settings.api_prefix}/facebook/conversations/sync")
+async def sync_facebook_conversations_endpoint(limit: int = 50) -> dict:
+    job = await asyncio.to_thread(enqueue_facebook_conversation_sync, max(1, min(limit, 100)))
+    return {"queued": job.get("status") in {"queued", "running", "completed"}, "job": job}
+
+
+@app.get(f"{settings.api_prefix}/facebook/conversations/sync/{{job_id}}")
+async def get_facebook_conversations_sync_job_endpoint(job_id: str) -> dict:
+    job = await asyncio.to_thread(get_facebook_sync_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Facebook sync job not found.")
+    return {"job": job}
+
+
+@app.get(f"{settings.api_prefix}/facebook/realtime/debug")
+async def facebook_realtime_debug_endpoint() -> dict:
+    redis_conn = _realtime_redis_client()
+    redis_ok = redis_conn is not None
+    if redis_conn is not None:
+        with suppress(Exception):
+            redis_conn.close()
+    return {
+        "redis_ok": redis_ok,
+        "queue_mode": settings.queue_mode,
+        "latest_sync_jobs": await asyncio.to_thread(latest_facebook_sync_jobs, 5),
+        "webhook_path": f"{settings.api_prefix}/facebook/webhook",
+    }
 
 
 @app.post(f"{settings.api_prefix}/facebook/messages/send", response_model=FacebookMessageSendResponse)

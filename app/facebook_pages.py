@@ -17,9 +17,17 @@ from app.config import get_settings
 from app.job_store import publish_realtime_event
 from app.postgres import get_connection as _pg_connection, postgres_available, serialize_json
 
+try:
+    from redis import Redis
+    from rq import Queue
+except ImportError:  # pragma: no cover
+    Redis = None
+    Queue = None
+
 
 DATA_PATH = Path("data/facebook_pages.json")
 GROUPS_PATH = Path("data/facebook_page_groups.json")
+SYNC_JOBS_PATH = Path("data/facebook_sync_jobs")
 STORE_LOCK = Lock()
 MESSAGE_DETAIL_FIELDS = "id,created_time,from,to,message,attachments,shares,sticker,reply_to{id,message,created_time,from,attachments,shares,sticker}"
 POST_ANALYTICS_KEYS = ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"]
@@ -76,6 +84,68 @@ def _save_page_groups(groups: list[str]) -> None:
 
 def _postgres_conn():
     return _pg_connection() if postgres_available() else None
+
+
+def _upsert_facebook_sync_job(job: dict[str, Any]) -> None:
+    job["updated_at"] = _now()
+    conn = _postgres_conn()
+    if conn is not None:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO facebook_sync_jobs (job_id, status, updated_at, data)
+                VALUES (%s, %s, NOW(), %s::jsonb)
+                ON CONFLICT (job_id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    updated_at = NOW(),
+                    data = EXCLUDED.data
+                """,
+                (str(job.get("job_id") or ""), str(job.get("status") or "queued"), serialize_json(job)),
+            )
+        return
+    SYNC_JOBS_PATH.mkdir(parents=True, exist_ok=True)
+    (SYNC_JOBS_PATH / f"{job.get('job_id')}.json").write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def get_facebook_sync_job(job_id: str) -> dict[str, Any] | None:
+    job_id = (job_id or "").strip()
+    if not job_id:
+        return None
+    conn = _postgres_conn()
+    if conn is not None:
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT data::text FROM facebook_sync_jobs WHERE job_id = %s", (job_id,))
+            row = cur.fetchone()
+            return json.loads(row[0]) if row else None
+    path = SYNC_JOBS_PATH / f"{job_id}.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def latest_facebook_sync_jobs(limit: int = 5) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 20))
+    conn = _postgres_conn()
+    if conn is not None:
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT data::text FROM facebook_sync_jobs ORDER BY updated_at DESC LIMIT %s", (limit,))
+            return [json.loads(row[0]) for row in cur.fetchall()]
+    if not SYNC_JOBS_PATH.exists():
+        return []
+    paths = sorted(SYNC_JOBS_PATH.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)[:limit]
+    return [json.loads(path.read_text(encoding="utf-8")) for path in paths]
+
+
+def _rq_content_queue():
+    settings = get_settings()
+    if Redis is None or Queue is None:
+        return None
+    try:
+        redis_conn = Redis.from_url(settings.redis_url)
+        redis_conn.ping()
+        return Queue("content_pipeline", connection=redis_conn)
+    except Exception:
+        return None
 
 
 def _mask_token(value: str) -> str:
@@ -1722,6 +1792,72 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[st
         "conversations": conversations[:limit],
         "warnings": warnings[:20],
     }
+
+
+def run_facebook_conversation_sync_job(job_id: str, limit: int = 50) -> dict[str, Any]:
+    job = get_facebook_sync_job(job_id) or {
+        "job_id": job_id,
+        "kind": "facebook_conversations_sync",
+        "limit": limit,
+        "status": "queued",
+        "created_at": _now(),
+    }
+    job["status"] = "running"
+    job["started_at"] = _now()
+    _upsert_facebook_sync_job(job)
+    try:
+        result = sync_facebook_conversations(limit)
+        job["status"] = "completed"
+        job["completed_at"] = _now()
+        job["result"] = {
+            "total": result.get("total", 0),
+            "page_count": result.get("page_count", 0),
+            "warnings": result.get("warnings", []),
+        }
+        _upsert_facebook_sync_job(job)
+        publish_realtime_event(
+            "facebook:messages",
+            {
+                "type": "facebook.conversations.sync.completed",
+                "sync_job": job,
+                "conversations": result.get("conversations", [])[:50],
+            },
+        )
+        return job
+    except Exception as exc:
+        job["status"] = "failed"
+        job["failed_at"] = _now()
+        job["error"] = str(exc)
+        _upsert_facebook_sync_job(job)
+        publish_realtime_event("facebook:messages", {"type": "facebook.conversations.sync.failed", "sync_job": job})
+        raise
+
+
+def enqueue_facebook_conversation_sync(limit: int = 50) -> dict[str, Any]:
+    limit = max(1, min(limit, 100))
+    job = {
+        "job_id": secrets.token_hex(16),
+        "kind": "facebook_conversations_sync",
+        "limit": limit,
+        "status": "queued",
+        "created_at": _now(),
+        "queue": "inline",
+    }
+    _upsert_facebook_sync_job(job)
+    settings = get_settings()
+    queue = _rq_content_queue() if settings.queue_mode == "rq" else None
+    if queue is not None:
+        queue.enqueue(
+            "app.facebook_pages.run_facebook_conversation_sync_job",
+            kwargs={"job_id": job["job_id"], "limit": limit},
+            job_timeout=900,
+            result_ttl=86400,
+            failure_ttl=604800,
+        )
+        job["queue"] = queue.name
+        _upsert_facebook_sync_job(job)
+        return job
+    return run_facebook_conversation_sync_job(job["job_id"], limit)
 
 
 def send_facebook_message(conversation_id: str, message: str) -> dict[str, Any]:

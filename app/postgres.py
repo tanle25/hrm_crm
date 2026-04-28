@@ -138,6 +138,13 @@ def init_schema() -> None:
                 data JSONB NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS facebook_sync_jobs (
+                job_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'queued',
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                data JSONB NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS job_meta (
                 key TEXT PRIMARY KEY,
                 value BIGINT NOT NULL DEFAULT 0
@@ -166,6 +173,12 @@ def init_schema() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_facebook_content_jobs_status_updated
             ON facebook_content_jobs (status, updated_at DESC);
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_facebook_sync_jobs_status_updated
+            ON facebook_sync_jobs (status, updated_at DESC);
             """
         )
         cur.execute("INSERT INTO job_meta (key, value) VALUES ('jobs_version', 0) ON CONFLICT (key) DO NOTHING;")

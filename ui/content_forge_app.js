@@ -559,10 +559,17 @@
                                                 <div class="text-white text-[12px] font-bold truncate">${escapeHtml(post.page_name || post.page_id || "Facebook page")}</div>
                                                 <div class="text-[10px] text-hud-muted truncate">${escapeHtml(post.group || "Chưa có nhóm")} · core #${Number(post.core_index || 0) + 1}</div>
                                             </div>
+                                            <button type="button" class="fb-preview-edit btn-ghost px-2 py-1 text-[10px]" data-index="${index}" title="Chỉnh sửa"><i class="fa-solid fa-pen"></i></button>
                                             <button type="button" class="fb-preview-copy btn-ghost px-2 py-1 text-[10px]" data-index="${index}"><i class="fa-solid fa-copy"></i></button>
                                         </div>
-                                        <textarea class="fb-preview-caption hud-textarea w-full min-h-[220px] px-3 py-3 text-[12px] leading-relaxed" data-index="${index}">${escapeHtml(post.caption || "")}</textarea>
-                                        <div class="text-[10px] text-hud-muted mt-2">Có thể chỉnh trực tiếp nội dung tại đây trước khi enqueue.</div>
+                                        <div class="fb-preview-display whitespace-pre-wrap text-[12px] leading-relaxed text-white/90" data-index="${index}">${escapeHtml(post.caption || "")}</div>
+                                        <div class="fb-preview-editor hidden" data-index="${index}">
+                                            <textarea class="fb-preview-caption hud-textarea w-full min-h-[220px] px-3 py-3 text-[12px] leading-relaxed" data-index="${index}">${escapeHtml(post.caption || "")}</textarea>
+                                            <div class="flex justify-end gap-2 mt-2">
+                                                <button type="button" class="fb-preview-cancel btn-ghost px-3 py-1.5 text-[10px] uppercase-wide" data-index="${index}">HỦY</button>
+                                                <button type="button" class="fb-preview-save btn-primary px-3 py-1.5 text-[10px] uppercase-wide" data-index="${index}">LƯU</button>
+                                            </div>
+                                        </div>
                                         ${(post.hashtags || []).length ? `<div class="mt-3 flex flex-wrap gap-1">${(post.hashtags || []).map((tag) => `<span class="badge cyan">${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
                                     </div>
                                 `;
@@ -583,14 +590,42 @@
                 }, 1200);
             });
         });
-        container.querySelectorAll(".fb-preview-caption").forEach((textarea) => {
-            textarea.addEventListener("input", () => {
-                const index = Number(textarea.dataset.index || 0);
+        container.querySelectorAll(".fb-preview-edit").forEach((button) => {
+            button.addEventListener("click", () => {
+                const index = button.dataset.index || "0";
+                const display = container.querySelector(`.fb-preview-display[data-index="${index}"]`);
+                const editor = container.querySelector(`.fb-preview-editor[data-index="${index}"]`);
+                const textarea = container.querySelector(`.fb-preview-caption[data-index="${index}"]`);
+                const post = state.facebookCreatePreview?.posts?.[Number(index)];
+                if (textarea && post) textarea.value = post.caption || "";
+                display?.classList.add("hidden");
+                editor?.classList.remove("hidden");
+                textarea?.focus();
+            });
+        });
+        container.querySelectorAll(".fb-preview-cancel").forEach((button) => {
+            button.addEventListener("click", () => {
+                const index = button.dataset.index || "0";
+                const display = container.querySelector(`.fb-preview-display[data-index="${index}"]`);
+                const editor = container.querySelector(`.fb-preview-editor[data-index="${index}"]`);
+                editor?.classList.add("hidden");
+                display?.classList.remove("hidden");
+            });
+        });
+        container.querySelectorAll(".fb-preview-save").forEach((button) => {
+            button.addEventListener("click", () => {
+                const index = Number(button.dataset.index || 0);
+                const textarea = container.querySelector(`.fb-preview-caption[data-index="${index}"]`);
+                const display = container.querySelector(`.fb-preview-display[data-index="${index}"]`);
+                const editor = container.querySelector(`.fb-preview-editor[data-index="${index}"]`);
                 if (!state.facebookCreatePreview?.posts?.[index]) return;
-                const value = textarea.value;
+                const value = textarea?.value || "";
                 state.facebookCreatePreview.posts[index].caption = value;
                 const firstLine = value.split(/\r?\n/).find((line) => line.trim()) || "";
                 state.facebookCreatePreview.posts[index].headline = firstLine.trim().slice(0, 180);
+                if (display) display.textContent = value;
+                editor?.classList.add("hidden");
+                display?.classList.remove("hidden");
             });
         });
     }

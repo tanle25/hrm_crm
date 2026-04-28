@@ -2810,6 +2810,31 @@
         `;
     }
 
+    function renderFacebookConversationItem(conversation, selectedConversationId = "") {
+        const active = selectedConversationId && selectedConversationId === conversation.conversation_id;
+        const hasUnread = Number(conversation.unread_count || 0) > 0;
+        return `
+            <button class="fb-conversation-item block w-full text-left p-3 border-b border-hud-fb/10 hover:bg-hud-fb/5 ${active ? "bg-hud-fb/10" : ""}" data-conversation-id="${escapeHtml(conversation.conversation_id)}">
+                <div class="flex items-start gap-3">
+                    <div class="w-10 h-10 rounded-full ${hasUnread ? "bg-hud-fb/20 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0">
+                        <i class="fa-solid fa-user ${hasUnread ? "text-hud-fb" : "text-hud-muted"} text-xs"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-1 mb-0.5">
+                            <span class="text-xs font-bold text-white truncate">${escapeHtml(conversation.customer_name || "Facebook User")}</span>
+                            <span class="fb-conversation-time text-[9px] text-hud-muted ml-auto">${escapeHtml(formatDate(conversation.updated_time))}</span>
+                        </div>
+                        <div class="fb-conversation-snippet text-[10px] text-white/70 truncate">${escapeHtml(conversation.snippet || "Không có nội dung hiển thị")}</div>
+                        <div class="flex items-center gap-1 mt-1.5">
+                            <span class="fb-conversation-state badge ${hasUnread ? "amber" : "cyan"}" style="font-size:8px;">${hasUnread ? `${formatNumber(conversation.unread_count)} UNREAD` : "OPEN"}</span>
+                            <span class="fb-conversation-meta text-[8px] text-hud-muted uppercase-wide ml-1">${escapeHtml(conversation.page_name || "Page")} · ${formatNumber(conversation.message_count || 0)} msgs</span>
+                        </div>
+                    </div>
+                </div>
+            </button>
+        `;
+    }
+
     function upsertFacebookConversationState(conversation, message) {
         const conversationId = conversation?.conversation_id || message?.conversation_id || "";
         if (!conversationId) return;
@@ -2844,12 +2869,54 @@
 
     function updateRealtimeFacebookConversationList(conversationId) {
         const conversation = state.facebookConversations.find((item) => item.conversation_id === conversationId);
-        const button = document.querySelector(`.fb-conversation-item[data-conversation-id="${CSS.escape(conversationId)}"]`);
-        if (!conversation || !button) return;
-        const snippet = button.querySelector(".fb-conversation-snippet");
-        const meta = button.querySelector(".fb-conversation-meta");
-        if (snippet) snippet.textContent = conversation.snippet || "Không có nội dung hiển thị";
-        if (meta) meta.textContent = `${conversation.page_name || "Page"} · ${formatNumber(conversation.message_count || 0)} msgs`;
+        const list = document.getElementById("fb-conversation-list");
+        if (!conversation || !list) return;
+        const existing = list.querySelector(`.fb-conversation-item[data-conversation-id="${CSS.escape(conversationId)}"]`);
+        existing?.remove();
+        list.insertAdjacentHTML("afterbegin", renderFacebookConversationItem(conversation, state.selectedFacebookConversationId));
+        const inserted = list.querySelector(`.fb-conversation-item[data-conversation-id="${CSS.escape(conversationId)}"]`);
+        if (inserted) bindFacebookConversationButton(inserted);
+        list.querySelectorAll(".fb-conversation-item").forEach((item) => {
+            item.classList.toggle("bg-hud-fb/10", item.dataset.conversationId === state.selectedFacebookConversationId);
+        });
+    }
+
+    function bindFacebookConversationButton(button) {
+        if (!button || button.dataset.bound === "1") return;
+        button.dataset.bound = "1";
+        button.addEventListener("click", () => {
+            const section = document.getElementById("page-fb-messages");
+            if (!section) return;
+            state.selectedFacebookConversationId = button.dataset.conversationId || "";
+            section.querySelectorAll(".fb-conversation-item").forEach((item) => item.classList.remove("bg-hud-fb/10"));
+            button.classList.add("bg-hud-fb/10");
+            const conversationId = state.selectedFacebookConversationId;
+            const summary = state.facebookConversations.find((item) => item.conversation_id === conversationId) || null;
+            const detail = summary ? state.facebookConversationDetails[summary.conversation_id] : null;
+            const panel = section.querySelector("#fb-conversation-panel");
+            if (panel) {
+                panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(detail || summary, Boolean(summary && !detail))}`;
+                scrollFacebookMessagesToBottom(section);
+            }
+            if (summary && !detail && !state.facebookConversationDetailPending[conversationId]) {
+                state.facebookConversationDetailPending[conversationId] = true;
+                fetchJSON(`/facebook/conversations/${encodeURIComponent(conversationId)}?message_limit=100`)
+                    .then((loadedDetail) => {
+                        state.facebookConversationDetails[conversationId] = loadedDetail;
+                        if (state.selectedFacebookConversationId === conversationId) {
+                            const currentPanel = section.querySelector("#fb-conversation-panel");
+                            if (currentPanel) {
+                                currentPanel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(loadedDetail, false)}`;
+                                scrollFacebookMessagesToBottom(section);
+                            }
+                        }
+                    })
+                    .catch((error) => console.warn("Facebook conversation detail failed", error))
+                    .finally(() => {
+                        delete state.facebookConversationDetailPending[conversationId];
+                    });
+            }
+        });
     }
 
     function applyFacebookMessageRealtime(payload) {
@@ -2944,30 +3011,9 @@
                                 <span class="font-display font-black text-[10px] text-white uppercase-widest">INBOX · ${formatNumber(unread)} UNREAD</span>
                                 <button id="fb-messages-refresh" class="ml-auto btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i></button>
                             </div>
-                            <div class="flex-1 min-h-0 overflow-y-auto">
+                            <div id="fb-conversation-list" class="flex-1 min-h-0 overflow-y-auto">
                                 ${conversations.map((conversation) => {
-                                    const active = selected && selected.conversation_id === conversation.conversation_id;
-                                    const hasUnread = Number(conversation.unread_count || 0) > 0;
-                                    return `
-                                        <button class="fb-conversation-item block w-full text-left p-3 border-b border-hud-fb/10 hover:bg-hud-fb/5 ${active ? "bg-hud-fb/10" : ""}" data-conversation-id="${escapeHtml(conversation.conversation_id)}">
-                                            <div class="flex items-start gap-3">
-                                                <div class="w-10 h-10 rounded-full ${hasUnread ? "bg-hud-fb/20 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0">
-                                                    <i class="fa-solid fa-user ${hasUnread ? "text-hud-fb" : "text-hud-muted"} text-xs"></i>
-                                                </div>
-                                                <div class="flex-1 min-w-0">
-                                                    <div class="flex items-center gap-1 mb-0.5">
-                                                        <span class="text-xs font-bold text-white truncate">${escapeHtml(conversation.customer_name || "Facebook User")}</span>
-                                                        <span class="text-[9px] text-hud-muted ml-auto">${escapeHtml(formatDate(conversation.updated_time))}</span>
-                                                    </div>
-                                                    <div class="fb-conversation-snippet text-[10px] text-white/70 truncate">${escapeHtml(conversation.snippet || "Không có nội dung hiển thị")}</div>
-                                                    <div class="flex items-center gap-1 mt-1.5">
-                                                        <span class="badge ${hasUnread ? "amber" : "cyan"}" style="font-size:8px;">${hasUnread ? `${formatNumber(conversation.unread_count)} UNREAD` : "OPEN"}</span>
-                                                        <span class="fb-conversation-meta text-[8px] text-hud-muted uppercase-wide ml-1">${escapeHtml(conversation.page_name || "Page")} · ${formatNumber(conversation.message_count || 0)} msgs</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </button>
-                                    `;
+                                    return renderFacebookConversationItem(conversation, selected?.conversation_id || "");
                                 }).join("") || `<div class="p-6 text-center text-hud-muted text-sm">Chưa có hội thoại trong DB. Hệ thống sẽ sync nền nếu page token có quyền inbox.</div>`}
                             </div>
                         </div>
@@ -2999,37 +3045,7 @@
                 setTimeout(syncMessages, 50);
             }
             section.querySelectorAll(".fb-conversation-item").forEach((button) => {
-                button.addEventListener("click", () => {
-                    state.selectedFacebookConversationId = button.dataset.conversationId || "";
-                    section.querySelectorAll(".fb-conversation-item").forEach((item) => item.classList.remove("bg-hud-fb/10"));
-                    button.classList.add("bg-hud-fb/10");
-                    const conversationId = state.selectedFacebookConversationId;
-                    const summary = conversations.find((item) => item.conversation_id === conversationId) || null;
-                    const detail = summary ? state.facebookConversationDetails[summary.conversation_id] : null;
-                    const panel = section.querySelector("#fb-conversation-panel");
-                    if (panel) {
-                        panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(detail || summary, Boolean(summary && !detail))}`;
-                        scrollFacebookMessagesToBottom(section);
-                    }
-                    if (summary && !detail && !state.facebookConversationDetailPending[conversationId]) {
-                        state.facebookConversationDetailPending[conversationId] = true;
-                        fetchJSON(`/facebook/conversations/${encodeURIComponent(conversationId)}?message_limit=100`)
-                            .then((loadedDetail) => {
-                                state.facebookConversationDetails[conversationId] = loadedDetail;
-                                if (state.selectedFacebookConversationId === conversationId) {
-                                    const currentPanel = section.querySelector("#fb-conversation-panel");
-                                    if (currentPanel) {
-                                        currentPanel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(loadedDetail, false)}`;
-                                        scrollFacebookMessagesToBottom(section);
-                                    }
-                                }
-                            })
-                            .catch((error) => console.warn("Facebook conversation detail failed", error))
-                            .finally(() => {
-                                delete state.facebookConversationDetailPending[conversationId];
-                            });
-                    }
-                });
+                bindFacebookConversationButton(button);
             });
             if (selectedSummary?.conversation_id && !selectedDetail && !state.facebookConversationDetailPending[selectedSummary.conversation_id]) {
                 const conversationId = selectedSummary.conversation_id;

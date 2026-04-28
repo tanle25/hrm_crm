@@ -549,11 +549,6 @@
                         <div class="text-[10px] text-hud-muted uppercase-wide mb-2">POST THEO PAGE</div>
                         <div class="space-y-3 max-h-[520px] overflow-y-auto pr-1">
                             ${posts.map((post, index) => {
-                                const headline = post.headline || "";
-                                let body = post.caption || "";
-                                if (headline && body.startsWith(headline)) {
-                                    body = body.slice(headline.length).trim();
-                                }
                                 return `
                                     <div class="rounded-2xl border border-hud-fb/20 bg-[#101923] p-4">
                                         <div class="flex items-start gap-3 mb-3">
@@ -566,8 +561,8 @@
                                             </div>
                                             <button type="button" class="fb-preview-copy btn-ghost px-2 py-1 text-[10px]" data-index="${index}"><i class="fa-solid fa-copy"></i></button>
                                         </div>
-                                        <div class="text-[15px] leading-snug text-white font-black mb-3">${escapeHtml(headline)}</div>
-                                        <div class="whitespace-pre-wrap text-[12px] leading-relaxed text-white/90">${escapeHtml(body)}</div>
+                                        <textarea class="fb-preview-caption hud-textarea w-full min-h-[220px] px-3 py-3 text-[12px] leading-relaxed" data-index="${index}">${escapeHtml(post.caption || "")}</textarea>
+                                        <div class="text-[10px] text-hud-muted mt-2">Có thể chỉnh trực tiếp nội dung tại đây trước khi enqueue.</div>
                                         ${(post.hashtags || []).length ? `<div class="mt-3 flex flex-wrap gap-1">${(post.hashtags || []).map((tag) => `<span class="badge cyan">${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
                                     </div>
                                 `;
@@ -586,6 +581,16 @@
                 setTimeout(() => {
                     button.innerHTML = `<i class="fa-solid fa-copy"></i>`;
                 }, 1200);
+            });
+        });
+        container.querySelectorAll(".fb-preview-caption").forEach((textarea) => {
+            textarea.addEventListener("input", () => {
+                const index = Number(textarea.dataset.index || 0);
+                if (!state.facebookCreatePreview?.posts?.[index]) return;
+                const value = textarea.value;
+                state.facebookCreatePreview.posts[index].caption = value;
+                const firstLine = value.split(/\r?\n/).find((line) => line.trim()) || "";
+                state.facebookCreatePreview.posts[index].headline = firstLine.trim().slice(0, 180);
             });
         });
     }

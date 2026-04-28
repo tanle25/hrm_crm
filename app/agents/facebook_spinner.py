@@ -159,16 +159,6 @@ def _personalize_caption(core: dict[str, Any], page: dict[str, Any], index: int,
     if cta:
         caption_parts.append(cta)
     caption = "\n\n".join(part.strip() for part in caption_parts if part.strip())
-    suffix_options = [
-        f"Bạn ở page {page_name} muốn xem thêm góc nào?",
-        "Bạn muốn mình lên thêm bài so sánh hay checklist chi tiết?",
-        "Nếu cần tư vấn nhanh, cứ nhắn trực tiếp cho page.",
-        "Bạn thấy điểm nào đáng quan tâm nhất?",
-    ]
-    suffix = suffix_options[index % len(suffix_options)]
-    if suffix.lower() not in caption.lower():
-        caption = f"{caption.rstrip()}\n\n{suffix}"
-
     hashtags = []
     for tag in core.get("hashtags") or []:
         clean = _clean_text(tag, 40)
@@ -226,6 +216,9 @@ def run(
         f"Số caption lõi cần tạo: {target_core_count}\n"
         f"Số hashtag tối đa mỗi caption: {hashtag_count}\n"
         f"Page sample: {json.dumps([{k: page.get(k) for k in ['page_id', 'name', 'group', 'category']} for page in pages[:30]], ensure_ascii=False)}\n"
+        "Tone/format nên luân phiên để nội dung phong phú nhưng vẫn bán hàng: tư vấn trực tiếp, checklist nhanh, kể trải nghiệm, so sánh lựa chọn, "
+        "nhấn mạnh lợi ích thực tế, xử lý băn khoăn khách hàng, gợi ý đặt hàng nhẹ nhàng.\n"
+        "Không thêm câu hỏi/suffix sau CTA. CTA phải là câu cuối cùng của caption.\n"
         "Yêu cầu: tạo caption lõi đủ khác nhau để map ra từng page. "
         "Mỗi caption phải có headline thu hút, body chia đoạn/bullet rõ ràng và CTA cụ thể ở cuối."
     )

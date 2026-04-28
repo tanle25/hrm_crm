@@ -23,6 +23,7 @@
         selectedFacebookCreatePageIds: JSON.parse(localStorage.getItem("content_forge_fb_create_page_ids") || "[]"),
         selectedFacebookCreateGroups: JSON.parse(localStorage.getItem("content_forge_fb_create_groups") || "[]"),
         facebookCreateImages: [],
+        facebookCreatePreview: null,
         selectedShopeeSiteIds: JSON.parse(localStorage.getItem("content_forge_shopee_site_ids") || "[]"),
         selectedShopeeItemId: localStorage.getItem("content_forge_shopee_item_id") || "",
         jobsSocket: null,
@@ -450,19 +451,32 @@
 
     async function readFacebookCreateImages(files) {
         const selected = Array.from(files || []).filter((file) => file.type.startsWith("image/")).slice(0, 6);
-        const maxBytes = 2 * 1024 * 1024;
+        const uploadResult = await uploadFacebookCreateImages(selected);
+        const uploadedByName = new Map((uploadResult.images || []).map((item) => [item.name, item]));
+        if ((uploadResult.warnings || []).length) {
+            setFacebookCreateFeedback("warn", uploadResult.warnings.join(" | "));
+        }
         const images = [];
         for (const file of selected) {
-            if (file.size > maxBytes) continue;
             const dataUrl = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = () => resolve(String(reader.result || ""));
                 reader.onerror = reject;
                 reader.readAsDataURL(file);
             });
-            images.push({ name: file.name, type: file.type, size: file.size, data_url: dataUrl });
+            const uploaded = uploadedByName.get(file.name) || {};
+            if (!uploaded.image_id) continue;
+            images.push({
+                image_id: uploaded.image_id,
+                name: file.name,
+                type: uploaded.type || file.type,
+                size: file.size,
+                stored_size: uploaded.stored_size || 0,
+                data_url: dataUrl,
+            });
         }
         state.facebookCreateImages = images;
+        state.facebookCreatePreview = null;
         renderFacebookCreateImagePreview();
     }
 
@@ -478,6 +492,7 @@
             tone: document.getElementById("fb-create-tone")?.value || "",
             hashtag_count: Number.isFinite(hashtagCount) ? Math.max(0, Math.min(12, hashtagCount)) : 5,
             images: (state.facebookCreateImages || []).map((image) => ({
+                image_id: image.image_id || "",
                 name: image.name || "",
                 type: image.type || "",
                 size: Number(image.size || 0),
@@ -504,6 +519,7 @@
         if (!container) return;
         const coreCaptions = result.core_captions || [];
         const posts = result.posts || [];
+        state.facebookCreatePreview = result;
         container.classList.remove("hidden");
         container.innerHTML = `
             <div class="hud-card p-4 mt-2" style="border-color: rgba(74, 158, 255, 0.25);">
@@ -595,6 +611,26 @@
                 button.innerHTML = `<i class="fa-solid fa-eye"></i> PREVIEW`;
             }
         }
+    }
+
+    async function uploadFacebookCreateImages(files) {
+        const selected = Array.from(files || []).filter((file) => file.type.startsWith("image/")).slice(0, 10);
+        if (!selected.length) return [];
+        const formData = new FormData();
+        selected.forEach((file) => formData.append("files", file));
+        const response = await fetch(`${API_BASE}/facebook/content/images`, {
+            method: "POST",
+            body: formData,
+        });
+        if (!response.ok) {
+            let message = `${response.status} ${response.statusText}`;
+            try {
+                const data = await response.json();
+                message = data.detail || data.message || message;
+            } catch (_) {}
+            throw new Error(message);
+        }
+        return response.json();
     }
 
     function updateSiteSummary(summary, selectedIds = [], sites = []) {
@@ -3424,15 +3460,42 @@
         document.getElementById("fb-create-preview")?.addEventListener("click", () => {
             previewFacebookCreateVariants();
         });
-        document.getElementById("fb-create-enqueue")?.addEventListener("click", () => {
+        document.getElementById("fb-create-enqueue")?.addEventListener("click", async () => {
             const payload = facebookCreatePayload();
             if (!payload.brief) {
                 setFacebookCreateFeedback("error", "Cần nhập content brief cho job Facebook.");
                 return;
             }
+            if (!state.facebookCreatePreview?.posts?.length) {
+                setFacebookCreateFeedback("error", "Cần bấm PREVIEW và duyệt nội dung trước khi enqueue đăng bài.");
+                return;
+            }
             setSelectedFacebookCreatePages(payload.page_ids);
             setSelectedFacebookCreateGroups(payload.groups);
-            setFacebookCreateFeedback("warn", `Đã chuẩn bị payload Facebook: ${payload.groups.length} nhóm, ${payload.page_ids.length} page, ${state.facebookCreateImages.length} ảnh. Backend queue Facebook riêng sẽ được nối ở bước tiếp theo.`);
+            const button = document.getElementById("fb-create-enqueue");
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ENQUEUEING`;
+            }
+            try {
+                const result = await fetchJSON("/facebook/content/jobs", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        brief: payload.brief,
+                        variants: state.facebookCreatePreview.posts,
+                        images: payload.images,
+                        publish_status: "publish",
+                    }),
+                });
+                setFacebookCreateFeedback("success", `Đã enqueue job Facebook ${result.job_id}. Hệ thống đang đăng ${state.facebookCreatePreview.posts.length} post trong nền.`);
+            } catch (error) {
+                setFacebookCreateFeedback("error", `Enqueue failed: ${error.message}`);
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = `<i class="fa-solid fa-paper-plane"></i> ENQUEUE FB JOB <i class="fa-solid fa-arrow-right"></i>`;
+                }
+            }
         });
     }
 

@@ -519,6 +519,7 @@
         if (!container) return;
         const coreCaptions = result.core_captions || [];
         const posts = result.posts || [];
+        const review = result.quality?.review || {};
         state.facebookCreatePreview = result;
         container.classList.remove("hidden");
         container.innerHTML = `
@@ -528,6 +529,8 @@
                     <div class="font-display font-black text-xs text-white uppercase-widest"><i class="fa-solid fa-wand-magic-sparkles text-hud-fb"></i> PREVIEW CONTENT SPIN</div>
                     <span class="badge cyan ml-auto">${formatNumber(result.page_count || 0)} page</span>
                     <span class="badge green">${formatNumber(result.core_caption_count || 0)} lõi</span>
+                    ${review.enabled ? `<span class="badge cyan">review ${formatNumber(review.reviewed || 0)}</span>` : ""}
+                    ${review.rewritten ? `<span class="badge amber">rewrite ${formatNumber(review.rewritten || 0)}</span>` : ""}
                     <span class="badge amber">sim ${formatNumber(result.quality?.max_nearby_similarity || 0, 2)}</span>
                 </div>
                 ${(result.warnings || []).length ? `<div class="mb-4 border border-hud-amber/30 bg-hud-amber/10 text-hud-amber text-[11px] p-3">${escapeHtml((result.warnings || []).join(" | "))}</div>` : ""}
@@ -557,7 +560,10 @@
                                             </div>
                                             <div class="flex-1 min-w-0">
                                                 <div class="text-white text-[12px] font-bold truncate">${escapeHtml(post.page_name || post.page_id || "Facebook page")}</div>
-                                                <div class="text-[10px] text-hud-muted truncate">${escapeHtml(post.group || "Chưa có nhóm")} · core #${Number(post.core_index || 0) + 1}</div>
+                                                <div class="text-[10px] text-hud-muted truncate">
+                                                    ${escapeHtml(post.group || "Chưa có nhóm")} · core #${Number(post.core_index || 0) + 1}
+                                                    ${post.review?.rewritten ? `<span class="text-hud-amber"> · đã rewrite</span>` : ""}
+                                                </div>
                                             </div>
                                             <button type="button" class="fb-preview-edit btn-ghost px-2 py-1 text-[10px]" data-index="${index}" title="Chỉnh sửa"><i class="fa-solid fa-pen"></i></button>
                                             <button type="button" class="fb-preview-copy btn-ghost px-2 py-1 text-[10px]" data-index="${index}"><i class="fa-solid fa-copy"></i></button>

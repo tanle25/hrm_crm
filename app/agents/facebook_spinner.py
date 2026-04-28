@@ -43,6 +43,41 @@ Schema:
 """.strip()
 
 
+FACEBOOK_REVIEW_SYSTEM_PROMPT = """
+Bạn là QA editor cho nội dung Facebook tiếng Việt.
+Nhiệm vụ: review từng caption bán hàng và chỉ rewrite caption chưa đạt.
+
+Tiêu chí đạt:
+- Dòng đầu là headline/hook rõ, thu hút, không quá dài.
+- Body dễ đọc, chia đoạn hoặc bullet rõ ràng.
+- CTA nằm cuối, không bị lặp, có hành động cụ thể.
+- Nếu brief có giao hàng/COD/nhận hàng thanh toán thì CTA nên thể hiện tự nhiên bằng emoji phù hợp.
+- Không bịa giá, cam kết, khuyến mãi, số điện thoại hoặc chính sách ngoài brief.
+- Không có câu hỏi/suffix vô nghĩa sau CTA.
+- Không nhắc AI, spin, biến thể.
+
+Trả về JSON hợp lệ:
+{
+  "reviews": [
+    {
+      "index": 0,
+      "pass": true,
+      "score": 8.5,
+      "issues": [],
+      "headline": "",
+      "caption": "",
+      "cta": "",
+      "hashtags": []
+    }
+  ]
+}
+
+Nếu pass=true: có thể để headline/caption/cta/hashtags rỗng.
+Nếu pass=false: phải viết lại headline, caption body và cta cho bài đó.
+Không thêm giải thích ngoài JSON.
+""".strip()
+
+
 ANGLE_BANK = [
     "lợi ích thực tế khi sử dụng",
     "checklist chọn mua",
@@ -152,6 +187,33 @@ def _normalize_cta(cta: str, body: str, brief: str) -> str:
     return "\n".join(cta_lines).strip()
 
 
+def _compose_caption(headline: str, body: str, cta: str) -> str:
+    return "\n\n".join(part.strip() for part in [headline, body, cta] if part and part.strip())
+
+
+def _normalize_hashtags(tags: object, fallback: list[str], limit: int) -> list[str]:
+    source = tags if isinstance(tags, list) else fallback
+    normalized = []
+    for tag in source or []:
+        clean = _clean_text(tag, 40)
+        if not clean:
+            continue
+        clean = clean if clean.startswith("#") else f"#{clean}"
+        if clean not in normalized:
+            normalized.append(clean)
+    return normalized[: max(0, limit)]
+
+
+def _strip_repeated_headline(body: str, headline: str) -> str:
+    lines = body.splitlines()
+    if not lines:
+        return body
+    first = lines[0].strip()
+    if headline and (_contains_similar_text(first, headline) or _contains_similar_text(headline, first)):
+        return "\n".join(lines[1:]).strip()
+    return body
+
+
 def recommended_core_count(page_count: int) -> int:
     if page_count <= 5:
         return max(1, page_count)
@@ -224,10 +286,7 @@ def _personalize_caption(core: dict[str, Any], page: dict[str, Any], index: int,
         headline = f"{_clean_text(core.get('angle'), 80).capitalize()} cho khách đang quan tâm"
     body = _clean_multiline(core.get("caption"), 3000)
     cta = _normalize_cta(str(core.get("cta") or ""), body, brief)
-    caption_parts = [headline, body]
-    if cta:
-        caption_parts.append(cta)
-    caption = "\n\n".join(part.strip() for part in caption_parts if part.strip())
+    caption = _compose_caption(headline, body, cta)
     hashtags = []
     for tag in core.get("hashtags") or []:
         clean = _clean_text(tag, 40)
@@ -252,6 +311,111 @@ def _personalize_caption(core: dict[str, Any], page: dict[str, Any], index: int,
         "hashtags": deduped[: max(0, hashtag_count)],
         "core_index": int(core.get("_core_index", 0)),
     }
+
+
+def _review_batch_prompt(brief: str, tone: str, posts: list[dict[str, Any]]) -> str:
+    compact_posts = []
+    for index, post in enumerate(posts):
+        compact_posts.append(
+            {
+                "index": index,
+                "page_name": post.get("page_name"),
+                "group": post.get("group"),
+                "headline": post.get("headline"),
+                "caption": _clean_multiline(post.get("caption"), 2200),
+                "cta": post.get("cta"),
+                "hashtags": post.get("hashtags") or [],
+            }
+        )
+    return (
+        f"Brief gốc: {_clean_text(brief, 5000)}\n"
+        f"Tone ưu tiên: {_clean_text(tone, 180) or 'tự nhiên, bán hàng vừa phải'}\n"
+        f"Posts cần review: {json.dumps(compact_posts, ensure_ascii=False)}\n"
+        "Hãy review từng post theo index. Nếu post đã đạt, pass=true và không rewrite. "
+        "Nếu chưa đạt, pass=false và trả headline/caption/cta/hashtags đã sửa. "
+        "CTA rewrite nên là block cuối 2-3 dòng, dùng emoji vừa phải như 📩 🚚 ✅ khi phù hợp với brief. "
+        "Không thêm câu kiểu 'Bạn muốn mình...' hoặc câu hỏi sau CTA."
+    )
+
+
+def _apply_review_rewrites(
+    posts: list[dict[str, Any]],
+    reviews: object,
+    *,
+    brief: str,
+    hashtag_count: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not isinstance(reviews, list):
+        return posts, {"reviewed": 0, "rewritten": 0, "failed_indexes": []}
+    updated = [dict(post) for post in posts]
+    rewritten = 0
+    failed_indexes: list[int] = []
+    for item in reviews:
+        if not isinstance(item, dict):
+            continue
+        try:
+            index = int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        if index < 0 or index >= len(updated):
+            continue
+        if bool(item.get("pass")):
+            continue
+        post = dict(updated[index])
+        headline = _clean_text(item.get("headline"), 180) or str(post.get("headline") or "")
+        body = _clean_multiline(item.get("caption"), 3000) or str(post.get("caption") or "")
+        body = _strip_repeated_headline(body, headline)
+        cta = _normalize_cta(str(item.get("cta") or ""), body, brief)
+        post["headline"] = headline
+        post["cta"] = cta
+        post["caption"] = _compose_caption(headline, body, cta)
+        post["hashtags"] = _normalize_hashtags(item.get("hashtags"), post.get("hashtags") or [], hashtag_count)
+        post["review"] = {
+            "pass": False,
+            "score": item.get("score"),
+            "issues": item.get("issues") if isinstance(item.get("issues"), list) else [],
+            "rewritten": True,
+        }
+        updated[index] = post
+        rewritten += 1
+        failed_indexes.append(index)
+    return updated, {"reviewed": len(reviews), "rewritten": rewritten, "failed_indexes": failed_indexes}
+
+
+def _review_and_rewrite_posts(
+    posts: list[dict[str, Any]],
+    *,
+    brief: str,
+    tone: str,
+    hashtag_count: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not posts:
+        return posts, {"enabled": True, "reviewed": 0, "rewritten": 0, "batches": 0, "failed_indexes": []}
+    batch_size = 8
+    rewritten_posts = [dict(post) for post in posts]
+    summary = {"enabled": True, "reviewed": 0, "rewritten": 0, "batches": 0, "failed_indexes": []}
+    for start in range(0, len(rewritten_posts), batch_size):
+        batch = rewritten_posts[start : start + batch_size]
+        fallback = {"reviews": [{"index": index, "pass": True, "score": 8.0, "issues": []} for index in range(len(batch))]}
+        data = call_json(
+            "facebook_spinner",
+            FACEBOOK_REVIEW_SYSTEM_PROMPT,
+            _review_batch_prompt(brief, tone, batch),
+            fallback=fallback,
+            max_tokens=3200,
+        )
+        reviewed_batch, batch_summary = _apply_review_rewrites(
+            batch,
+            data.get("reviews"),
+            brief=brief,
+            hashtag_count=hashtag_count,
+        )
+        rewritten_posts[start : start + batch_size] = reviewed_batch
+        summary["reviewed"] += int(batch_summary["reviewed"])
+        summary["rewritten"] += int(batch_summary["rewritten"])
+        summary["batches"] += 1
+        summary["failed_indexes"].extend([start + index for index in batch_summary["failed_indexes"]])
+    return rewritten_posts, summary
 
 
 def _stable_core_index(page: dict[str, Any], core_count: int) -> int:
@@ -308,6 +472,7 @@ def run(
     for index, page in enumerate(pages):
         core = core_captions[_stable_core_index(page, len(core_captions))]
         posts.append(_personalize_caption(core, page, index, hashtag_count, brief))
+    posts, review_summary = _review_and_rewrite_posts(posts, brief=brief, tone=tone, hashtag_count=hashtag_count)
 
     max_similarity = 0.0
     comparisons = 0
@@ -326,7 +491,8 @@ def run(
         "quality": {
             "max_nearby_similarity": round(max_similarity, 3),
             "comparisons": comparisons,
-            "estimated_llm_calls": max(1, math.ceil(len(core_captions) / max(1, target_core_count))),
+            "estimated_llm_calls": max(1, math.ceil(len(core_captions) / max(1, target_core_count))) + int(review_summary.get("batches") or 0),
+            "review": review_summary,
         },
         "warnings": [],
     }

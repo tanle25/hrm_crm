@@ -21,6 +21,8 @@ Nguyên tắc:
 - Mỗi caption phải có headline/tiêu đề ngắn, thu hút khách trong 1 dòng đầu.
 - Body phải dễ đọc: chia đoạn rõ, ưu tiên bullet bằng ký tự • khi liệt kê lợi ích/thông số.
 - CTA là bắt buộc, rõ hành động: inbox, bình luận, nhắn page, đặt hàng, hỏi tư vấn; không chung chung.
+- CTA nên định dạng thành block cuối 2-3 dòng có emoji phù hợp, ví dụ: 📩 Inbox/Zalo..., 🚚 Giao hàng toàn quốc, ✅ Nhận hàng kiểm tra rồi thanh toán.
+- Không lặp CTA trong body. Nếu caption đã có CTA thì trường cta chỉ tóm lại CTA đó, không viết thêm câu khác.
 - Nếu có nhiều nhóm page, tạo angle hợp từng nhóm.
 - Không nhắc rằng đây là biến thể/spin/AI.
 - Trả về JSON hợp lệ, không thêm giải thích.
@@ -83,6 +85,73 @@ def _similarity(left: str, right: str) -> float:
     return round(len(a & b) / max(1, len(a | b)), 3)
 
 
+def _compact_for_compare(value: str) -> str:
+    return re.sub(r"[^0-9a-zA-ZÀ-ỹ]+", "", value.lower())
+
+
+def _contains_similar_text(container: str, needle: str) -> bool:
+    compact_container = _compact_for_compare(container)
+    compact_needle = _compact_for_compare(needle)
+    if not compact_container or not compact_needle:
+        return False
+    if compact_needle in compact_container:
+        return True
+    container_words = _word_set(container)
+    needle_words = _word_set(needle)
+    if len(needle_words) < 4:
+        return False
+    return len(container_words & needle_words) / max(1, len(needle_words)) >= 0.78
+
+
+def _default_cta(brief: str) -> str:
+    lower = brief.lower()
+    lines = ["📩 Inbox page để được tư vấn và nhận hình thực tế."]
+    if any(term in lower for term in ["zalo", "hotline", "số điện thoại", "083", "084", "085", "086", "087", "088", "089", "09"]):
+        lines[0] = "📩 Inbox page hoặc Zalo/Hotline trong bài để được tư vấn nhanh."
+    if any(term in lower for term in ["giao hàng", "ship", "toàn quốc", "cod", "nhận hàng", "thanh toán"]):
+        lines.append("🚚 Giao hàng toàn quốc.")
+        lines.append("✅ Nhận hàng kiểm tra rồi thanh toán.")
+    return "\n".join(lines)
+
+
+def _body_has_cta(body: str) -> bool:
+    lower = body.lower()
+    return any(
+        term in lower
+        for term in [
+            "inbox",
+            "zalo",
+            "hotline",
+            "đặt hàng",
+            "dat hang",
+            "liên hệ",
+            "lien he",
+            "nhắn",
+            "nhan",
+            "comment",
+            "bình luận",
+        ]
+    )
+
+
+def _normalize_cta(cta: str, body: str, brief: str) -> str:
+    cta = _clean_multiline(cta, 320)
+    if not cta:
+        if _body_has_cta(body):
+            return ""
+        cta = _default_cta(brief)
+    if _contains_similar_text(body, cta):
+        return ""
+    body_lines = [line.strip() for line in body.splitlines() if line.strip()]
+    cta_lines = [line.strip() for line in cta.splitlines() if line.strip()]
+    if cta_lines and body_lines:
+        last_body = body_lines[-1]
+        first_cta = cta_lines[0]
+        if _contains_similar_text(last_body, first_cta) or _contains_similar_text(first_cta, last_body):
+            cta_lines = cta_lines[1:]
+    return "\n".join(cta_lines).strip()
+
+
 def recommended_core_count(page_count: int) -> int:
     if page_count <= 5:
         return max(1, page_count)
@@ -115,13 +184,13 @@ def _fallback_core_captions(brief: str, groups: list[str], count: int, hashtag_c
                 "headline": headline,
                 "caption": caption,
                 "hashtags": [f"#{re.sub(r'\\W+', '', word).lower()}" for word in persona.split()[:hashtag_count] if word][:hashtag_count],
-                "cta": "Inbox ngay để được tư vấn kỹ hơn.",
+                "cta": _default_cta(brief),
             }
         )
     return items
 
 
-def _normalize_core_items(items: object, fallback: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+def _normalize_core_items(items: object, fallback: list[dict[str, Any]], count: int, brief: str = "") -> list[dict[str, Any]]:
     if not isinstance(items, list):
         return fallback
     normalized: list[dict[str, Any]] = []
@@ -139,7 +208,7 @@ def _normalize_core_items(items: object, fallback: list[dict[str, Any]], count: 
                 "headline": _clean_text(item.get("headline") or item.get("hook") or item.get("title"), 180),
                 "caption": caption,
                 "hashtags": [_clean_text(tag, 40) for tag in hashtags if _clean_text(tag, 40)][:8],
-                "cta": _clean_text(item.get("cta"), 240) or "Inbox ngay để được tư vấn kỹ hơn.",
+                "cta": _normalize_cta(str(item.get("cta") or ""), caption, brief),
             }
         )
         if len(normalized) >= count:
@@ -147,14 +216,14 @@ def _normalize_core_items(items: object, fallback: list[dict[str, Any]], count: 
     return normalized or fallback
 
 
-def _personalize_caption(core: dict[str, Any], page: dict[str, Any], index: int, hashtag_count: int) -> dict[str, Any]:
+def _personalize_caption(core: dict[str, Any], page: dict[str, Any], index: int, hashtag_count: int, brief: str) -> dict[str, Any]:
     page_name = _clean_text(page.get("name"), 120) or _clean_text(page.get("page_id"), 40) or "Fanpage"
     group = _clean_text(page.get("group"), 120) or "Chưa có nhóm"
     headline = _clean_text(core.get("headline"), 180)
     if not headline:
         headline = f"{_clean_text(core.get('angle'), 80).capitalize()} cho khách đang quan tâm"
     body = _clean_multiline(core.get("caption"), 3000)
-    cta = _clean_text(core.get("cta"), 240)
+    cta = _normalize_cta(str(core.get("cta") or ""), body, brief)
     caption_parts = [headline, body]
     if cta:
         caption_parts.append(cta)
@@ -218,7 +287,9 @@ def run(
         f"Page sample: {json.dumps([{k: page.get(k) for k in ['page_id', 'name', 'group', 'category']} for page in pages[:30]], ensure_ascii=False)}\n"
         "Tone/format nên luân phiên để nội dung phong phú nhưng vẫn bán hàng: tư vấn trực tiếp, checklist nhanh, kể trải nghiệm, so sánh lựa chọn, "
         "nhấn mạnh lợi ích thực tế, xử lý băn khoăn khách hàng, gợi ý đặt hàng nhẹ nhàng.\n"
-        "Không thêm câu hỏi/suffix sau CTA. CTA phải là câu cuối cùng của caption.\n"
+        "Không thêm câu hỏi/suffix sau CTA. CTA phải là block cuối cùng của caption.\n"
+        "CTA nên dùng emoji vừa phải và định dạng rõ. Nếu brief có thông tin giao hàng/COD/nhận hàng thanh toán thì đưa vào CTA; nếu brief không có thì không bịa cam kết.\n"
+        "Không lặp lại cùng một CTA trong body và trường cta.\n"
         "Yêu cầu: tạo caption lõi đủ khác nhau để map ra từng page. "
         "Mỗi caption phải có headline thu hút, body chia đoạn/bullet rõ ràng và CTA cụ thể ở cuối."
     )
@@ -229,14 +300,14 @@ def run(
         fallback={"core_captions": fallback_cores},
         max_tokens=min(5200, 900 + target_core_count * 220),
     )
-    core_captions = _normalize_core_items(data.get("core_captions"), fallback_cores, target_core_count)
+    core_captions = _normalize_core_items(data.get("core_captions"), fallback_cores, target_core_count, brief)
     for index, item in enumerate(core_captions):
         item["_core_index"] = index
 
     posts: list[dict[str, Any]] = []
     for index, page in enumerate(pages):
         core = core_captions[_stable_core_index(page, len(core_captions))]
-        posts.append(_personalize_caption(core, page, index, hashtag_count))
+        posts.append(_personalize_caption(core, page, index, hashtag_count, brief))
 
     max_similarity = 0.0
     comparisons = 0

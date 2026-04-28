@@ -57,6 +57,8 @@
         facebookMessagesSocketReconnectTimer: null,
         facebookMessagesReconnectAttempts: 0,
         facebookMessagesStreamActive: false,
+        facebookMessagesFallbackTimer: null,
+        facebookMessagesFallbackActive: false,
         facebookMessagesSyncing: false,
         facebookMessagesAutoSynced: false,
         facebookConversationDetails: {},
@@ -2881,6 +2883,79 @@
         });
     }
 
+    function patchFacebookConversationFromSummary(conversation) {
+        if (!conversation?.conversation_id) return;
+        upsertFacebookConversationState(conversation, (conversation.messages || [])[0] || {});
+        updateRealtimeFacebookConversationList(conversation.conversation_id);
+    }
+
+    async function refreshFacebookSelectedConversationIfNeeded(conversation) {
+        const conversationId = conversation?.conversation_id || "";
+        if (!conversationId || conversationId !== state.selectedFacebookConversationId) return;
+        const detail = state.facebookConversationDetails[conversationId];
+        const latestSummaryMessage = (conversation.messages || [])[0] || {};
+        const existingLatest = (detail?.messages || []).slice(-1)[0] || {};
+        if (
+            detail
+            && latestSummaryMessage.message_id
+            && existingLatest.message_id === latestSummaryMessage.message_id
+        ) {
+            return;
+        }
+        if (state.facebookConversationDetailPending[conversationId]) return;
+        state.facebookConversationDetailPending[conversationId] = true;
+        try {
+            const loadedDetail = await fetchJSON(`/facebook/conversations/${encodeURIComponent(conversationId)}?message_limit=100`);
+            state.facebookConversationDetails[conversationId] = loadedDetail;
+            const panel = document.querySelector("#fb-conversation-panel");
+            if (state.selectedFacebookConversationId === conversationId && panel) {
+                panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(loadedDetail, false)}`;
+                scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
+            }
+        } catch (error) {
+            console.warn("Facebook conversation fallback detail failed", error);
+        } finally {
+            delete state.facebookConversationDetailPending[conversationId];
+        }
+    }
+
+    async function runFacebookMessagesFallbackSync() {
+        if (!state.facebookMessagesFallbackActive || state.facebookMessagesSyncing) return;
+        state.facebookMessagesSyncing = true;
+        try {
+            await fetchJSON("/facebook/conversations/sync?limit=10", { method: "POST" });
+            const payload = await fetchJSON("/facebook/conversations?limit=25&message_limit=1");
+            const conversations = payload.conversations || [];
+            for (const conversation of conversations) {
+                const previous = state.facebookConversations.find((item) => item.conversation_id === conversation.conversation_id);
+                const previousLatest = (previous?.messages || [])[0]?.message_id || "";
+                const nextLatest = (conversation.messages || [])[0]?.message_id || "";
+                const changed = !previous || previous.updated_time !== conversation.updated_time || (nextLatest && previousLatest !== nextLatest);
+                if (!changed) continue;
+                patchFacebookConversationFromSummary(conversation);
+                await refreshFacebookSelectedConversationIfNeeded(conversation);
+            }
+        } catch (error) {
+            console.warn("Facebook messages fallback sync failed", error);
+        } finally {
+            state.facebookMessagesSyncing = false;
+        }
+    }
+
+    function startFacebookMessagesFallbackSync() {
+        state.facebookMessagesFallbackActive = true;
+        if (state.facebookMessagesFallbackTimer) return;
+        state.facebookMessagesFallbackTimer = setInterval(runFacebookMessagesFallbackSync, 12000);
+    }
+
+    function stopFacebookMessagesFallbackSync() {
+        state.facebookMessagesFallbackActive = false;
+        if (state.facebookMessagesFallbackTimer) {
+            clearInterval(state.facebookMessagesFallbackTimer);
+            state.facebookMessagesFallbackTimer = null;
+        }
+    }
+
     function bindFacebookConversationButton(button) {
         if (!button || button.dataset.bound === "1") return;
         button.dataset.bound = "1";
@@ -2940,6 +3015,7 @@
     }
 
     function closeFacebookMessagesStream() {
+        stopFacebookMessagesFallbackSync();
         if (state.facebookMessagesSocketReconnectTimer) {
             clearTimeout(state.facebookMessagesSocketReconnectTimer);
             state.facebookMessagesSocketReconnectTimer = null;
@@ -2990,6 +3066,7 @@
             const conversations = payload.conversations || [];
             state.facebookConversations = conversations;
             connectFacebookMessagesStream();
+            startFacebookMessagesFallbackSync();
             if (!state.selectedFacebookConversationId && conversations[0]) state.selectedFacebookConversationId = conversations[0].conversation_id;
             const selectedSummary = conversations.find((item) => item.conversation_id === state.selectedFacebookConversationId) || conversations[0] || null;
             const selectedDetail = selectedSummary?.conversation_id ? state.facebookConversationDetails[selectedSummary.conversation_id] : null;

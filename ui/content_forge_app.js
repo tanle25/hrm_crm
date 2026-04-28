@@ -335,33 +335,41 @@
             groupList.innerHTML = groups.length ? groups.map((group) => {
                 const name = String(group.name || "");
                 return `
-                    <label class="flex items-center gap-3 border border-hud-fb/12 bg-black/25 px-3 py-2 hover:border-hud-fb/40 transition cursor-pointer">
-                        <input type="checkbox" class="fb-create-group-checkbox" value="${escapeHtml(name)}" ${validGroups.includes(name) ? "checked" : ""}/>
-                        <div class="flex-1 min-w-0">
-                            <div class="text-white text-[11px] font-bold truncate">${escapeHtml(name)}</div>
-                            <div class="text-[10px] text-hud-muted">${formatNumber(group.page_count || 0)} page</div>
-                        </div>
-                    </label>
+                    <button type="button" class="fb-create-group-chip badge ${validGroups.includes(name) ? "green" : "cyan"} hover:brightness-125" data-group="${escapeHtml(name)}">
+                        ${escapeHtml(name)} · ${formatNumber(group.page_count || 0)}
+                    </button>
                 `;
             }).join("") : `<div class="text-[11px] text-hud-muted px-2 py-2">Chưa có nhóm page.</div>`;
             pageList.innerHTML = pages.length ? pages.map((page) => {
                 const pageId = String(page.page_id || "");
                 return `
-                    <label class="flex items-center gap-3 border border-hud-fb/12 bg-black/25 px-3 py-2 hover:border-hud-fb/40 transition cursor-pointer">
+                    <label class="fb-create-page-row flex items-center gap-3 rounded-xl border border-hud-fb/12 bg-black/25 px-3 py-2 hover:border-hud-fb/40 transition cursor-pointer" data-page-id="${escapeHtml(pageId)}" data-page-group="${escapeHtml(page.group || "")}">
                         <input type="checkbox" class="fb-create-page-checkbox" value="${escapeHtml(pageId)}" ${validPageIds.includes(pageId) ? "checked" : ""}/>
-                        <div class="w-7 h-7 rounded-full overflow-hidden bg-hud-fb/10 flex items-center justify-center flex-shrink-0">
+                        <div class="w-9 h-9 rounded-full overflow-hidden bg-hud-fb/10 flex items-center justify-center flex-shrink-0">
                             ${page.picture_url ? `<img src="${escapeHtml(page.picture_url)}" alt="" class="w-full h-full object-cover"/>` : `<i class="fa-brands fa-facebook text-hud-fb text-xs"></i>`}
                         </div>
                         <div class="flex-1 min-w-0">
-                            <div class="text-white text-[11px] font-bold truncate">${escapeHtml(page.name || pageId)}</div>
+                            <div class="text-white text-[12px] font-bold truncate">${escapeHtml(page.name || pageId)}</div>
                             <div class="text-[10px] text-hud-muted truncate">${escapeHtml(page.group || "Chưa có nhóm")}</div>
                         </div>
                     </label>
                 `;
             }).join("") : `<div class="text-[11px] text-hud-muted px-2 py-2">Chưa có fanpage nào.</div>`;
-            groupList.querySelectorAll(".fb-create-group-checkbox").forEach((checkbox) => {
-                checkbox.addEventListener("change", () => {
-                    setSelectedFacebookCreateGroups(Array.from(groupList.querySelectorAll(".fb-create-group-checkbox:checked")).map((input) => input.value));
+            groupList.querySelectorAll(".fb-create-group-chip").forEach((button) => {
+                button.addEventListener("click", () => {
+                    const group = button.dataset.group || "";
+                    const nextGroups = state.selectedFacebookCreateGroups.includes(group)
+                        ? state.selectedFacebookCreateGroups.filter((item) => item !== group)
+                        : [...state.selectedFacebookCreateGroups, group];
+                    setSelectedFacebookCreateGroups(nextGroups);
+                    button.classList.toggle("green", nextGroups.includes(group));
+                    button.classList.toggle("cyan", !nextGroups.includes(group));
+                    pageList.querySelectorAll(".fb-create-page-row").forEach((row) => {
+                        if (row.dataset.pageGroup !== group) return;
+                        const checkbox = row.querySelector(".fb-create-page-checkbox");
+                        if (checkbox) checkbox.checked = nextGroups.includes(group);
+                    });
+                    setSelectedFacebookCreatePages(Array.from(pageList.querySelectorAll(".fb-create-page-checkbox:checked")).map((input) => input.value));
                     renderFacebookCreateSummary();
                 });
             });
@@ -381,18 +389,60 @@
     function renderFacebookCreateImagePreview() {
         const preview = document.getElementById("fb-create-image-preview");
         if (!preview) return;
-        preview.innerHTML = state.facebookCreateImages.map((image, index) => `
-            <div class="relative border border-hud-fb/20 bg-black/30">
-                <img src="${escapeHtml(image.data_url)}" alt="${escapeHtml(image.name)}" class="w-full aspect-square object-cover"/>
-                <button type="button" class="fb-create-image-remove absolute top-1 right-1 bg-black/70 text-hud-red text-[10px] px-1.5 py-0.5" data-index="${index}"><i class="fa-solid fa-xmark"></i></button>
-                <div class="text-[8px] text-hud-muted truncate px-1 py-1">${escapeHtml(image.name)}</div>
+        const images = state.facebookCreateImages || [];
+        if (!images.length) {
+            preview.classList.add("hidden");
+            preview.innerHTML = "";
+            renderFacebookCreateSummary();
+            return;
+        }
+        preview.classList.remove("hidden");
+        const hero = images[0];
+        const rest = images.slice(1);
+        preview.innerHTML = `
+            <div class="flex items-center justify-between gap-3 mb-3">
+                <div>
+                    <div class="text-[11px] text-white font-bold">Ảnh đã chọn</div>
+                    <div class="text-[10px] text-hud-muted">${formatNumber(images.length)} ảnh sẽ được đưa vào bài đăng</div>
+                </div>
+                <button type="button" class="fb-create-image-clear text-[10px] text-hud-red border border-hud-red/30 px-2 py-1 hover:bg-hud-red/10">
+                    <i class="fa-solid fa-trash"></i> XÓA HẾT
+                </button>
             </div>
-        `).join("");
+            <div class="rounded-2xl overflow-hidden border border-white/10 bg-black/40">
+                <div class="${rest.length ? "grid grid-cols-2 gap-1" : ""}">
+                    <div class="relative ${rest.length ? "min-h-[260px]" : ""}">
+                        <img src="${escapeHtml(hero.data_url)}" alt="${escapeHtml(hero.name)}" class="w-full ${rest.length ? "h-full absolute inset-0" : "max-h-[420px]"} object-cover"/>
+                        <button type="button" class="fb-create-image-remove absolute top-2 right-2 w-7 h-7 rounded-full bg-black/75 text-white hover:text-hud-red" data-index="0"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    ${rest.length ? `
+                        <div class="grid ${rest.length === 1 ? "grid-cols-1" : "grid-cols-2"} gap-1">
+                            ${rest.map((image, offset) => {
+                                const index = offset + 1;
+                                return `
+                                    <div class="relative min-h-[128px]">
+                                        <img src="${escapeHtml(image.data_url)}" alt="${escapeHtml(image.name)}" class="absolute inset-0 w-full h-full object-cover"/>
+                                        <button type="button" class="fb-create-image-remove absolute top-2 right-2 w-7 h-7 rounded-full bg-black/75 text-white hover:text-hud-red" data-index="${index}"><i class="fa-solid fa-xmark"></i></button>
+                                    </div>
+                                `;
+                            }).join("")}
+                        </div>
+                    ` : ""}
+                </div>
+            </div>
+        `;
+        preview.querySelector(".fb-create-image-clear")?.addEventListener("click", () => {
+            state.facebookCreateImages = [];
+            const input = document.getElementById("fb-create-images");
+            if (input) input.value = "";
+            renderFacebookCreateImagePreview();
+        });
         preview.querySelectorAll(".fb-create-image-remove").forEach((button) => {
             button.addEventListener("click", () => {
                 state.facebookCreateImages.splice(Number(button.dataset.index || 0), 1);
+                const input = document.getElementById("fb-create-images");
+                if (input && !state.facebookCreateImages.length) input.value = "";
                 renderFacebookCreateImagePreview();
-                renderFacebookCreateSummary();
             });
         });
         renderFacebookCreateSummary();
@@ -3248,7 +3298,7 @@
         document.getElementById("fb-create-enqueue")?.addEventListener("click", () => {
             const brief = document.getElementById("fb-create-brief")?.value.trim() || "";
             const pageIds = Array.from(document.querySelectorAll(".fb-create-page-checkbox:checked")).map((input) => input.value.trim()).filter(Boolean);
-            const groups = Array.from(document.querySelectorAll(".fb-create-group-checkbox:checked")).map((input) => input.value.trim()).filter(Boolean);
+            const groups = state.selectedFacebookCreateGroups || [];
             const feedback = document.getElementById("fb-create-feedback");
             if (!brief) {
                 if (feedback) {

@@ -1247,116 +1247,115 @@
                                 <h3 class="font-display font-black text-sm text-white uppercase-widest">KHỞI TẠO JOB FACEBOOK</h3>
                             </div>
                         </div>
-                        <div class="p-8 space-y-6">
-                            <div>
-                                <label class="text-[10px] font-bold uppercase-widest mb-2 flex items-center gap-2" style="color:#4a9eff;">
-                                    <i class="fa-solid fa-lightbulb"></i>
-                                    <span>CHỦ ĐỀ / CONTENT BRIEF</span>
-                                    <span class="ml-auto text-hud-red">*</span>
-                                </label>
-                                <div class="input-wrap">
-                                    <textarea id="fb-create-brief" rows="10" placeholder="Mô tả chủ đề bài viết muốn đăng... VD: Giới thiệu sản phẩm mới X, chia sẻ case study Y..." class="hud-textarea w-full min-h-[240px] px-4 py-3 text-sm"></textarea>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label class="text-[10px] font-bold uppercase-widest mb-2 flex items-center gap-2" style="color:#4a9eff;">
-                                    <i class="fa-solid fa-users-viewfinder"></i>
-                                    <span>FANPAGE ĐÍCH</span>
-                                    <span class="ml-auto text-hud-muted text-[9px]">CHỌN NHIỀU</span>
-                                </label>
-                                <div class="grid grid-cols-2 gap-4">
+                        <div class="p-8">
+                            <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] items-start">
+                                <div class="space-y-6 min-w-0">
                                     <div>
-                                        <div class="text-[9px] text-hud-muted uppercase-wide mb-2">NHÓM PAGE</div>
-                                        <div id="fb-create-group-list" class="max-h-48 overflow-y-auto bg-black/30 p-3 space-y-2" style="border: 1px solid rgba(74, 158, 255, 0.2);">
-                                            <div class="text-[11px] text-hud-muted">Đang tải nhóm page...</div>
+                                        <label class="text-[10px] font-bold uppercase-widest mb-2 flex items-center gap-2" style="color:#4a9eff;">
+                                            <i class="fa-solid fa-lightbulb"></i>
+                                            <span>CHỦ ĐỀ / CONTENT BRIEF</span>
+                                            <span class="ml-auto text-hud-red">*</span>
+                                        </label>
+                                        <div class="input-wrap">
+                                            <textarea id="fb-create-brief" rows="10" placeholder="Mô tả chủ đề bài viết muốn đăng... VD: Giới thiệu sản phẩm mới X, chia sẻ case study Y..." class="hud-textarea w-full min-h-[260px] px-4 py-3 text-sm"></textarea>
                                         </div>
                                     </div>
+
+                                    <div class="grid grid-cols-2 gap-5">
+                                        <div>
+                                            <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-comment-dots"></i> TONE</label>
+                                            <select class="hud-select w-full px-4 py-3 text-sm">
+                                                <option>CHUYÊN NGHIỆP</option>
+                                                <option>THÂN THIỆN · GẦN GŨI</option>
+                                                <option>HÀI HƯỚC · VUI TƯƠI</option>
+                                                <option>TRANG TRỌNG</option>
+                                                <option>TRUYỀN CẢM HỨNG</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-text-width"></i> ĐỘ DÀI</label>
+                                            <select class="hud-select w-full px-4 py-3 text-sm">
+                                                <option>NGẮN (50-100 từ)</option>
+                                                <option selected>TRUNG BÌNH (150-300 từ)</option>
+                                                <option>DÀI (300-500 từ)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-2 gap-5">
+                                        <div>
+                                            <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-image"></i> ẢNH ĐÍNH KÈM</label>
+                                            <label class="block rounded-xl border border-hud-fb/25 bg-[#101923] px-4 py-3 cursor-pointer hover:bg-[#162333] hover:border-hud-fb/60 transition">
+                                                <input id="fb-create-images" type="file" accept="image/*" multiple class="hidden"/>
+                                                <div class="flex items-center gap-3 text-xs">
+                                                    <span class="w-9 h-9 rounded-full bg-[#24384f] flex items-center justify-center"><i class="fa-solid fa-image text-[#45bd62]"></i></span>
+                                                    <div class="flex-1 min-w-0">
+                                                        <div class="text-white font-bold">Ảnh/video</div>
+                                                        <div class="text-hud-muted text-[10px]">Chọn nhiều ảnh, tối đa 6 ảnh</div>
+                                                    </div>
+                                                    <i class="fa-solid fa-plus text-hud-fb"></i>
+                                                </div>
+                                            </label>
+                                        </div>
+                                        <div>
+                                            <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-hashtag"></i> HASHTAG</label>
+                                            <div class="input-wrap">
+                                                <input type="text" value="5" class="hud-input w-full px-4 py-3 text-sm" placeholder="Số hashtag"/>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div id="fb-create-image-preview" class="hidden rounded-2xl border border-hud-fb/20 bg-[#0f1720] p-3"></div>
+
                                     <div>
-                                        <div class="text-[9px] text-hud-muted uppercase-wide mb-2">PAGE CỤ THỂ</div>
-                                        <div id="fb-create-page-list" class="max-h-48 overflow-y-auto bg-black/30 p-3 space-y-2" style="border: 1px solid rgba(74, 158, 255, 0.2);">
-                                            <div class="text-[11px] text-hud-muted">Đang tải fanpage...</div>
+                                        <label class="text-[10px] font-bold uppercase-widest mb-3 block" style="color:#4a9eff;"><i class="fa-solid fa-clock"></i> LỊCH ĐĂNG</label>
+                                        <div class="grid grid-cols-3 gap-3">
+                                            <label class="bg-black/40 p-3 cursor-pointer text-center" style="border: 2px solid #4a9eff; box-shadow: 0 0 10px rgba(74, 158, 255, 0.2);">
+                                                <input type="radio" name="schedule" checked class="hud-radio mb-2"/>
+                                                <div class="font-display font-bold text-xs uppercase-wide" style="color:#4a9eff;">ĐĂNG NGAY</div>
+                                                <div class="text-[9px] text-hud-muted mt-0.5">Xử lý tức thì</div>
+                                            </label>
+                                            <label class="bg-black/40 p-3 cursor-pointer text-center hover:border-hud-fb" style="border: 1px solid rgba(74, 158, 255, 0.3);">
+                                                <input type="radio" name="schedule" class="hud-radio mb-2"/>
+                                                <div class="font-display font-bold text-xs text-white uppercase-wide">HẸN GIỜ</div>
+                                                <div class="text-[9px] text-hud-muted mt-0.5">Chọn thời điểm</div>
+                                            </label>
+                                            <label class="bg-black/40 p-3 cursor-pointer text-center hover:border-hud-fb" style="border: 1px solid rgba(74, 158, 255, 0.3);">
+                                                <input type="radio" name="schedule" class="hud-radio mb-2"/>
+                                                <div class="font-display font-bold text-xs text-white uppercase-wide">BEST TIME AI</div>
+                                                <div class="text-[9px] text-hud-muted mt-0.5">AI chọn giờ vàng</div>
+                                            </label>
                                         </div>
                                     </div>
-                                </div>
-                                <p id="fb-create-help" class="text-[10px] text-hud-muted mt-2"><i class="fa-solid fa-circle-info" style="color:#4a9eff;"></i> Chọn nhóm page hoặc page cụ thể cho job Facebook.</p>
-                            </div>
 
-                            <div class="grid grid-cols-2 gap-5">
-                                <div>
-                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-comment-dots"></i> TONE</label>
-                                    <select class="hud-select w-full px-4 py-3 text-sm">
-                                        <option>CHUYÊN NGHIỆP</option>
-                                        <option>THÂN THIỆN · GẦN GŨI</option>
-                                        <option>HÀI HƯỚC · VUI TƯƠI</option>
-                                        <option>TRANG TRỌNG</option>
-                                        <option>TRUYỀN CẢM HỨNG</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-text-width"></i> ĐỘ DÀI</label>
-                                    <select class="hud-select w-full px-4 py-3 text-sm">
-                                        <option>NGẮN (50-100 từ)</option>
-                                        <option selected>TRUNG BÌNH (150-300 từ)</option>
-                                        <option>DÀI (300-500 từ)</option>
-                                    </select>
-                                </div>
-                            </div>
+                                    <div class="divider-h"></div>
+                                    <div id="fb-create-feedback" class="hidden text-[11px] border p-3"></div>
 
-                            <div class="grid grid-cols-2 gap-5">
-                                <div>
-                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-image"></i> ẢNH ĐÍNH KÈM</label>
-                                    <label class="block border border-dashed border-hud-fb/35 bg-black/25 px-4 py-3 cursor-pointer hover:border-hud-fb/70 transition">
-                                        <input id="fb-create-images" type="file" accept="image/*" multiple class="hidden"/>
-                                        <div class="flex items-center gap-3 text-xs">
-                                            <i class="fa-solid fa-images text-hud-fb"></i>
-                                            <span class="text-white font-bold uppercase-wide">Upload nhiều ảnh</span>
-                                            <span class="text-hud-muted">tối đa 6 ảnh</span>
-                                        </div>
-                                    </label>
-                                    <div id="fb-create-image-preview" class="mt-3 grid grid-cols-3 gap-2"></div>
-                                </div>
-                                <div>
-                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-hashtag"></i> HASHTAG</label>
-                                    <div class="input-wrap">
-                                        <input type="text" value="5" class="hud-input w-full px-4 py-3 text-sm" placeholder="Số hashtag"/>
+                                    <div class="flex gap-3">
+                                        <button class="btn-ghost px-5 py-3 text-xs uppercase-wide font-bold">
+                                            <i class="fa-solid fa-eye"></i> PREVIEW
+                                        </button>
+                                        <button id="fb-create-enqueue" class="flex-1 py-3 text-sm uppercase tracking-[0.25em] font-black flex items-center justify-center gap-3" style="background: linear-gradient(135deg, #4a9eff 0%, #2d7bd4 100%); border: 2px solid #4a9eff; color: #fff; box-shadow: 0 0 20px rgba(74, 158, 255, 0.4); font-family: Orbitron;">
+                                            <i class="fa-solid fa-paper-plane"></i>
+                                            ENQUEUE FB JOB
+                                            <i class="fa-solid fa-arrow-right"></i>
+                                        </button>
                                     </div>
                                 </div>
-                            </div>
 
-                            <div>
-                                <label class="text-[10px] font-bold uppercase-widest mb-3 block" style="color:#4a9eff;"><i class="fa-solid fa-clock"></i> LỊCH ĐĂNG</label>
-                                <div class="grid grid-cols-3 gap-3">
-                                    <label class="bg-black/40 p-3 cursor-pointer text-center" style="border: 2px solid #4a9eff; box-shadow: 0 0 10px rgba(74, 158, 255, 0.2);">
-                                        <input type="radio" name="schedule" checked class="hud-radio mb-2"/>
-                                        <div class="font-display font-bold text-xs uppercase-wide" style="color:#4a9eff;">ĐĂNG NGAY</div>
-                                        <div class="text-[9px] text-hud-muted mt-0.5">Xử lý tức thì</div>
+                                <aside class="hud-card p-4 sticky top-5" style="border-color: rgba(74, 158, 255, 0.25);">
+                                    <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                                    <label class="text-[10px] font-bold uppercase-widest mb-3 flex items-center gap-2" style="color:#4a9eff;">
+                                        <i class="fa-solid fa-users-viewfinder"></i>
+                                        <span>FANPAGE ĐÍCH</span>
+                                        <span class="ml-auto text-hud-muted text-[9px]">CHỌN NHIỀU</span>
                                     </label>
-                                    <label class="bg-black/40 p-3 cursor-pointer text-center hover:border-hud-fb" style="border: 1px solid rgba(74, 158, 255, 0.3);">
-                                        <input type="radio" name="schedule" class="hud-radio mb-2"/>
-                                        <div class="font-display font-bold text-xs text-white uppercase-wide">HẸN GIỜ</div>
-                                        <div class="text-[9px] text-hud-muted mt-0.5">Chọn thời điểm</div>
-                                    </label>
-                                    <label class="bg-black/40 p-3 cursor-pointer text-center hover:border-hud-fb" style="border: 1px solid rgba(74, 158, 255, 0.3);">
-                                        <input type="radio" name="schedule" class="hud-radio mb-2"/>
-                                        <div class="font-display font-bold text-xs text-white uppercase-wide">BEST TIME AI</div>
-                                        <div class="text-[9px] text-hud-muted mt-0.5">AI chọn giờ vàng</div>
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div class="divider-h"></div>
-                            <div id="fb-create-feedback" class="hidden text-[11px] border p-3"></div>
-
-                            <div class="flex gap-3">
-                                <button class="btn-ghost px-5 py-3 text-xs uppercase-wide font-bold">
-                                    <i class="fa-solid fa-eye"></i> PREVIEW
-                                </button>
-                                <button id="fb-create-enqueue" class="flex-1 py-3 text-sm uppercase tracking-[0.25em] font-black flex items-center justify-center gap-3" style="background: linear-gradient(135deg, #4a9eff 0%, #2d7bd4 100%); border: 2px solid #4a9eff; color: #fff; box-shadow: 0 0 20px rgba(74, 158, 255, 0.4); font-family: Orbitron;">
-                                    <i class="fa-solid fa-paper-plane"></i>
-                                    ENQUEUE FB JOB
-                                    <i class="fa-solid fa-arrow-right"></i>
-                                </button>
+                                    <div id="fb-create-group-list" class="flex flex-wrap gap-2 mb-3"></div>
+                                    <div id="fb-create-page-list" class="max-h-[620px] overflow-y-auto space-y-2 pr-1">
+                                        <div class="text-[11px] text-hud-muted">Đang tải fanpage...</div>
+                                    </div>
+                                    <p id="fb-create-help" class="text-[10px] text-hud-muted mt-3"><i class="fa-solid fa-circle-info" style="color:#4a9eff;"></i> Chọn nhóm để tích nhanh các page trong nhóm.</p>
+                                </aside>
                             </div>
                         </div>
                     </div>

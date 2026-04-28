@@ -538,7 +538,9 @@
                             ${coreCaptions.map((item, index) => `
                                 <div class="border border-hud-fb/15 bg-black/25 p-3">
                                     <div class="text-[10px] text-hud-fb uppercase-wide mb-1">#${index + 1} · ${escapeHtml(item.angle || "angle")}</div>
+                                    <div class="text-[12px] text-white font-black mb-1">${escapeHtml(item.headline || "")}</div>
                                     <div class="text-[11px] text-white/85 line-clamp-3">${escapeHtml(item.caption || "")}</div>
+                                    ${item.cta ? `<div class="text-[10px] text-hud-green mt-2"><i class="fa-solid fa-bullhorn"></i> ${escapeHtml(item.cta)}</div>` : ""}
                                 </div>
                             `).join("") || `<div class="text-[11px] text-hud-muted">Chưa có caption lõi.</div>`}
                         </div>
@@ -546,22 +548,30 @@
                     <div>
                         <div class="text-[10px] text-hud-muted uppercase-wide mb-2">POST THEO PAGE</div>
                         <div class="space-y-3 max-h-[520px] overflow-y-auto pr-1">
-                            ${posts.map((post, index) => `
-                                <div class="rounded-2xl border border-hud-fb/20 bg-[#101923] p-4">
-                                    <div class="flex items-start gap-3 mb-3">
-                                        <div class="w-9 h-9 rounded-full bg-hud-fb/10 border border-hud-fb/30 flex items-center justify-center flex-shrink-0">
-                                            <i class="fa-brands fa-facebook text-hud-fb text-xs"></i>
+                            ${posts.map((post, index) => {
+                                const headline = post.headline || "";
+                                let body = post.caption || "";
+                                if (headline && body.startsWith(headline)) {
+                                    body = body.slice(headline.length).trim();
+                                }
+                                return `
+                                    <div class="rounded-2xl border border-hud-fb/20 bg-[#101923] p-4">
+                                        <div class="flex items-start gap-3 mb-3">
+                                            <div class="w-9 h-9 rounded-full bg-hud-fb/10 border border-hud-fb/30 flex items-center justify-center flex-shrink-0">
+                                                <i class="fa-brands fa-facebook text-hud-fb text-xs"></i>
+                                            </div>
+                                            <div class="flex-1 min-w-0">
+                                                <div class="text-white text-[12px] font-bold truncate">${escapeHtml(post.page_name || post.page_id || "Facebook page")}</div>
+                                                <div class="text-[10px] text-hud-muted truncate">${escapeHtml(post.group || "Chưa có nhóm")} · core #${Number(post.core_index || 0) + 1}</div>
+                                            </div>
+                                            <button type="button" class="fb-preview-copy btn-ghost px-2 py-1 text-[10px]" data-index="${index}"><i class="fa-solid fa-copy"></i></button>
                                         </div>
-                                        <div class="flex-1 min-w-0">
-                                            <div class="text-white text-[12px] font-bold truncate">${escapeHtml(post.page_name || post.page_id || "Facebook page")}</div>
-                                            <div class="text-[10px] text-hud-muted truncate">${escapeHtml(post.group || "Chưa có nhóm")} · core #${Number(post.core_index || 0) + 1}</div>
-                                        </div>
-                                        <button type="button" class="fb-preview-copy btn-ghost px-2 py-1 text-[10px]" data-index="${index}"><i class="fa-solid fa-copy"></i></button>
+                                        <div class="text-[15px] leading-snug text-white font-black mb-3">${escapeHtml(headline)}</div>
+                                        <div class="whitespace-pre-wrap text-[12px] leading-relaxed text-white/90">${escapeHtml(body)}</div>
+                                        ${(post.hashtags || []).length ? `<div class="mt-3 flex flex-wrap gap-1">${(post.hashtags || []).map((tag) => `<span class="badge cyan">${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
                                     </div>
-                                    <div class="whitespace-pre-wrap text-[12px] leading-relaxed text-white/90">${escapeHtml(post.caption || "")}</div>
-                                    ${(post.hashtags || []).length ? `<div class="mt-3 flex flex-wrap gap-1">${(post.hashtags || []).map((tag) => `<span class="badge cyan">${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
-                                </div>
-                            `).join("") || `<div class="text-[11px] text-hud-muted">Chưa có post preview.</div>`}
+                                `;
+                            }).join("") || `<div class="text-[11px] text-hud-muted">Chưa có post preview.</div>`}
                         </div>
                     </div>
                 </div>

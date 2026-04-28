@@ -18,6 +18,9 @@ Nguyên tắc:
 - Mỗi caption lõi phải khác về hook, angle, cấu trúc hoặc CTA.
 - Giữ đúng dữ kiện trong brief, không bịa giá, cam kết, chính sách, khuyến mãi hoặc số điện thoại nếu brief không có.
 - Văn phong tự nhiên, phù hợp Facebook, không giống bài SEO website.
+- Mỗi caption phải có headline/tiêu đề ngắn, thu hút khách trong 1 dòng đầu.
+- Body phải dễ đọc: chia đoạn rõ, ưu tiên bullet bằng ký tự • khi liệt kê lợi ích/thông số.
+- CTA là bắt buộc, rõ hành động: inbox, bình luận, nhắn page, đặt hàng, hỏi tư vấn; không chung chung.
 - Nếu có nhiều nhóm page, tạo angle hợp từng nhóm.
 - Không nhắc rằng đây là biến thể/spin/AI.
 - Trả về JSON hợp lệ, không thêm giải thích.
@@ -28,6 +31,7 @@ Schema:
     {
       "angle": "góc triển khai ngắn",
       "persona": "nhóm/page phù hợp",
+      "headline": "tiêu đề/hook 1 dòng",
       "caption": "caption lõi",
       "hashtags": ["tag1", "tag2"],
       "cta": "câu CTA"
@@ -53,6 +57,17 @@ ANGLE_BANK = [
 
 def _clean_text(value: object, limit: int = 5000) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text[:limit]
+
+
+def _clean_multiline(value: object, limit: int = 5000) -> str:
+    lines = []
+    for line in str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        cleaned = re.sub(r"[ \t]+", " ", line).strip()
+        if cleaned or (lines and lines[-1]):
+            lines.append(cleaned)
+    text = "\n".join(lines).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text[:limit]
 
 
@@ -91,18 +106,16 @@ def _fallback_core_captions(brief: str, groups: list[str], count: int, hashtag_c
     for index in range(max(1, count)):
         angle = ANGLE_BANK[index % len(ANGLE_BANK)]
         persona = labels[index % len(labels)]
-        caption = (
-            f"{angle.capitalize()} là góc đáng chú ý hôm nay.\n\n"
-            f"{base}\n\n"
-            "Nếu bạn đang quan tâm, hãy nhắn tin để được tư vấn kỹ hơn."
-        )
+        headline = f"{angle.capitalize()} - lựa chọn đáng cân nhắc"
+        caption = f"{base}\n\n• Dễ xem thông tin chính\n• Phù hợp khách đang cần tư vấn nhanh\n• Có thể hỏi thêm chi tiết trước khi quyết định"
         items.append(
             {
                 "angle": angle,
                 "persona": persona,
+                "headline": headline,
                 "caption": caption,
                 "hashtags": [f"#{re.sub(r'\\W+', '', word).lower()}" for word in persona.split()[:hashtag_count] if word][:hashtag_count],
-                "cta": "Nhắn tin để được tư vấn kỹ hơn.",
+                "cta": "Inbox ngay để được tư vấn kỹ hơn.",
             }
         )
     return items
@@ -115,7 +128,7 @@ def _normalize_core_items(items: object, fallback: list[dict[str, Any]], count: 
     for item in items:
         if not isinstance(item, dict):
             continue
-        caption = _clean_text(item.get("caption"), 2600)
+        caption = _clean_multiline(item.get("caption"), 2600)
         if not caption:
             continue
         hashtags = item.get("hashtags") if isinstance(item.get("hashtags"), list) else []
@@ -123,9 +136,10 @@ def _normalize_core_items(items: object, fallback: list[dict[str, Any]], count: 
             {
                 "angle": _clean_text(item.get("angle"), 120) or ANGLE_BANK[len(normalized) % len(ANGLE_BANK)],
                 "persona": _clean_text(item.get("persona"), 120) or "fanpage",
+                "headline": _clean_text(item.get("headline") or item.get("hook") or item.get("title"), 180),
                 "caption": caption,
                 "hashtags": [_clean_text(tag, 40) for tag in hashtags if _clean_text(tag, 40)][:8],
-                "cta": _clean_text(item.get("cta"), 240),
+                "cta": _clean_text(item.get("cta"), 240) or "Inbox ngay để được tư vấn kỹ hơn.",
             }
         )
         if len(normalized) >= count:
@@ -136,10 +150,15 @@ def _normalize_core_items(items: object, fallback: list[dict[str, Any]], count: 
 def _personalize_caption(core: dict[str, Any], page: dict[str, Any], index: int, hashtag_count: int) -> dict[str, Any]:
     page_name = _clean_text(page.get("name"), 120) or _clean_text(page.get("page_id"), 40) or "Fanpage"
     group = _clean_text(page.get("group"), 120) or "Chưa có nhóm"
-    caption = _clean_text(core.get("caption"), 3000)
+    headline = _clean_text(core.get("headline"), 180)
+    if not headline:
+        headline = f"{_clean_text(core.get('angle'), 80).capitalize()} cho khách đang quan tâm"
+    body = _clean_multiline(core.get("caption"), 3000)
     cta = _clean_text(core.get("cta"), 240)
-    if cta and cta.lower() not in caption.lower():
-        caption = f"{caption.rstrip()}\n\n{cta}"
+    caption_parts = [headline, body]
+    if cta:
+        caption_parts.append(cta)
+    caption = "\n\n".join(part.strip() for part in caption_parts if part.strip())
     suffix_options = [
         f"Bạn ở page {page_name} muốn xem thêm góc nào?",
         "Bạn muốn mình lên thêm bài so sánh hay checklist chi tiết?",
@@ -168,6 +187,8 @@ def _personalize_caption(core: dict[str, Any], page: dict[str, Any], index: int,
         "page_name": page_name,
         "group": group,
         "angle": _clean_text(core.get("angle"), 120),
+        "headline": headline,
+        "cta": cta,
         "caption": caption,
         "hashtags": deduped[: max(0, hashtag_count)],
         "core_index": int(core.get("_core_index", 0)),
@@ -205,7 +226,8 @@ def run(
         f"Số caption lõi cần tạo: {target_core_count}\n"
         f"Số hashtag tối đa mỗi caption: {hashtag_count}\n"
         f"Page sample: {json.dumps([{k: page.get(k) for k in ['page_id', 'name', 'group', 'category']} for page in pages[:30]], ensure_ascii=False)}\n"
-        "Yêu cầu: tạo caption lõi đủ khác nhau để map ra từng page. Mỗi caption nên có hook khác, angle khác hoặc cấu trúc khác."
+        "Yêu cầu: tạo caption lõi đủ khác nhau để map ra từng page. "
+        "Mỗi caption phải có headline thu hút, body chia đoạn/bullet rõ ràng và CTA cụ thể ở cuối."
     )
     data = call_json(
         "facebook_spinner",

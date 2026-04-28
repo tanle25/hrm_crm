@@ -53,6 +53,7 @@ class FacebookContentVariantRequest(BaseModel):
 class FacebookCoreCaption(BaseModel):
     angle: str = ""
     persona: str = ""
+    headline: str = ""
     caption: str = ""
     hashtags: list[str] = Field(default_factory=list)
     cta: str = ""
@@ -63,6 +64,8 @@ class FacebookPostVariant(BaseModel):
     page_name: str = ""
     group: str = ""
     angle: str = ""
+    headline: str = ""
+    cta: str = ""
     caption: str = ""
     hashtags: list[str] = Field(default_factory=list)
     core_index: int = 0

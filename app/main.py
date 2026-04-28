@@ -14,6 +14,7 @@ from app.api_tokens import create_api_token, delete_api_token, list_api_tokens, 
 from app.auth import authenticate_credentials, create_session_token, verify_session_token
 from app.config import get_settings
 from app.dlq import publish_anyway
+from app.facebook_content import router as facebook_content_router
 from app.facebook_pages import (
     connect_facebook_pages,
     create_facebook_page_group,
@@ -102,6 +103,7 @@ settings = get_settings()
 app = FastAPI(title=settings.app_name, version="2.0.0")
 log = get_logger("content_forge.api")
 UI_DIR = Path("ui")
+app.include_router(facebook_content_router)
 
 if UI_DIR.exists():
     app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")

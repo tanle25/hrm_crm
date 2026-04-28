@@ -23,6 +23,7 @@ AGENT_MODEL_MAP = {
     "planner": "extract_planner",
     "knowledge": "extract_planner",
     "writer": "writer",
+    "facebook_spinner": "writer",
     "humanizer": "humanizer",
     "qa": "qa",
     "seo_adjuster": "qa",

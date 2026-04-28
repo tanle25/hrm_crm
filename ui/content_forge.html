@@ -1280,7 +1280,7 @@
                                 <div class="grid grid-cols-3 gap-5">
                                     <div>
                                         <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-comment-dots"></i> TONE</label>
-                                        <select class="hud-select w-full px-4 py-3 text-sm">
+                                        <select id="fb-create-tone" class="hud-select w-full px-4 py-3 text-sm">
                                             <option>CHUYÊN NGHIỆP</option>
                                             <option>THÂN THIỆN · GẦN GŨI</option>
                                             <option>HÀI HƯỚC · VUI TƯƠI</option>
@@ -1299,7 +1299,7 @@
                                     <div>
                                         <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-hashtag"></i> HASHTAG</label>
                                         <div class="input-wrap">
-                                            <input type="text" value="5" class="hud-input w-full px-4 py-3 text-sm" placeholder="Số hashtag"/>
+                                            <input id="fb-create-hashtag-count" type="text" value="5" class="hud-input w-full px-4 py-3 text-sm" placeholder="Số hashtag"/>
                                         </div>
                                     </div>
                                 </div>
@@ -1329,7 +1329,7 @@
                                 <div id="fb-create-feedback" class="hidden text-[11px] border p-3"></div>
 
                                 <div class="flex gap-3">
-                                    <button class="btn-ghost px-5 py-3 text-xs uppercase-wide font-bold">
+                                    <button id="fb-create-preview" class="btn-ghost px-5 py-3 text-xs uppercase-wide font-bold">
                                         <i class="fa-solid fa-eye"></i> PREVIEW
                                     </button>
                                     <button id="fb-create-enqueue" class="flex-1 py-3 text-sm uppercase tracking-[0.25em] font-black flex items-center justify-center gap-3" style="background: linear-gradient(135deg, #4a9eff 0%, #2d7bd4 100%); border: 2px solid #4a9eff; color: #fff; box-shadow: 0 0 20px rgba(74, 158, 255, 0.4); font-family: Orbitron;">
@@ -1338,6 +1338,7 @@
                                         <i class="fa-solid fa-arrow-right"></i>
                                     </button>
                                 </div>
+                                <div id="fb-create-variant-preview" class="hidden"></div>
                             </div>
                         </div>
 

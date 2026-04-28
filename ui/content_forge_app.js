@@ -466,6 +466,137 @@
         renderFacebookCreateImagePreview();
     }
 
+    function facebookCreatePayload() {
+        const brief = document.getElementById("fb-create-brief")?.value.trim() || "";
+        const pageIds = Array.from(document.querySelectorAll(".fb-create-page-checkbox:checked")).map((input) => input.value.trim()).filter(Boolean);
+        const groups = state.selectedFacebookCreateGroups || [];
+        const hashtagCount = Number.parseInt(document.getElementById("fb-create-hashtag-count")?.value || "5", 10);
+        return {
+            brief,
+            page_ids: pageIds,
+            groups,
+            tone: document.getElementById("fb-create-tone")?.value || "",
+            hashtag_count: Number.isFinite(hashtagCount) ? Math.max(0, Math.min(12, hashtagCount)) : 5,
+            images: (state.facebookCreateImages || []).map((image) => ({
+                name: image.name || "",
+                type: image.type || "",
+                size: Number(image.size || 0),
+            })),
+        };
+    }
+
+    function setFacebookCreateFeedback(kind, message) {
+        const feedback = document.getElementById("fb-create-feedback");
+        if (!feedback) return;
+        const tone = {
+            error: "text-hud-red border-hud-red/30 bg-hud-red/10",
+            success: "text-hud-green border-hud-green/30 bg-hud-green/10",
+            loading: "text-hud-cyan border-hud-cyan/30 bg-hud-cyan/10",
+            warn: "text-hud-amber border-hud-amber/30 bg-hud-amber/10",
+        }[kind] || "text-hud-muted border-hud-fb/20 bg-black/20";
+        feedback.className = `text-[11px] border p-3 ${tone}`;
+        feedback.textContent = message;
+        feedback.classList.remove("hidden");
+    }
+
+    function renderFacebookContentVariantPreview(result) {
+        const container = document.getElementById("fb-create-variant-preview");
+        if (!container) return;
+        const coreCaptions = result.core_captions || [];
+        const posts = result.posts || [];
+        container.classList.remove("hidden");
+        container.innerHTML = `
+            <div class="hud-card p-4 mt-2" style="border-color: rgba(74, 158, 255, 0.25);">
+                <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                <div class="flex flex-wrap items-center gap-2 mb-4">
+                    <div class="font-display font-black text-xs text-white uppercase-widest"><i class="fa-solid fa-wand-magic-sparkles text-hud-fb"></i> PREVIEW CONTENT SPIN</div>
+                    <span class="badge cyan ml-auto">${formatNumber(result.page_count || 0)} page</span>
+                    <span class="badge green">${formatNumber(result.core_caption_count || 0)} lõi</span>
+                    <span class="badge amber">sim ${formatNumber(result.quality?.max_nearby_similarity || 0, 2)}</span>
+                </div>
+                ${(result.warnings || []).length ? `<div class="mb-4 border border-hud-amber/30 bg-hud-amber/10 text-hud-amber text-[11px] p-3">${escapeHtml((result.warnings || []).join(" | "))}</div>` : ""}
+                <div class="grid grid-cols-2 gap-4 mb-5">
+                    <div>
+                        <div class="text-[10px] text-hud-muted uppercase-wide mb-2">CAPTION LÕI</div>
+                        <div class="space-y-2 max-h-72 overflow-y-auto pr-1">
+                            ${coreCaptions.map((item, index) => `
+                                <div class="border border-hud-fb/15 bg-black/25 p-3">
+                                    <div class="text-[10px] text-hud-fb uppercase-wide mb-1">#${index + 1} · ${escapeHtml(item.angle || "angle")}</div>
+                                    <div class="text-[11px] text-white/85 line-clamp-3">${escapeHtml(item.caption || "")}</div>
+                                </div>
+                            `).join("") || `<div class="text-[11px] text-hud-muted">Chưa có caption lõi.</div>`}
+                        </div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-hud-muted uppercase-wide mb-2">POST THEO PAGE</div>
+                        <div class="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                            ${posts.map((post, index) => `
+                                <div class="rounded-2xl border border-hud-fb/20 bg-[#101923] p-4">
+                                    <div class="flex items-start gap-3 mb-3">
+                                        <div class="w-9 h-9 rounded-full bg-hud-fb/10 border border-hud-fb/30 flex items-center justify-center flex-shrink-0">
+                                            <i class="fa-brands fa-facebook text-hud-fb text-xs"></i>
+                                        </div>
+                                        <div class="flex-1 min-w-0">
+                                            <div class="text-white text-[12px] font-bold truncate">${escapeHtml(post.page_name || post.page_id || "Facebook page")}</div>
+                                            <div class="text-[10px] text-hud-muted truncate">${escapeHtml(post.group || "Chưa có nhóm")} · core #${Number(post.core_index || 0) + 1}</div>
+                                        </div>
+                                        <button type="button" class="fb-preview-copy btn-ghost px-2 py-1 text-[10px]" data-index="${index}"><i class="fa-solid fa-copy"></i></button>
+                                    </div>
+                                    <div class="whitespace-pre-wrap text-[12px] leading-relaxed text-white/90">${escapeHtml(post.caption || "")}</div>
+                                    ${(post.hashtags || []).length ? `<div class="mt-3 flex flex-wrap gap-1">${(post.hashtags || []).map((tag) => `<span class="badge cyan">${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
+                                </div>
+                            `).join("") || `<div class="text-[11px] text-hud-muted">Chưa có post preview.</div>`}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.querySelectorAll(".fb-preview-copy").forEach((button) => {
+            button.addEventListener("click", async () => {
+                const post = posts[Number(button.dataset.index || 0)];
+                const text = [post?.caption || "", ...(post?.hashtags || [])].filter(Boolean).join("\n\n");
+                await copyTextToClipboard(text);
+                button.innerHTML = `<i class="fa-solid fa-check"></i>`;
+                setTimeout(() => {
+                    button.innerHTML = `<i class="fa-solid fa-copy"></i>`;
+                }, 1200);
+            });
+        });
+    }
+
+    async function previewFacebookCreateVariants() {
+        const payload = facebookCreatePayload();
+        if (!payload.brief) {
+            setFacebookCreateFeedback("error", "Cần nhập content brief trước khi preview.");
+            return;
+        }
+        if (!payload.page_ids.length && !payload.groups.length) {
+            setFacebookCreateFeedback("error", "Cần chọn ít nhất một page hoặc nhóm page để preview.");
+            return;
+        }
+        const button = document.getElementById("fb-create-preview");
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> PREVIEWING`;
+        }
+        setFacebookCreateFeedback("loading", "Đang dùng LLM writer để sinh caption lõi và preview theo từng page...");
+        try {
+            const result = await fetchJSON("/facebook/content/preview-variants", {
+                method: "POST",
+                body: JSON.stringify(payload),
+            });
+            renderFacebookContentVariantPreview(result);
+            setFacebookCreateFeedback("success", `Đã tạo preview: ${formatNumber(result.core_caption_count || 0)} caption lõi cho ${formatNumber(result.page_count || 0)} page.`);
+        } catch (error) {
+            setFacebookCreateFeedback("error", `Preview failed: ${error.message}`);
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = `<i class="fa-solid fa-eye"></i> PREVIEW`;
+            }
+        }
+    }
+
     function updateSiteSummary(summary, selectedIds = [], sites = []) {
         if (!summary) return;
         const selected = selectedIds || [];
@@ -3287,34 +3418,21 @@
     function bindFacebookCreatePage() {
         document.getElementById("fb-create-images")?.addEventListener("change", (event) => {
             readFacebookCreateImages(event.target.files).catch((error) => {
-                const feedback = document.getElementById("fb-create-feedback");
-                if (feedback) {
-                    feedback.className = "text-[11px] border p-3 mb-4 text-hud-red border-hud-red/30 bg-hud-red/10";
-                    feedback.textContent = `Không đọc được ảnh: ${error.message}`;
-                    feedback.classList.remove("hidden");
-                }
+                setFacebookCreateFeedback("error", `Không đọc được ảnh: ${error.message}`);
             });
         });
+        document.getElementById("fb-create-preview")?.addEventListener("click", () => {
+            previewFacebookCreateVariants();
+        });
         document.getElementById("fb-create-enqueue")?.addEventListener("click", () => {
-            const brief = document.getElementById("fb-create-brief")?.value.trim() || "";
-            const pageIds = Array.from(document.querySelectorAll(".fb-create-page-checkbox:checked")).map((input) => input.value.trim()).filter(Boolean);
-            const groups = state.selectedFacebookCreateGroups || [];
-            const feedback = document.getElementById("fb-create-feedback");
-            if (!brief) {
-                if (feedback) {
-                    feedback.className = "text-[11px] border p-3 mb-4 text-hud-red border-hud-red/30 bg-hud-red/10";
-                    feedback.textContent = "Cần nhập content brief cho job Facebook.";
-                    feedback.classList.remove("hidden");
-                }
+            const payload = facebookCreatePayload();
+            if (!payload.brief) {
+                setFacebookCreateFeedback("error", "Cần nhập content brief cho job Facebook.");
                 return;
             }
-            setSelectedFacebookCreatePages(pageIds);
-            setSelectedFacebookCreateGroups(groups);
-            if (feedback) {
-                feedback.className = "text-[11px] border p-3 mb-4 text-hud-amber border-hud-amber/30 bg-hud-amber/10";
-                feedback.textContent = `Đã chuẩn bị payload Facebook: ${groups.length} nhóm, ${pageIds.length} page, ${state.facebookCreateImages.length} ảnh. Backend queue Facebook riêng sẽ được nối ở bước tiếp theo.`;
-                feedback.classList.remove("hidden");
-            }
+            setSelectedFacebookCreatePages(payload.page_ids);
+            setSelectedFacebookCreateGroups(payload.groups);
+            setFacebookCreateFeedback("warn", `Đã chuẩn bị payload Facebook: ${payload.groups.length} nhóm, ${payload.page_ids.length} page, ${state.facebookCreateImages.length} ảnh. Backend queue Facebook riêng sẽ được nối ở bước tiếp theo.`);
         });
     }
 

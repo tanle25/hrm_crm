@@ -1248,7 +1248,7 @@
                             </div>
                         </div>
                         <div class="p-8">
-                            <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] items-start">
+                            <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_480px] items-start">
                                 <div class="space-y-6 min-w-0">
                                     <div>
                                         <label class="text-[10px] font-bold uppercase-widest mb-2 flex items-center gap-2" style="color:#4a9eff;">
@@ -1261,7 +1261,24 @@
                                         </div>
                                     </div>
 
-                                    <div class="grid grid-cols-2 gap-5">
+                                    <div>
+                                        <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-image"></i> ẢNH ĐÍNH KÈM</label>
+                                        <label class="block rounded-2xl border border-hud-fb/25 bg-[#101923] px-4 py-4 cursor-pointer hover:bg-[#162333] hover:border-hud-fb/60 transition">
+                                            <input id="fb-create-images" type="file" accept="image/*" multiple class="hidden"/>
+                                            <div class="flex items-center gap-3 text-xs">
+                                                <span class="w-10 h-10 rounded-full bg-[#24384f] flex items-center justify-center"><i class="fa-solid fa-image text-[#45bd62]"></i></span>
+                                                <div class="flex-1 min-w-0">
+                                                    <div class="text-white font-bold">Ảnh/video</div>
+                                                    <div class="text-hud-muted text-[10px]">Chọn nhiều ảnh, tối đa 6 ảnh. Ảnh sẽ hiển thị như composer Facebook.</div>
+                                                </div>
+                                                <i class="fa-solid fa-plus text-hud-fb"></i>
+                                            </div>
+                                        </label>
+                                    </div>
+
+                                    <div id="fb-create-image-preview" class="hidden rounded-2xl border border-hud-fb/20 bg-[#0f1720] p-3"></div>
+
+                                    <div class="grid grid-cols-3 gap-5">
                                         <div>
                                             <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-comment-dots"></i> TONE</label>
                                             <select class="hud-select w-full px-4 py-3 text-sm">
@@ -1280,23 +1297,6 @@
                                                 <option>DÀI (300-500 từ)</option>
                                             </select>
                                         </div>
-                                    </div>
-
-                                    <div class="grid grid-cols-2 gap-5">
-                                        <div>
-                                            <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-image"></i> ẢNH ĐÍNH KÈM</label>
-                                            <label class="block rounded-xl border border-hud-fb/25 bg-[#101923] px-4 py-3 cursor-pointer hover:bg-[#162333] hover:border-hud-fb/60 transition">
-                                                <input id="fb-create-images" type="file" accept="image/*" multiple class="hidden"/>
-                                                <div class="flex items-center gap-3 text-xs">
-                                                    <span class="w-9 h-9 rounded-full bg-[#24384f] flex items-center justify-center"><i class="fa-solid fa-image text-[#45bd62]"></i></span>
-                                                    <div class="flex-1 min-w-0">
-                                                        <div class="text-white font-bold">Ảnh/video</div>
-                                                        <div class="text-hud-muted text-[10px]">Chọn nhiều ảnh, tối đa 6 ảnh</div>
-                                                    </div>
-                                                    <i class="fa-solid fa-plus text-hud-fb"></i>
-                                                </div>
-                                            </label>
-                                        </div>
                                         <div>
                                             <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-hashtag"></i> HASHTAG</label>
                                             <div class="input-wrap">
@@ -1304,8 +1304,6 @@
                                             </div>
                                         </div>
                                     </div>
-
-                                    <div id="fb-create-image-preview" class="hidden rounded-2xl border border-hud-fb/20 bg-[#0f1720] p-3"></div>
 
                                     <div>
                                         <label class="text-[10px] font-bold uppercase-widest mb-3 block" style="color:#4a9eff;"><i class="fa-solid fa-clock"></i> LỊCH ĐĂNG</label>

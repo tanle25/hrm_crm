@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.job_store import publish_realtime_event
 from app.postgres import get_connection as _pg_connection, postgres_available, serialize_json
 
 
@@ -1528,6 +1529,18 @@ def _refresh_conversation_cache(
     return payload
 
 
+def _publish_facebook_message_event(conversation: dict[str, Any], message: dict[str, Any], event_type: str = "facebook.message.upserted") -> None:
+    publish_realtime_event(
+        "facebook:messages",
+        {
+            "type": event_type,
+            "conversation_id": conversation.get("conversation_id") or message.get("conversation_id") or "",
+            "conversation": conversation,
+            "message": message,
+        },
+    )
+
+
 def _conversation_with_cached_messages(conversation: dict[str, Any], message_limit: int) -> dict[str, Any]:
     conversation_id = str(conversation.get("conversation_id") or "")
     message_limit = max(0, min(message_limit, 200))
@@ -1761,6 +1774,7 @@ def send_facebook_message(conversation_id: str, message: str) -> dict[str, Any]:
     )
     conversation["status"] = "open"
     _upsert_facebook_conversation(conversation)
+    _publish_facebook_message_event(conversation, sent_message, "facebook.message.sent")
     return {"sent": True, "conversation_id": conversation_id, "message_id": sent_message["message_id"]}
 
 
@@ -1835,7 +1849,7 @@ def process_facebook_webhook(payload: dict[str, Any]) -> dict[str, Any]:
                 "raw": message,
             }
             _upsert_facebook_message(normalized)
-            _refresh_conversation_cache(
+            conversation = _refresh_conversation_cache(
                 conversation_id,
                 page_id,
                 customer_id,
@@ -1843,6 +1857,7 @@ def process_facebook_webhook(payload: dict[str, Any]) -> dict[str, Any]:
                 str(page.get("name") or existing_conversation.get("page_name") or ""),
                 str(page.get("picture_url") or existing_conversation.get("page_picture_url") or ""),
             )
+            _publish_facebook_message_event(conversation, normalized)
             processed += 1
     return {"processed": processed}
 

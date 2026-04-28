@@ -52,6 +52,11 @@
         facebookPageGroupFilter: "",
         facebookPageGroups: [],
         selectedFacebookConversationId: "",
+        facebookConversations: [],
+        facebookMessagesSocket: null,
+        facebookMessagesSocketReconnectTimer: null,
+        facebookMessagesReconnectAttempts: 0,
+        facebookMessagesStreamActive: false,
         facebookMessagesSyncing: false,
         facebookMessagesAutoSynced: false,
         facebookConversationDetails: {},
@@ -2773,17 +2778,7 @@
             </div>
             <div id="fb-message-thread" class="flex-1 min-h-0 overflow-y-auto p-5 space-y-3">
                 ${detailLoading ? `<div class="text-[10px] text-hud-fb uppercase-wide mb-3"><i class="fa-solid fa-spinner fa-spin"></i> Đang tải thêm tin nhắn trong hội thoại...</div>` : ""}
-                ${messages.map((message) => `
-                    <div class="flex gap-2 max-w-[80%] ${message.direction === "outbound" ? "ml-auto flex-row-reverse" : ""}">
-                        <div class="w-7 h-7 rounded-full ${message.direction === "outbound" ? "bg-hud-fb/30 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0 mt-0.5">
-                            <i class="fa-solid ${message.direction === "outbound" ? "fa-robot text-hud-fb" : "fa-user text-hud-muted"} text-[9px]"></i>
-                        </div>
-                        <div>
-                            ${renderReplyMessage(message)}
-                            <div class="text-[9px] text-hud-muted mt-1 px-1 ${message.direction === "outbound" ? "text-right" : ""}">${escapeHtml(formatDate(message.created_time))} · ${escapeHtml(message.from_name || "")}</div>
-                        </div>
-                    </div>
-                `).join("") || `<div class="text-center text-hud-muted text-sm py-10">Hội thoại chưa có tin nhắn text.</div>`}
+                ${messages.map((message) => renderFacebookMessageRow(message)).join("") || `<div class="fb-message-empty text-center text-hud-muted text-sm py-10">Hội thoại chưa có tin nhắn text.</div>`}
             </div>
             <div class="border-t border-hud-fb/20 p-3 space-y-2">
                 <div id="fb-message-feedback" class="hidden text-[11px] border p-2"></div>
@@ -2801,6 +2796,122 @@
         `;
     }
 
+    function renderFacebookMessageRow(message) {
+        return `
+            <div class="fb-message-row flex gap-2 max-w-[80%] ${message.direction === "outbound" ? "ml-auto flex-row-reverse" : ""}" data-message-id="${escapeHtml(message.message_id || "")}">
+                <div class="w-7 h-7 rounded-full ${message.direction === "outbound" ? "bg-hud-fb/30 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <i class="fa-solid ${message.direction === "outbound" ? "fa-robot text-hud-fb" : "fa-user text-hud-muted"} text-[9px]"></i>
+                </div>
+                <div>
+                    ${renderReplyMessage(message)}
+                    <div class="text-[9px] text-hud-muted mt-1 px-1 ${message.direction === "outbound" ? "text-right" : ""}">${escapeHtml(formatDate(message.created_time))} · ${escapeHtml(message.from_name || "")}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    function upsertFacebookConversationState(conversation, message) {
+        const conversationId = conversation?.conversation_id || message?.conversation_id || "";
+        if (!conversationId) return;
+        const existing = state.facebookConversations.find((item) => item.conversation_id === conversationId) || {};
+        const next = {
+            ...existing,
+            ...conversation,
+            conversation_id: conversationId,
+            messages: conversation?.messages?.length ? conversation.messages : [message].filter(Boolean),
+        };
+        if (message?.message_id) {
+            next.snippet = message.message || message.fallback_label || next.snippet || "";
+            next.updated_time = message.created_time || next.updated_time || "";
+            next.message_count = Math.max(Number(next.message_count || 0), Number(existing.message_count || 0) + 1);
+        }
+        state.facebookConversations = [
+            next,
+            ...state.facebookConversations.filter((item) => item.conversation_id !== conversationId),
+        ].sort((a, b) => String(b.updated_time || "").localeCompare(String(a.updated_time || "")));
+    }
+
+    function appendRealtimeFacebookMessage(message) {
+        if (!message?.message_id || message.conversation_id !== state.selectedFacebookConversationId) return;
+        const thread = document.getElementById("fb-message-thread");
+        if (!thread) return;
+        const selector = `[data-message-id="${CSS.escape(message.message_id)}"]`;
+        if (thread.querySelector(selector)) return;
+        thread.querySelector(".fb-message-empty")?.remove();
+        thread.insertAdjacentHTML("beforeend", renderFacebookMessageRow(message));
+        scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
+    }
+
+    function updateRealtimeFacebookConversationList(conversationId) {
+        const conversation = state.facebookConversations.find((item) => item.conversation_id === conversationId);
+        const button = document.querySelector(`.fb-conversation-item[data-conversation-id="${CSS.escape(conversationId)}"]`);
+        if (!conversation || !button) return;
+        const snippet = button.querySelector(".fb-conversation-snippet");
+        const meta = button.querySelector(".fb-conversation-meta");
+        if (snippet) snippet.textContent = conversation.snippet || "Không có nội dung hiển thị";
+        if (meta) meta.textContent = `${conversation.page_name || "Page"} · ${formatNumber(conversation.message_count || 0)} msgs`;
+    }
+
+    function applyFacebookMessageRealtime(payload) {
+        const conversation = payload?.conversation || {};
+        const message = payload?.message || {};
+        const conversationId = payload?.conversation_id || conversation.conversation_id || message.conversation_id || "";
+        if (!conversationId) return;
+        const normalizedMessage = { ...message, conversation_id: conversationId };
+        upsertFacebookConversationState({ ...conversation, conversation_id: conversationId }, normalizedMessage);
+        const detail = state.facebookConversationDetails[conversationId];
+        if (detail) {
+            const messages = detail.messages || [];
+            if (normalizedMessage.message_id && !messages.some((item) => item.message_id === normalizedMessage.message_id)) {
+                detail.messages = [...messages, normalizedMessage];
+            }
+            detail.snippet = normalizedMessage.message || normalizedMessage.fallback_label || detail.snippet || "";
+            detail.updated_time = normalizedMessage.created_time || detail.updated_time || "";
+        }
+        appendRealtimeFacebookMessage(normalizedMessage);
+        updateRealtimeFacebookConversationList(conversationId);
+    }
+
+    function closeFacebookMessagesStream() {
+        if (state.facebookMessagesSocketReconnectTimer) {
+            clearTimeout(state.facebookMessagesSocketReconnectTimer);
+            state.facebookMessagesSocketReconnectTimer = null;
+        }
+        state.facebookMessagesStreamActive = false;
+        if (state.facebookMessagesSocket) {
+            state.facebookMessagesSocket.onclose = null;
+            state.facebookMessagesSocket.close();
+            state.facebookMessagesSocket = null;
+        }
+    }
+
+    function connectFacebookMessagesStream() {
+        if (state.facebookMessagesSocket && state.facebookMessagesSocket.readyState <= 1) return;
+        state.facebookMessagesStreamActive = true;
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        state.facebookMessagesSocket = new WebSocket(`${protocol}//${window.location.host}${API_BASE}/realtime/ws`);
+        state.facebookMessagesSocket.onopen = () => {
+            state.facebookMessagesReconnectAttempts = 0;
+            state.facebookMessagesSocket?.send(JSON.stringify({ type: "subscribe", channels: ["facebook:messages"] }));
+        };
+        state.facebookMessagesSocket.onmessage = (event) => {
+            let data = {};
+            try {
+                data = JSON.parse(event.data);
+            } catch {
+                return;
+            }
+            if (data.channel === "facebook:messages") applyFacebookMessageRealtime(data.payload || {});
+        };
+        state.facebookMessagesSocket.onclose = () => {
+            state.facebookMessagesSocket = null;
+            if (!state.facebookMessagesStreamActive) return;
+            const delay = Math.min(1000 * (state.facebookMessagesReconnectAttempts + 1), 8000);
+            state.facebookMessagesReconnectAttempts += 1;
+            state.facebookMessagesSocketReconnectTimer = setTimeout(connectFacebookMessagesStream, delay);
+        };
+    }
+
     async function renderFacebookMessagesPage() {
         const section = document.getElementById("page-fb-messages");
         if (!section) return;
@@ -2810,6 +2921,8 @@
         try {
             const payload = await fetchJSON("/facebook/conversations?limit=25&message_limit=1");
             const conversations = payload.conversations || [];
+            state.facebookConversations = conversations;
+            connectFacebookMessagesStream();
             if (!state.selectedFacebookConversationId && conversations[0]) state.selectedFacebookConversationId = conversations[0].conversation_id;
             const selectedSummary = conversations.find((item) => item.conversation_id === state.selectedFacebookConversationId) || conversations[0] || null;
             const selectedDetail = selectedSummary?.conversation_id ? state.facebookConversationDetails[selectedSummary.conversation_id] : null;
@@ -2846,10 +2959,10 @@
                                                         <span class="text-xs font-bold text-white truncate">${escapeHtml(conversation.customer_name || "Facebook User")}</span>
                                                         <span class="text-[9px] text-hud-muted ml-auto">${escapeHtml(formatDate(conversation.updated_time))}</span>
                                                     </div>
-                                                    <div class="text-[10px] text-white/70 truncate">${escapeHtml(conversation.snippet || "Không có nội dung hiển thị")}</div>
+                                                    <div class="fb-conversation-snippet text-[10px] text-white/70 truncate">${escapeHtml(conversation.snippet || "Không có nội dung hiển thị")}</div>
                                                     <div class="flex items-center gap-1 mt-1.5">
                                                         <span class="badge ${hasUnread ? "amber" : "cyan"}" style="font-size:8px;">${hasUnread ? `${formatNumber(conversation.unread_count)} UNREAD` : "OPEN"}</span>
-                                                        <span class="text-[8px] text-hud-muted uppercase-wide ml-1">${escapeHtml(conversation.page_name || "Page")} · ${formatNumber(conversation.message_count || 0)} msgs</span>
+                                                        <span class="fb-conversation-meta text-[8px] text-hud-muted uppercase-wide ml-1">${escapeHtml(conversation.page_name || "Page")} · ${formatNumber(conversation.message_count || 0)} msgs</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -2948,9 +3061,11 @@
                         method: "POST",
                         body: JSON.stringify({ conversation_id: selectedConversationId, message }),
                     });
-                    delete state.facebookConversationDetails[selectedConversationId];
                     if (input) input.value = "";
-                    await renderFacebookMessagesPage();
+                    if (!state.facebookMessagesStreamActive) {
+                        delete state.facebookConversationDetails[selectedConversationId];
+                        await renderFacebookMessagesPage();
+                    }
                 } catch (error) {
                     if (feedback) {
                         feedback.className = "text-[11px] border p-2 text-hud-red border-hud-red/30 bg-hud-red/10";
@@ -3471,6 +3586,7 @@
     async function onPageActivated(pageKey) {
         if (pageKey !== "jobs") closeJobsStream();
         if (pageKey !== "detail") closeDetailStream();
+        if (pageKey !== "fb-messages") closeFacebookMessagesStream();
         if (pageKey === "submit") {
             await renderSubmitSiteOptions();
             await renderRecentSubmissions();

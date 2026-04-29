@@ -2763,6 +2763,68 @@
         });
     }
 
+    const FACEBOOK_MESSAGE_SLASH_COMMANDS = [
+        { command: "/gia", label: "Hỏi nhu cầu / báo giá", text: "Anh/chị muốn em gửi báo giá mẫu nào ạ?" },
+        { command: "/ship", label: "Giao hàng", text: "Bên em có giao hàng toàn quốc, anh/chị nhận hàng kiểm tra rồi thanh toán ạ." },
+        { command: "/zalo", label: "Xin Zalo/SĐT", text: "Anh/chị cho em xin số Zalo để em gửi hình và tư vấn nhanh hơn nhé." },
+        { command: "/camon", label: "Cảm ơn", text: "Em cảm ơn anh/chị đã quan tâm. Anh/chị cần thêm hình/video mẫu nào em gửi ngay ạ." },
+        { command: "/chot", label: "Chốt đơn", text: "Nếu anh/chị chốt mẫu này, anh/chị gửi giúp em tên, số điện thoại và địa chỉ nhận hàng nhé." },
+    ];
+
+    function facebookSlashQuery(value) {
+        const text = String(value || "");
+        const match = text.match(/(?:^|\s)\/([\p{L}\p{N}_-]*)$/u);
+        if (match) return match[1].toLowerCase();
+        const normalized = text.trim().toLowerCase();
+        if (normalized.length >= 2) return normalized;
+        return "";
+    }
+
+    function facebookSlashMatches(value) {
+        const query = facebookSlashQuery(value);
+        if (!query && !String(value || "").trim().endsWith("/")) return [];
+        return FACEBOOK_MESSAGE_SLASH_COMMANDS.filter((item) => {
+            const haystack = `${item.command} ${item.label} ${item.text}`.toLowerCase();
+            return !query || haystack.includes(query);
+        }).slice(0, 5);
+    }
+
+    function renderFacebookSlashMenu(inputValue = "") {
+        const matches = facebookSlashMatches(inputValue);
+        return `<div id="fb-message-slash-menu" class="${matches.length ? "" : "hidden"} border border-hud-cyan/25 bg-black/70 p-2 text-[11px]">
+            <div class="text-[9px] uppercase-widest font-bold text-hud-cyan mb-2"><i class="fa-solid fa-terminal"></i> Slash menu</div>
+            <div class="space-y-1">
+                ${matches.map((item) => `
+                    <button class="fb-message-slash-item w-full text-left px-3 py-2 border border-hud-cyan/10 hover:border-hud-fb/50 hover:bg-hud-fb/10" data-command="${escapeHtml(item.command)}">
+                        <span class="font-mono text-hud-fb font-bold">${escapeHtml(item.command)}</span>
+                        <span class="text-white font-bold ml-2">${escapeHtml(item.label)}</span>
+                        <span class="block text-hud-muted mt-0.5 truncate">${escapeHtml(item.text)}</span>
+                    </button>
+                `).join("")}
+            </div>
+        </div>`;
+    }
+
+    function updateFacebookSlashMenu(section) {
+        const input = section?.querySelector("#fb-message-input");
+        const menu = section?.querySelector("#fb-message-slash-menu");
+        if (!input || !menu) return;
+        const html = renderFacebookSlashMenu(input.value);
+        const template = document.createElement("template");
+        template.innerHTML = html.trim();
+        menu.replaceWith(template.content.firstElementChild);
+    }
+
+    function applyFacebookSlashCommand(section, command) {
+        const item = FACEBOOK_MESSAGE_SLASH_COMMANDS.find((entry) => entry.command === command);
+        const input = section?.querySelector("#fb-message-input");
+        if (!item || !input) return;
+        input.value = String(input.value || "").replace(/(?:^|\s)\/[\p{L}\p{N}_-]*$/u, "");
+        input.value = `${input.value.trim() ? `${input.value.trim()} ` : ""}${item.text}`;
+        input.focus();
+        updateFacebookSlashMenu(section);
+    }
+
     function renderFacebookConversationPanel(selected, detailLoading = false) {
         if (!selected) {
             return `<div class="p-10 text-center text-hud-muted">Chọn một hội thoại để xem tin nhắn.</div>`;
@@ -2790,10 +2852,7 @@
             </div>
             <div class="border-t border-hud-fb/20 p-3 space-y-2">
                 <div id="fb-message-feedback" class="hidden text-[11px] border p-2"></div>
-                <div class="bg-black/50 border-l-2 border-hud-cyan px-3 py-2 text-[11px]">
-                    <div class="text-[9px] uppercase-widest font-bold mb-1 text-hud-cyan"><i class="fa-solid fa-robot"></i> AI SUGGEST</div>
-                    <div class="text-white/90">Chọn một hội thoại để hệ thống gợi ý phản hồi theo ngữ cảnh. Bạn vẫn có thể chỉnh lại trước khi gửi.</div>
-                </div>
+                ${renderFacebookSlashMenu("")}
                 <div id="fb-message-media-preview" class="${draftMedia.length ? "" : "hidden"} border border-hud-fb/30 bg-hud-fb/10 px-3 py-2 text-[11px] text-white/90 space-y-2">
                     ${draftMedia.map((item) => `
                         <div class="flex items-center gap-3" data-media-id="${escapeHtml(item.media_id || "")}">
@@ -3456,6 +3515,10 @@
                     if (event.target.closest("#fb-message-send")) {
                         sendSelectedMessage();
                     }
+                    const slashItem = event.target.closest(".fb-message-slash-item");
+                    if (slashItem) {
+                        applyFacebookSlashCommand(section, slashItem.dataset.command || "");
+                    }
                     if (event.target.closest("#fb-message-media-button")) {
                         section.querySelector("#fb-message-media-input")?.click();
                     }
@@ -3515,6 +3578,11 @@
                     if (event.target?.id === "fb-message-input" && event.key === "Enter" && !event.shiftKey) {
                         event.preventDefault();
                         sendSelectedMessage();
+                    }
+                });
+                section.addEventListener("input", (event) => {
+                    if (event.target?.id === "fb-message-input") {
+                        updateFacebookSlashMenu(section);
                     }
                 });
             }

@@ -2841,14 +2841,14 @@
         <div class="space-y-1">
             ${matches.map((item) => `
                 <div class="relative group">
-                    <button class="fb-message-slash-item w-full text-left px-3 py-2 pr-14 border border-hud-cyan/10 hover:border-hud-fb/50 hover:bg-hud-fb/10" data-command="${escapeHtml(item.command)}">
+                    <button class="fb-message-slash-item w-full text-left px-3 py-2 pr-16 border border-hud-cyan/10 hover:border-hud-fb/50 hover:bg-hud-fb/10" data-command="${escapeHtml(item.command)}">
                         <span class="font-mono text-hud-fb font-bold">${escapeHtml(item.command)}</span>
                         <span class="text-white font-bold ml-2">${escapeHtml(item.label)}</span>
                         <span class="block text-hud-muted mt-0.5 truncate">${escapeHtml(item.text)}</span>
                     </button>
-                    <div class="absolute top-1.5 right-1.5 flex gap-1 opacity-70 group-hover:opacity-100">
-                        <button class="fb-slash-edit h-6 w-6 border border-hud-cyan/15 bg-black/60 text-[9px] text-hud-muted hover:text-hud-fb" data-command="${escapeHtml(item.command)}" title="Sửa"><i class="fa-solid fa-pen"></i></button>
-                        <button class="fb-slash-delete h-6 w-6 border border-hud-red/15 bg-black/60 text-[9px] text-hud-muted hover:text-hud-red" data-command="${escapeHtml(item.command)}" title="Xóa"><i class="fa-solid fa-trash"></i></button>
+                    <div class="absolute inset-y-0 right-2 flex items-center gap-1 opacity-90 group-hover:opacity-100">
+                        <button class="fb-slash-edit h-7 w-7 border border-hud-fb/35 bg-hud-fb/10 text-[10px] text-hud-fb hover:bg-hud-fb/20 hover:border-hud-fb" data-command="${escapeHtml(item.command)}" title="Sửa"><i class="fa-solid fa-pen"></i></button>
+                        <button class="fb-slash-delete h-7 w-7 border border-hud-red/35 bg-hud-red/10 text-[10px] text-hud-red hover:bg-hud-red/20 hover:border-hud-red" data-command="${escapeHtml(item.command)}" title="Xóa"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
             `).join("") || `<div class="px-3 py-2 border border-hud-cyan/10 text-hud-muted">Chưa có mẫu phù hợp. Bấm Quản lý để thêm mẫu mới.</div>`}
@@ -2878,33 +2878,48 @@
     function renderFacebookSlashManagerDialog() {
         const commands = facebookSlashCommands();
         const editing = commands.find((item) => item.command === state.facebookSlashEditingCommand) || {};
-        return `<div id="fb-slash-dialog" class="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div class="hud-card w-full max-w-3xl p-5 relative" style="border-color: rgba(0, 240, 255, 0.35);">
+        return `<div id="fb-slash-dialog" class="fixed inset-0 z-[80] bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
+            <div class="hud-card w-full max-w-4xl p-0 relative overflow-hidden" style="border-color: rgba(0, 240, 255, 0.35); box-shadow: 0 0 40px rgba(0, 240, 255, 0.12);">
                 <span class="c-tl"></span><span class="c-br"></span>
-                <div class="flex items-center gap-3 mb-4">
-                    <i class="fa-solid fa-terminal text-hud-cyan"></i>
+                <div class="header-strip px-5 py-4 flex items-center gap-3" style="background: linear-gradient(90deg, rgba(0, 240, 255, 0.16) 0%, rgba(74, 158, 255, 0.04) 55%, rgba(0, 240, 255, 0.1) 100%);">
+                    <div class="h-10 w-10 border border-hud-cyan/40 bg-hud-cyan/10 flex items-center justify-center text-hud-cyan">
+                        <i class="fa-solid fa-terminal"></i>
+                    </div>
                     <div>
-                        <div class="font-display text-white text-sm font-black uppercase-widest">Quản lý slash menu</div>
+                        <div class="font-display text-white text-sm font-black uppercase-widest tracking-[0.22em]">Quản lý slash menu</div>
                         <div class="text-[10px] text-hud-muted">Thêm, sửa hoặc xóa mẫu trả lời nhanh cho inbox Facebook.</div>
                     </div>
-                    <button id="fb-slash-close" class="btn-ghost ml-auto px-3 py-1.5 text-[10px]"><i class="fa-solid fa-xmark"></i></button>
+                    <button id="fb-slash-close" class="ml-auto h-9 w-9 border border-white/10 bg-black/30 text-hud-muted hover:text-white hover:border-hud-cyan/50 text-xs"><i class="fa-solid fa-xmark"></i></button>
                 </div>
-                <div class="grid md:grid-cols-[1fr_1.1fr] gap-4">
-                    <div class="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                <div class="grid md:grid-cols-[1fr_1.15fr] gap-0">
+                    <div class="p-5 border-r border-hud-cyan/10 bg-black/20">
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="text-[10px] uppercase-wide text-hud-cyan font-bold">Mẫu hiện có</div>
+                            <span class="badge cyan">${formatNumber(commands.length)} items</span>
+                        </div>
+                        <div class="space-y-2 max-h-[440px] overflow-y-auto pr-1">
                         ${commands.map((item) => `
-                            <div class="border border-hud-cyan/15 bg-black/35 p-3">
+                            <div class="border border-hud-cyan/15 bg-black/35 p-3 hover:border-hud-fb/40">
                                 <div class="flex items-center gap-2">
                                     <span class="font-mono text-hud-fb font-bold">${escapeHtml(item.command)}</span>
                                     <span class="text-white text-xs font-bold truncate">${escapeHtml(item.label)}</span>
-                                    <button class="fb-slash-dialog-edit ml-auto btn-ghost px-2 py-1 text-[10px]" data-command="${escapeHtml(item.command)}"><i class="fa-solid fa-pen"></i></button>
-                                    <button class="fb-slash-dialog-delete btn-ghost px-2 py-1 text-[10px] text-hud-red" data-command="${escapeHtml(item.command)}"><i class="fa-solid fa-trash"></i></button>
+                                    <button class="fb-slash-dialog-edit ml-auto h-7 w-7 border border-hud-fb/25 bg-hud-fb/10 text-[10px] text-hud-fb hover:border-hud-fb" data-command="${escapeHtml(item.command)}"><i class="fa-solid fa-pen"></i></button>
+                                    <button class="fb-slash-dialog-delete h-7 w-7 border border-hud-red/25 bg-hud-red/10 text-[10px] text-hud-red hover:border-hud-red" data-command="${escapeHtml(item.command)}"><i class="fa-solid fa-trash"></i></button>
                                 </div>
                                 <div class="text-[10px] text-hud-muted mt-1">${escapeHtml(item.text)}</div>
                             </div>
-                        `).join("")}
+                        `).join("") || `<div class="border border-hud-cyan/10 bg-black/25 p-4 text-xs text-hud-muted">Chưa có mẫu nào. Tạo mẫu đầu tiên ở form bên phải.</div>`}
+                        </div>
                     </div>
-                    <form id="fb-slash-form" class="space-y-3">
+                    <form id="fb-slash-form" class="p-5 space-y-4 bg-gradient-to-b from-hud-panel/60 to-black/20">
                         <input type="hidden" id="fb-slash-original" value="${escapeHtml(editing.command || "")}">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-[10px] uppercase-wide text-hud-cyan font-bold">${editing.command ? "Sửa mẫu" : "Tạo mẫu mới"}</div>
+                                <div class="text-[10px] text-hud-muted">Gõ lệnh bằng dấu /, ví dụ /gia hoặc /ship.</div>
+                            </div>
+                            <button id="fb-slash-new" class="border border-hud-cyan/25 bg-hud-cyan/10 px-3 py-2 text-[10px] uppercase-wide font-bold text-hud-cyan hover:border-hud-cyan" type="button"><i class="fa-solid fa-plus"></i> Tạo mới</button>
+                        </div>
                         <div>
                             <label class="block text-[10px] uppercase-wide text-hud-fb mb-1">Lệnh</label>
                             <input id="fb-slash-command" class="hud-input w-full px-3 py-2 text-xs" value="${escapeHtml(editing.command || "")}" placeholder="/gia">
@@ -2915,11 +2930,10 @@
                         </div>
                         <div>
                             <label class="block text-[10px] uppercase-wide text-hud-fb mb-1">Nội dung</label>
-                            <textarea id="fb-slash-text" class="hud-input w-full px-3 py-2 text-xs min-h-[150px]" placeholder="Nội dung trả lời nhanh...">${escapeHtml(editing.text || "")}</textarea>
+                            <textarea id="fb-slash-text" class="hud-input w-full px-3 py-2 text-xs min-h-[190px]" placeholder="Nội dung trả lời nhanh...">${escapeHtml(editing.text || "")}</textarea>
                         </div>
-                        <div class="flex gap-2">
-                            <button class="btn-ghost px-4 py-2 text-[10px] uppercase-wide font-bold" type="submit"><i class="fa-solid fa-floppy-disk"></i> Lưu</button>
-                            <button id="fb-slash-new" class="btn-ghost px-4 py-2 text-[10px] uppercase-wide font-bold" type="button"><i class="fa-solid fa-plus"></i> Tạo mới</button>
+                        <div class="flex justify-end gap-2 pt-2">
+                            <button class="border border-hud-fb/35 bg-hud-fb/15 px-5 py-2.5 text-[10px] uppercase-wide font-bold text-hud-fb hover:border-hud-fb" type="submit"><i class="fa-solid fa-floppy-disk"></i> Lưu mẫu</button>
                         </div>
                     </form>
                 </div>

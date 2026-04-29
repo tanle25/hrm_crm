@@ -70,6 +70,7 @@
         facebookSlashEditingCommand: "",
         facebookCreateScheduleMode: "now",
         facebookCreateScheduledAt: "",
+        facebookContentJobsRefreshTimer: null,
     };
 
     function escapeHtml(value) {
@@ -4076,6 +4077,215 @@
         }
     }
 
+    function facebookContentJobBadge(status) {
+        const key = String(status || "").toLowerCase();
+        if (["completed", "published"].includes(key)) return ["green", "COMPLETED", "fa-check"];
+        if (key === "scheduled") return ["amber", "SCHEDULED", "fa-clock"];
+        if (["queued", "pending"].includes(key)) return ["cyan", "QUEUED", "fa-hourglass-half"];
+        if (["posting", "processing", "running"].includes(key)) return ["cyan", "POSTING", "fa-spinner fa-spin"];
+        if (["failed", "error"].includes(key)) return ["red", "FAILED", "fa-triangle-exclamation"];
+        return ["", String(status || "DRAFT").toUpperCase(), "fa-circle"];
+    }
+
+    function facebookContentJobResults(job) {
+        return Array.isArray(job?.results) ? job.results : [];
+    }
+
+    function facebookContentJobVariants(job) {
+        return Array.isArray(job?.variants) ? job.variants : [];
+    }
+
+    function facebookContentJobPageNames(job) {
+        const names = new Set();
+        facebookContentJobVariants(job).forEach((variant) => {
+            if (variant?.page_name) names.add(String(variant.page_name));
+        });
+        facebookContentJobResults(job).forEach((result) => {
+            if (result?.page_name) names.add(String(result.page_name));
+        });
+        return Array.from(names);
+    }
+
+    function facebookContentJobTitle(job) {
+        const variant = facebookContentJobVariants(job)[0] || {};
+        return variant.headline || variant.title || truncate(variant.caption || job?.brief || "Facebook content job", 96);
+    }
+
+    function facebookContentJobCaption(job) {
+        const variant = facebookContentJobVariants(job)[0] || {};
+        return variant.caption || job?.brief || "";
+    }
+
+    function facebookContentResultCounts(job) {
+        const results = facebookContentJobResults(job);
+        return results.reduce((acc, result) => {
+            const status = String(result?.status || "").toLowerCase();
+            if (status === "scheduled") acc.scheduled += 1;
+            else if (["published", "completed"].includes(status)) acc.published += 1;
+            else if (["failed", "error"].includes(status)) acc.failed += 1;
+            else acc.pending += 1;
+            return acc;
+        }, { published: 0, scheduled: 0, failed: 0, pending: 0 });
+    }
+
+    function facebookContentJobScheduledLabel(job) {
+        const scheduledAt = job?.scheduled_at || "";
+        const mode = String(job?.schedule_mode || "").toLowerCase();
+        if (scheduledAt) return `Hẹn giờ · ${formatDate(scheduledAt)}`;
+        if (mode === "best_time") return "Best time AI";
+        if (job?.completed_at) return `Xong · ${formatDate(job.completed_at)}`;
+        if (job?.updated_at) return `Cập nhật · ${formatDate(job.updated_at)}`;
+        return formatDate(job?.created_at || "");
+    }
+
+    function facebookContentResultRows(job) {
+        const results = facebookContentJobResults(job);
+        if (!results.length) {
+            return `<div class="mt-3 text-[10px] text-hud-muted uppercase-wide">Chưa có kết quả publish. Job có thể đang nằm trong hàng đợi.</div>`;
+        }
+        return `
+            <div class="mt-3 grid gap-2">
+                ${results.map((result) => {
+                    const [tone, label, icon] = facebookContentJobBadge(result.status || "");
+                    const message = result.error ? redactSensitiveText(result.error) : (result.facebook_post_id || result.permalink || "");
+                    return `
+                        <div class="flex items-center gap-3 border border-hud-fb/10 bg-black/20 px-3 py-2 text-[10px]">
+                            <span class="badge ${tone} shrink-0"><i class="fa-solid ${icon} text-[9px]"></i>${label}</span>
+                            <span class="text-white font-bold truncate min-w-[120px]">${escapeHtml(result.page_name || result.page_id || "Facebook Page")}</span>
+                            <span class="text-hud-muted truncate flex-1">${escapeHtml(message || "Đang chờ kết quả")}</span>
+                            ${result.permalink ? `<a class="text-hud-fb hover:text-white" href="${escapeHtml(result.permalink)}" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : ""}
+                        </div>
+                    `;
+                }).join("")}
+            </div>
+        `;
+    }
+
+    function renderFacebookContentJobCard(job) {
+        const [tone, label, icon] = facebookContentJobBadge(job.status || "");
+        const counts = facebookContentResultCounts(job);
+        const pageNames = facebookContentJobPageNames(job);
+        const imageCount = Array.isArray(job.images) ? job.images.length : 0;
+        const variantCount = facebookContentJobVariants(job).length;
+        return `
+            <article class="hud-card p-4 fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                <div class="flex items-start gap-4">
+                    <div class="w-10 h-10 border border-hud-fb/30 bg-hud-fb/10 flex items-center justify-center text-hud-fb shrink-0">
+                        <i class="fa-brands fa-facebook-f"></i>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-start gap-3">
+                            <div class="min-w-0 flex-1">
+                                <div class="text-white font-black text-sm truncate">${escapeHtml(facebookContentJobTitle(job))}</div>
+                                <div class="text-[10px] text-hud-muted mt-1 truncate">${escapeHtml(facebookContentJobCaption(job) || "Không có brief hiển thị")}</div>
+                            </div>
+                            <span class="badge ${tone} shrink-0"><i class="fa-solid ${icon} text-[9px]"></i>${label}</span>
+                        </div>
+                        <div class="mt-3 flex flex-wrap items-center gap-2 text-[10px] uppercase-wide">
+                            <span class="badge" style="color:#4a9eff; border-color: rgba(74, 158, 255, 0.45);">JOB ${escapeHtml(String(job.job_id || "").slice(0, 8))}</span>
+                            <span class="text-hud-muted"><i class="fa-solid fa-clock"></i> ${escapeHtml(facebookContentJobScheduledLabel(job))}</span>
+                            <span class="text-hud-muted"><i class="fa-solid fa-layer-group"></i> ${formatNumber(variantCount)} variants</span>
+                            <span class="text-hud-muted"><i class="fa-solid fa-image"></i> ${formatNumber(imageCount)} images</span>
+                        </div>
+                        <div class="mt-3 flex flex-wrap gap-2">
+                            ${pageNames.slice(0, 6).map((name) => `<span class="badge" style="color:#4a9eff; border-color: rgba(74, 158, 255, 0.35); background: rgba(74, 158, 255, 0.08);">${escapeHtml(name)}</span>`).join("")}
+                            ${pageNames.length > 6 ? `<span class="text-[10px] text-hud-muted">+${formatNumber(pageNames.length - 6)} page</span>` : ""}
+                            ${!pageNames.length ? `<span class="text-[10px] text-hud-muted">Chưa có page target</span>` : ""}
+                        </div>
+                        <div class="mt-3 grid grid-cols-4 gap-2 text-center">
+                            <div class="border border-hud-green/20 bg-hud-green/5 px-2 py-2">
+                                <div class="metric-num text-lg text-hud-green">${formatNumber(counts.published)}</div>
+                                <div class="text-[8px] uppercase-widest text-hud-muted">PUBLISHED</div>
+                            </div>
+                            <div class="border border-hud-amber/20 bg-hud-amber/5 px-2 py-2">
+                                <div class="metric-num text-lg text-hud-amber">${formatNumber(counts.scheduled)}</div>
+                                <div class="text-[8px] uppercase-widest text-hud-muted">SCHEDULED</div>
+                            </div>
+                            <div class="border border-hud-cyan/20 bg-hud-cyan/5 px-2 py-2">
+                                <div class="metric-num text-lg text-hud-cyan">${formatNumber(counts.pending)}</div>
+                                <div class="text-[8px] uppercase-widest text-hud-muted">PENDING</div>
+                            </div>
+                            <div class="border border-hud-red/20 bg-hud-red/5 px-2 py-2">
+                                <div class="metric-num text-lg text-hud-red">${formatNumber(counts.failed)}</div>
+                                <div class="text-[8px] uppercase-widest text-hud-muted">FAILED</div>
+                            </div>
+                        </div>
+                        ${facebookContentResultRows(job)}
+                    </div>
+                </div>
+            </article>
+        `;
+    }
+
+    async function renderFacebookContentJobsPage() {
+        const section = document.getElementById("page-fb-jobs");
+        if (!section) return;
+        if (state.facebookContentJobsRefreshTimer) {
+            clearTimeout(state.facebookContentJobsRefreshTimer);
+            state.facebookContentJobsRefreshTimer = null;
+        }
+        if (!section.dataset.hydrated) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Đang tải danh sách job Facebook...</div>`;
+        }
+        try {
+            const payload = await fetchJSON("/facebook/content/jobs?limit=100");
+            const jobs = payload.jobs || [];
+            const today = new Date().toLocaleDateString("vi-VN");
+            const activeCount = jobs.filter((job) => ["queued", "pending", "posting", "processing", "running"].includes(String(job.status || "").toLowerCase())).length;
+            const scheduledCount = jobs.filter((job) => String(job.status || "").toLowerCase() === "scheduled" || facebookContentResultCounts(job).scheduled > 0).length;
+            const failedCount = jobs.filter((job) => String(job.status || "").toLowerCase() === "failed" || facebookContentResultCounts(job).failed > 0).length;
+            const postedToday = jobs.reduce((sum, job) => {
+                return sum + facebookContentJobResults(job).filter((result) => {
+                    if (!["published", "completed"].includes(String(result.status || "").toLowerCase())) return false;
+                    if (!result.published_at) return false;
+                    return new Date(result.published_at).toLocaleDateString("vi-VN") === today;
+                }).length;
+            }, 0);
+            section.dataset.hydrated = "1";
+            section.innerHTML = `
+                <div class="max-w-7xl mx-auto">
+                    <div class="grid grid-cols-4 gap-4 mb-6">
+                        ${[
+                            ["ACTIVE JOBS", activeCount, "cyan", "fa-spinner"],
+                            ["POSTED TODAY", postedToday, "green", "fa-check"],
+                            ["SCHEDULED", scheduledCount, "amber", "fa-clock"],
+                            ["FAILED", failedCount, "red", "fa-triangle-exclamation"],
+                        ].map(([labelText, value, tone, iconName]) => `
+                            <div class="hud-card ${tone === "green" ? "green" : tone === "amber" ? "amber" : tone === "red" ? "danger" : ""} p-4 fade-in" style="${tone === "cyan" ? "border-color: rgba(74, 158, 255, 0.3);" : ""}">
+                                <span class="c-tl" style="${tone === "cyan" ? "border-color:#4a9eff;" : ""}"></span><span class="c-br" style="${tone === "cyan" ? "border-color:#4a9eff;" : ""}"></span>
+                                <div class="text-[9px] uppercase-widest mb-1 ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : tone === "red" ? "text-hud-red" : ""}" ${tone === "cyan" ? `style="color:#4a9eff;"` : ""}><i class="fa-solid ${iconName}"></i> ${labelText}</div>
+                                <div class="metric-num text-3xl ${tone === "green" ? "text-hud-green" : tone === "amber" ? "text-hud-amber" : tone === "red" ? "text-hud-red" : "text-white"}">${formatNumber(value)}</div>
+                            </div>
+                        `).join("")}
+                    </div>
+                    <div class="hud-card p-3 mb-4 fade-in flex items-center gap-3" style="border-color: rgba(74, 158, 255, 0.3);">
+                        <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                        <div class="flex-1">
+                            <div class="font-display font-black text-xs text-white uppercase-widest"><i class="fa-brands fa-facebook text-hud-fb"></i> FACEBOOK CONTENT JOBS</div>
+                            <div class="text-[10px] text-hud-muted mt-1">${formatNumber(payload.total ?? jobs.length)} job trong database · tự refresh khi job còn chạy</div>
+                        </div>
+                        <button id="fb-content-jobs-refresh" class="btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> REFRESH</button>
+                    </div>
+                    <div class="space-y-4">
+                        ${jobs.map(renderFacebookContentJobCard).join("") || `
+                            <div class="hud-card p-10 text-center text-hud-muted text-sm" style="border-color: rgba(74, 158, 255, 0.3);">
+                                <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                                Chưa có job Facebook. Tạo job ở màn “Khởi tạo job Facebook”, danh sách này sẽ hiển thị kết quả publish/schedule theo từng fanpage.
+                            </div>
+                        `}
+                    </div>
+                </div>
+            `;
+            section.querySelector("#fb-content-jobs-refresh")?.addEventListener("click", () => renderFacebookContentJobsPage());
+            if (activeCount > 0 && section.classList.contains("active")) {
+                state.facebookContentJobsRefreshTimer = setTimeout(renderFacebookContentJobsPage, 5000);
+            }
+        } catch (error) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook jobs: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
     function facebookCommentBadge(sentiment) {
         const key = String(sentiment || "neutral").toLowerCase();
         if (key === "negative") return ["red", "NEGATIVE", "fa-user"];
@@ -4427,11 +4637,16 @@
         if (pageKey !== "jobs") closeJobsStream();
         if (pageKey !== "detail") closeDetailStream();
         if (pageKey !== "fb-messages") closeFacebookMessagesStream();
+        if (pageKey !== "fb-jobs" && state.facebookContentJobsRefreshTimer) {
+            clearTimeout(state.facebookContentJobsRefreshTimer);
+            state.facebookContentJobsRefreshTimer = null;
+        }
         if (pageKey === "submit") {
             await renderSubmitSiteOptions();
             await renderRecentSubmissions();
         }
         if (pageKey === "fb-create") await renderFacebookCreateTargets();
+        if (pageKey === "fb-jobs") await renderFacebookContentJobsPage();
         if (pageKey === "jobs") await renderJobsPage();
         if (pageKey === "detail") await renderDetailPage();
         if (pageKey === "dlq") await renderDlqPage();

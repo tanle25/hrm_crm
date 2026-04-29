@@ -169,6 +169,9 @@ def _public_page(item: dict[str, Any]) -> dict[str, Any]:
         "connected_at": item.get("connected_at", ""),
         "updated_at": item.get("updated_at", ""),
         "expires_in": item.get("expires_in"),
+        "webhook_subscribed": bool(item.get("webhook_subscribed")),
+        "webhook_subscribed_at": item.get("webhook_subscribed_at", ""),
+        "webhook_subscribe_error": item.get("webhook_subscribe_error", ""),
     }
 
 
@@ -287,6 +290,33 @@ def _upsert_page(item: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def _subscribe_page_webhook(client: httpx.Client, base_url: str, page_id: str, page_token: str) -> dict[str, Any]:
+    fields = "messages,message_echoes,messaging_postbacks"
+    try:
+        response = client.post(
+            f"{base_url}/{page_id}/subscribed_apps",
+            data={
+                "subscribed_fields": fields,
+                "access_token": page_token,
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return {
+            "webhook_subscribed": bool(payload.get("success", True)),
+            "webhook_subscribed_at": _now(),
+            "webhook_subscribed_fields": fields.split(","),
+            "webhook_subscribe_error": "",
+        }
+    except httpx.HTTPError as error:
+        return {
+            "webhook_subscribed": False,
+            "webhook_subscribed_at": "",
+            "webhook_subscribed_fields": fields.split(","),
+            "webhook_subscribe_error": _graph_error_message(error, "Page webhook subscribe failed"),
+        }
+
+
 def connect_facebook_pages(short_lived_token: str) -> dict[str, Any]:
     settings = get_settings()
     if not settings.facebook_app_id or not settings.facebook_app_secret:
@@ -326,28 +356,31 @@ def connect_facebook_pages(short_lived_token: str) -> dict[str, Any]:
     connected_at = _now()
     batch_id = secrets.token_hex(8)
     pages: list[dict[str, Any]] = []
-    for page in pages_payload.get("data") or []:
-        page_id = str(page.get("id") or "").strip()
-        page_token = str(page.get("access_token") or "").strip()
-        if not page_id or not page_token:
-            continue
-        item = {
-            "page_id": page_id,
-            "name": page.get("name") or "",
-            "category": page.get("category") or "",
-            "picture_url": ((page.get("picture") or {}).get("data") or {}).get("url") or "",
-            "cover_url": (page.get("cover") or {}).get("source") or "",
-            "tasks": page.get("tasks") or [],
-            "page_access_token": page_token,
-            "long_lived_user_token": long_lived_user_token,
-            "user_token_prefix": _mask_token(long_lived_user_token),
-            "expires_in": token_payload.get("expires_in"),
-            "token_type": token_payload.get("token_type", "bearer"),
-            "status": "connected",
-            "connected_at": connected_at,
-            "connect_batch_id": batch_id,
-        }
-        pages.append(_public_page(_upsert_page(item)))
+    with httpx.Client(timeout=30) as client:
+        for page in pages_payload.get("data") or []:
+            page_id = str(page.get("id") or "").strip()
+            page_token = str(page.get("access_token") or "").strip()
+            if not page_id or not page_token:
+                continue
+            webhook_status = _subscribe_page_webhook(client, base_url, page_id, page_token)
+            item = {
+                "page_id": page_id,
+                "name": page.get("name") or "",
+                "category": page.get("category") or "",
+                "picture_url": ((page.get("picture") or {}).get("data") or {}).get("url") or "",
+                "cover_url": (page.get("cover") or {}).get("source") or "",
+                "tasks": page.get("tasks") or [],
+                "page_access_token": page_token,
+                "long_lived_user_token": long_lived_user_token,
+                "user_token_prefix": _mask_token(long_lived_user_token),
+                "expires_in": token_payload.get("expires_in"),
+                "token_type": token_payload.get("token_type", "bearer"),
+                "status": "connected",
+                "connected_at": connected_at,
+                "connect_batch_id": batch_id,
+                **webhook_status,
+            }
+            pages.append(_public_page(_upsert_page(item)))
 
     return {
         "status": "connected",

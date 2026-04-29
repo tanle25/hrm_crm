@@ -82,6 +82,9 @@ class FacebookPageItem(BaseModel):
     connected_at: str = ""
     updated_at: str = ""
     expires_in: Optional[int] = None
+    webhook_subscribed: bool = False
+    webhook_subscribed_at: str = ""
+    webhook_subscribe_error: str = ""
 
 
 class FacebookPageListResponse(BaseModel):

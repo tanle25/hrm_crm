@@ -2800,14 +2800,16 @@
     }
 
     function renderFacebookMessageRow(message) {
+        const localStatus = String(message.local_status || "");
+        const statusLabel = localStatus === "sending" ? " · Đang gửi" : localStatus === "failed" ? " · Lỗi gửi" : "";
         return `
-            <div class="fb-message-row flex gap-2 max-w-[80%] ${message.direction === "outbound" ? "ml-auto flex-row-reverse" : ""}" data-message-id="${escapeHtml(message.message_id || "")}">
+            <div class="fb-message-row flex gap-2 max-w-[80%] ${message.direction === "outbound" ? "ml-auto flex-row-reverse" : ""} ${localStatus === "sending" ? "opacity-70" : ""}" data-message-id="${escapeHtml(message.message_id || "")}">
                 <div class="w-7 h-7 rounded-full ${message.direction === "outbound" ? "bg-hud-fb/30 border-hud-fb" : "bg-black/50 border-hud-cyan/30"} border flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <i class="fa-solid ${message.direction === "outbound" ? "fa-robot text-hud-fb" : "fa-user text-hud-muted"} text-[9px]"></i>
+                    <i class="fa-solid ${localStatus === "sending" ? "fa-spinner fa-spin text-hud-fb" : message.direction === "outbound" ? "fa-robot text-hud-fb" : "fa-user text-hud-muted"} text-[9px]"></i>
                 </div>
                 <div>
                     ${renderReplyMessage(message)}
-                    <div class="text-[9px] text-hud-muted mt-1 px-1 ${message.direction === "outbound" ? "text-right" : ""}">${escapeHtml(formatDate(message.created_time))} · ${escapeHtml(message.from_name || "")}</div>
+                    <div class="text-[9px] ${localStatus === "failed" ? "text-hud-red" : "text-hud-muted"} mt-1 px-1 ${message.direction === "outbound" ? "text-right" : ""}">${escapeHtml(formatDate(message.created_time))} · ${escapeHtml(message.from_name || "")}${escapeHtml(statusLabel)}</div>
                 </div>
             </div>
         `;
@@ -2868,6 +2870,87 @@
         thread.querySelector(".fb-message-empty")?.remove();
         thread.insertAdjacentHTML("beforeend", renderFacebookMessageRow(message));
         scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
+    }
+
+    function removeFacebookMessageFromDetail(conversationId, messageId) {
+        const detail = state.facebookConversationDetails[conversationId];
+        if (detail?.messages?.length) {
+            detail.messages = detail.messages.filter((item) => item.message_id !== messageId);
+        }
+    }
+
+    function findMatchingOptimisticFacebookMessage(conversationId, message) {
+        const detail = state.facebookConversationDetails[conversationId];
+        const messages = detail?.messages || [];
+        return messages.find((item) => {
+            return item.local_status === "sending"
+                && item.direction === message.direction
+                && String(item.message || "") === String(message.message || "");
+        }) || null;
+    }
+
+    function removeOptimisticFacebookMessage(conversationId, message) {
+        const optimistic = findMatchingOptimisticFacebookMessage(conversationId, message);
+        if (!optimistic?.message_id) return;
+        removeFacebookMessageFromDetail(conversationId, optimistic.message_id);
+        document
+            .querySelector(`#fb-message-thread [data-message-id="${CSS.escape(optimistic.message_id)}"]`)
+            ?.remove();
+    }
+
+    function createOptimisticFacebookMessage(conversationId, text) {
+        const conversation = state.facebookConversations.find((item) => item.conversation_id === conversationId) || {};
+        return {
+            message_id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            conversation_id: conversationId,
+            page_id: conversation.page_id || "",
+            customer_id: conversation.customer_id || "",
+            message: text,
+            created_time: new Date().toISOString(),
+            from_id: conversation.page_id || "",
+            from_name: conversation.page_name || "Page",
+            to_id: conversation.customer_id || "",
+            to_name: conversation.customer_name || "Facebook User",
+            direction: "outbound",
+            attachments: [],
+            fallback_label: "",
+            reply_to: {},
+            local_status: "sending",
+        };
+    }
+
+    function markOptimisticFacebookMessageFailed(conversationId, messageId) {
+        const detail = state.facebookConversationDetails[conversationId];
+        const target = (detail?.messages || []).find((item) => item.message_id === messageId);
+        if (target) target.local_status = "failed";
+        const row = document.querySelector(`#fb-message-thread [data-message-id="${CSS.escape(messageId)}"]`);
+        if (row && target) {
+            row.outerHTML = renderFacebookMessageRow(target);
+        }
+    }
+
+    function appendOptimisticFacebookMessage(message) {
+        const conversationId = message.conversation_id || "";
+        if (!conversationId) return;
+        const existingDetail = state.facebookConversationDetails[conversationId];
+        if (existingDetail) {
+            existingDetail.messages = [...(existingDetail.messages || []), message];
+            existingDetail.snippet = message.message || existingDetail.snippet || "";
+            existingDetail.updated_time = message.created_time || existingDetail.updated_time || "";
+        } else {
+            const summary = state.facebookConversations.find((item) => item.conversation_id === conversationId);
+            if (summary) {
+                state.facebookConversationDetails[conversationId] = {
+                    ...summary,
+                    messages: [...(summary.messages || []), message],
+                    snippet: message.message || summary.snippet || "",
+                    updated_time: message.created_time || summary.updated_time || "",
+                };
+            }
+        }
+        upsertFacebookConversationState({ conversation_id: conversationId }, message);
+        appendRealtimeFacebookMessage(message);
+        updateRealtimeFacebookConversationList(conversationId);
     }
 
     function updateRealtimeFacebookConversationList(conversationId) {
@@ -2953,7 +3036,8 @@
         const conversationId = conversation?.conversation_id || "";
         if (!conversationId || conversationId !== state.selectedFacebookConversationId) return;
         const detail = state.facebookConversationDetails[conversationId];
-        const latestSummaryMessage = (conversation.messages || [])[0] || {};
+        const summaryMessages = conversation.messages || [];
+        const latestSummaryMessage = summaryMessages[summaryMessages.length - 1] || {};
         const existingLatest = (detail?.messages || []).slice(-1)[0] || {};
         if (
             detail
@@ -3068,7 +3152,14 @@
         const conversationId = payload?.conversation_id || conversation.conversation_id || message.conversation_id || "";
         if (!conversationId) return;
         const normalizedMessage = { ...message, conversation_id: conversationId };
-        upsertFacebookConversationState({ ...conversation, conversation_id: conversationId }, normalizedMessage);
+        if (normalizedMessage.direction === "outbound" && !normalizedMessage.local_status) {
+            removeOptimisticFacebookMessage(conversationId, normalizedMessage);
+        }
+        const normalizedConversation = { ...conversation, conversation_id: conversationId };
+        if ((normalizedConversation.messages || []).some((item) => item.local_status)) {
+            normalizedConversation.messages = normalizedConversation.messages.filter((item) => !item.local_status);
+        }
+        upsertFacebookConversationState(normalizedConversation, normalizedMessage);
         const detail = state.facebookConversationDetails[conversationId];
         if (detail) {
             const messages = detail.messages || [];
@@ -3219,17 +3310,33 @@
                 const message = String(input?.value || "").trim();
                 const selectedConversationId = state.selectedFacebookConversationId;
                 if (!selectedConversationId || !message) return;
+                const optimisticMessage = createOptimisticFacebookMessage(selectedConversationId, message);
+                if (input) input.value = "";
+                if (feedback) feedback.classList.add("hidden");
+                appendOptimisticFacebookMessage(optimisticMessage);
                 try {
-                    await fetchJSON("/facebook/messages/send", {
+                    const result = await fetchJSON("/facebook/messages/send", {
                         method: "POST",
                         body: JSON.stringify({ conversation_id: selectedConversationId, message }),
                     });
-                    if (input) input.value = "";
+                    if (result?.message_id) {
+                        applyFacebookMessageRealtime({
+                            type: "facebook.message.sent",
+                            conversation_id: selectedConversationId,
+                            conversation: state.facebookConversations.find((item) => item.conversation_id === selectedConversationId) || {},
+                            message: {
+                                ...optimisticMessage,
+                                message_id: result.message_id,
+                                local_status: "",
+                            },
+                        });
+                    }
                     if (!state.facebookMessagesStreamActive) {
                         delete state.facebookConversationDetails[selectedConversationId];
                         await renderFacebookMessagesPage();
                     }
                 } catch (error) {
+                    markOptimisticFacebookMessageFailed(selectedConversationId, optimisticMessage.message_id);
                     if (feedback) {
                         feedback.className = "text-[11px] border p-2 text-hud-red border-hud-red/30 bg-hud-red/10";
                         feedback.textContent = `Send failed: ${error.message}`;

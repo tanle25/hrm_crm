@@ -65,6 +65,10 @@
         facebookConversationDetails: {},
         facebookConversationDetailPending: {},
         facebookMessageDraftMedia: [],
+        facebookSlashCommands: localStorage.getItem("content_forge_fb_slash_commands")
+            ? JSON.parse(localStorage.getItem("content_forge_fb_slash_commands") || "[]")
+            : null,
+        facebookSlashEditingCommand: "",
     };
 
     function escapeHtml(value) {
@@ -2763,13 +2767,22 @@
         });
     }
 
-    const FACEBOOK_MESSAGE_SLASH_COMMANDS = [
+    const DEFAULT_FACEBOOK_MESSAGE_SLASH_COMMANDS = [
         { command: "/gia", label: "Hỏi nhu cầu / báo giá", text: "Anh/chị muốn em gửi báo giá mẫu nào ạ?" },
         { command: "/ship", label: "Giao hàng", text: "Bên em có giao hàng toàn quốc, anh/chị nhận hàng kiểm tra rồi thanh toán ạ." },
         { command: "/zalo", label: "Xin Zalo/SĐT", text: "Anh/chị cho em xin số Zalo để em gửi hình và tư vấn nhanh hơn nhé." },
         { command: "/camon", label: "Cảm ơn", text: "Em cảm ơn anh/chị đã quan tâm. Anh/chị cần thêm hình/video mẫu nào em gửi ngay ạ." },
         { command: "/chot", label: "Chốt đơn", text: "Nếu anh/chị chốt mẫu này, anh/chị gửi giúp em tên, số điện thoại và địa chỉ nhận hàng nhé." },
     ];
+
+    function facebookSlashCommands() {
+        return Array.isArray(state.facebookSlashCommands) ? state.facebookSlashCommands : DEFAULT_FACEBOOK_MESSAGE_SLASH_COMMANDS;
+    }
+
+    function persistFacebookSlashCommands(commands) {
+        state.facebookSlashCommands = commands;
+        localStorage.setItem("content_forge_fb_slash_commands", JSON.stringify(commands));
+    }
 
     function facebookSlashQuery(value) {
         const text = String(value || "");
@@ -2783,7 +2796,7 @@
     function facebookSlashMatches(value) {
         const query = facebookSlashQuery(value);
         if (!query && !String(value || "").trim().endsWith("/")) return [];
-        return FACEBOOK_MESSAGE_SLASH_COMMANDS.filter((item) => {
+        return facebookSlashCommands().filter((item) => {
             const haystack = `${item.command} ${item.label} ${item.text}`.toLowerCase();
             return !query || haystack.includes(query);
         }).slice(0, 5);
@@ -2797,14 +2810,21 @@
     }
 
     function renderFacebookSlashMenuContent(matches) {
-        return `<div class="text-[9px] uppercase-widest font-bold text-hud-cyan mb-2"><i class="fa-solid fa-terminal"></i> Slash menu</div>
+        return `<div class="flex items-center gap-2 mb-2">
+            <div class="text-[9px] uppercase-widest font-bold text-hud-cyan"><i class="fa-solid fa-terminal"></i> Slash menu</div>
+            <button class="fb-slash-manage ml-auto btn-ghost px-2 py-1 text-[9px] uppercase-wide font-bold" type="button"><i class="fa-solid fa-gear"></i> Quản lý</button>
+        </div>
         <div class="space-y-1">
             ${matches.map((item) => `
-                <button class="fb-message-slash-item w-full text-left px-3 py-2 border border-hud-cyan/10 hover:border-hud-fb/50 hover:bg-hud-fb/10" data-command="${escapeHtml(item.command)}">
-                    <span class="font-mono text-hud-fb font-bold">${escapeHtml(item.command)}</span>
-                    <span class="text-white font-bold ml-2">${escapeHtml(item.label)}</span>
-                    <span class="block text-hud-muted mt-0.5 truncate">${escapeHtml(item.text)}</span>
-                </button>
+                <div class="flex items-stretch gap-1">
+                    <button class="fb-message-slash-item flex-1 text-left px-3 py-2 border border-hud-cyan/10 hover:border-hud-fb/50 hover:bg-hud-fb/10" data-command="${escapeHtml(item.command)}">
+                        <span class="font-mono text-hud-fb font-bold">${escapeHtml(item.command)}</span>
+                        <span class="text-white font-bold ml-2">${escapeHtml(item.label)}</span>
+                        <span class="block text-hud-muted mt-0.5 truncate">${escapeHtml(item.text)}</span>
+                    </button>
+                    <button class="fb-slash-edit btn-ghost px-2 text-[10px]" data-command="${escapeHtml(item.command)}" title="Sửa"><i class="fa-solid fa-pen"></i></button>
+                    <button class="fb-slash-delete btn-ghost px-2 text-[10px] text-hud-red" data-command="${escapeHtml(item.command)}" title="Xóa"><i class="fa-solid fa-trash"></i></button>
+                </div>
             `).join("")}
         </div>`;
     }
@@ -2819,13 +2839,81 @@
     }
 
     function applyFacebookSlashCommand(section, command) {
-        const item = FACEBOOK_MESSAGE_SLASH_COMMANDS.find((entry) => entry.command === command);
+        const item = facebookSlashCommands().find((entry) => entry.command === command);
         const input = section?.querySelector("#fb-message-input");
         if (!item || !input) return;
         input.value = String(input.value || "").replace(/(?:^|\s)\/[\p{L}\p{N}_-]*$/u, "");
         input.value = `${input.value.trim() ? `${input.value.trim()} ` : ""}${item.text}`;
         input.focus();
         updateFacebookSlashMenu(section);
+    }
+
+    function renderFacebookSlashManagerDialog() {
+        const commands = facebookSlashCommands();
+        const editing = commands.find((item) => item.command === state.facebookSlashEditingCommand) || {};
+        return `<div id="fb-slash-dialog" class="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="hud-card w-full max-w-3xl p-5 relative" style="border-color: rgba(0, 240, 255, 0.35);">
+                <span class="c-tl"></span><span class="c-br"></span>
+                <div class="flex items-center gap-3 mb-4">
+                    <i class="fa-solid fa-terminal text-hud-cyan"></i>
+                    <div>
+                        <div class="font-display text-white text-sm font-black uppercase-widest">Quản lý slash menu</div>
+                        <div class="text-[10px] text-hud-muted">Thêm, sửa hoặc xóa mẫu trả lời nhanh cho inbox Facebook.</div>
+                    </div>
+                    <button id="fb-slash-close" class="btn-ghost ml-auto px-3 py-1.5 text-[10px]"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="grid md:grid-cols-[1fr_1.1fr] gap-4">
+                    <div class="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                        ${commands.map((item) => `
+                            <div class="border border-hud-cyan/15 bg-black/35 p-3">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-mono text-hud-fb font-bold">${escapeHtml(item.command)}</span>
+                                    <span class="text-white text-xs font-bold truncate">${escapeHtml(item.label)}</span>
+                                    <button class="fb-slash-dialog-edit ml-auto btn-ghost px-2 py-1 text-[10px]" data-command="${escapeHtml(item.command)}"><i class="fa-solid fa-pen"></i></button>
+                                    <button class="fb-slash-dialog-delete btn-ghost px-2 py-1 text-[10px] text-hud-red" data-command="${escapeHtml(item.command)}"><i class="fa-solid fa-trash"></i></button>
+                                </div>
+                                <div class="text-[10px] text-hud-muted mt-1">${escapeHtml(item.text)}</div>
+                            </div>
+                        `).join("")}
+                    </div>
+                    <form id="fb-slash-form" class="space-y-3">
+                        <input type="hidden" id="fb-slash-original" value="${escapeHtml(editing.command || "")}">
+                        <div>
+                            <label class="block text-[10px] uppercase-wide text-hud-fb mb-1">Lệnh</label>
+                            <input id="fb-slash-command" class="hud-input w-full px-3 py-2 text-xs" value="${escapeHtml(editing.command || "")}" placeholder="/gia">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] uppercase-wide text-hud-fb mb-1">Tên hiển thị</label>
+                            <input id="fb-slash-label" class="hud-input w-full px-3 py-2 text-xs" value="${escapeHtml(editing.label || "")}" placeholder="Hỏi giá">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] uppercase-wide text-hud-fb mb-1">Nội dung</label>
+                            <textarea id="fb-slash-text" class="hud-input w-full px-3 py-2 text-xs min-h-[150px]" placeholder="Nội dung trả lời nhanh...">${escapeHtml(editing.text || "")}</textarea>
+                        </div>
+                        <div class="flex gap-2">
+                            <button class="btn-ghost px-4 py-2 text-[10px] uppercase-wide font-bold" type="submit"><i class="fa-solid fa-floppy-disk"></i> Lưu</button>
+                            <button id="fb-slash-new" class="btn-ghost px-4 py-2 text-[10px] uppercase-wide font-bold" type="button"><i class="fa-solid fa-plus"></i> Tạo mới</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function openFacebookSlashManager(command = "") {
+        state.facebookSlashEditingCommand = command;
+        document.getElementById("fb-slash-dialog")?.remove();
+        document.body.insertAdjacentHTML("beforeend", renderFacebookSlashManagerDialog());
+    }
+
+    function closeFacebookSlashManager() {
+        document.getElementById("fb-slash-dialog")?.remove();
+        state.facebookSlashEditingCommand = "";
+    }
+
+    function deleteFacebookSlashCommand(command, reopenManager = true) {
+        persistFacebookSlashCommands(facebookSlashCommands().filter((item) => item.command !== command));
+        if (reopenManager) openFacebookSlashManager();
     }
 
     function renderFacebookConversationPanel(selected, detailLoading = false) {
@@ -3533,6 +3621,18 @@
                     if (event.target.closest("#fb-message-send")) {
                         sendSelectedMessage();
                     }
+                    if (event.target.closest(".fb-slash-manage")) {
+                        openFacebookSlashManager();
+                    }
+                    const slashEdit = event.target.closest(".fb-slash-edit");
+                    if (slashEdit) {
+                        openFacebookSlashManager(slashEdit.dataset.command || "");
+                    }
+                    const slashDelete = event.target.closest(".fb-slash-delete");
+                    if (slashDelete) {
+                        deleteFacebookSlashCommand(slashDelete.dataset.command || "", false);
+                        updateFacebookSlashMenu(section);
+                    }
                     const slashItem = event.target.closest(".fb-message-slash-item");
                     if (slashItem) {
                         applyFacebookSlashCommand(section, slashItem.dataset.command || "");
@@ -3608,6 +3708,41 @@
             section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Facebook messages: ${escapeHtml(error.message)}</div>`;
         }
     }
+
+    document.addEventListener("click", (event) => {
+        if (event.target.closest("#fb-slash-close")) {
+            closeFacebookSlashManager();
+        }
+        const edit = event.target.closest(".fb-slash-dialog-edit");
+        if (edit) {
+            openFacebookSlashManager(edit.dataset.command || "");
+        }
+        const del = event.target.closest(".fb-slash-dialog-delete");
+        if (del) {
+            deleteFacebookSlashCommand(del.dataset.command || "");
+        }
+        if (event.target.closest("#fb-slash-new")) {
+            state.facebookSlashEditingCommand = "";
+            openFacebookSlashManager();
+        }
+    });
+
+    document.addEventListener("submit", (event) => {
+        if (event.target?.id !== "fb-slash-form") return;
+        event.preventDefault();
+        const original = document.getElementById("fb-slash-original")?.value || "";
+        let command = String(document.getElementById("fb-slash-command")?.value || "").trim();
+        const label = String(document.getElementById("fb-slash-label")?.value || "").trim();
+        const text = String(document.getElementById("fb-slash-text")?.value || "").trim();
+        if (!command || !label || !text) return;
+        if (!command.startsWith("/")) command = `/${command}`;
+        const next = facebookSlashCommands()
+            .filter((item) => item.command !== original && item.command !== command);
+        next.push({ command, label, text });
+        persistFacebookSlashCommands(next.sort((a, b) => a.command.localeCompare(b.command)));
+        openFacebookSlashManager(command);
+        updateFacebookSlashMenu(document.getElementById("page-fb-messages"));
+    });
 
     async function renderFacebookPostsPage() {
         const section = document.getElementById("page-fb-posts");

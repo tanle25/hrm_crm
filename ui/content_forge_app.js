@@ -65,9 +65,8 @@
         facebookConversationDetails: {},
         facebookConversationDetailPending: {},
         facebookMessageDraftMedia: [],
-        facebookSlashCommands: localStorage.getItem("content_forge_fb_slash_commands")
-            ? JSON.parse(localStorage.getItem("content_forge_fb_slash_commands") || "[]")
-            : null,
+        facebookSlashCommands: null,
+        facebookSlashCommandsLoaded: false,
         facebookSlashEditingCommand: "",
     };
 
@@ -2781,7 +2780,31 @@
 
     function persistFacebookSlashCommands(commands) {
         state.facebookSlashCommands = commands;
-        localStorage.setItem("content_forge_fb_slash_commands", JSON.stringify(commands));
+    }
+
+    async function loadFacebookSlashCommands(force = false) {
+        if (state.facebookSlashCommandsLoaded && !force) return facebookSlashCommands();
+        const payload = await fetchJSON("/facebook/slash-commands");
+        persistFacebookSlashCommands(payload.commands || []);
+        state.facebookSlashCommandsLoaded = true;
+        return facebookSlashCommands();
+    }
+
+    async function saveFacebookSlashCommand(command, label, text, originalCommand = "") {
+        const payload = await fetchJSON("/facebook/slash-commands", {
+            method: "POST",
+            body: JSON.stringify({ command, label, text, original_command: originalCommand }),
+        });
+        persistFacebookSlashCommands(payload.commands || []);
+        state.facebookSlashCommandsLoaded = true;
+        return payload;
+    }
+
+    async function removeFacebookSlashCommand(command) {
+        const payload = await fetchJSON(`/facebook/slash-commands?command=${encodeURIComponent(command)}`, { method: "DELETE" });
+        persistFacebookSlashCommands(payload.commands || []);
+        state.facebookSlashCommandsLoaded = true;
+        return payload;
     }
 
     function facebookSlashQuery(value) {
@@ -2804,7 +2827,8 @@
 
     function renderFacebookSlashMenu(inputValue = "") {
         const matches = facebookSlashMatches(inputValue);
-        return `<div id="fb-message-slash-menu" class="${matches.length ? "" : "hidden"} border border-hud-cyan/25 bg-black/70 p-2 text-[11px]">
+        const active = Boolean(facebookSlashQuery(inputValue) || String(inputValue || "").trim().endsWith("/"));
+        return `<div id="fb-message-slash-menu" class="${active ? "" : "hidden"} border border-hud-cyan/25 bg-black/70 p-2 text-[11px]">
             ${renderFacebookSlashMenuContent(matches)}
         </div>`;
     }
@@ -2816,16 +2840,18 @@
         </div>
         <div class="space-y-1">
             ${matches.map((item) => `
-                <div class="flex items-stretch gap-1">
-                    <button class="fb-message-slash-item flex-1 text-left px-3 py-2 border border-hud-cyan/10 hover:border-hud-fb/50 hover:bg-hud-fb/10" data-command="${escapeHtml(item.command)}">
+                <div class="relative group">
+                    <button class="fb-message-slash-item w-full text-left px-3 py-2 pr-14 border border-hud-cyan/10 hover:border-hud-fb/50 hover:bg-hud-fb/10" data-command="${escapeHtml(item.command)}">
                         <span class="font-mono text-hud-fb font-bold">${escapeHtml(item.command)}</span>
                         <span class="text-white font-bold ml-2">${escapeHtml(item.label)}</span>
                         <span class="block text-hud-muted mt-0.5 truncate">${escapeHtml(item.text)}</span>
                     </button>
-                    <button class="fb-slash-edit btn-ghost px-2 text-[10px]" data-command="${escapeHtml(item.command)}" title="Sửa"><i class="fa-solid fa-pen"></i></button>
-                    <button class="fb-slash-delete btn-ghost px-2 text-[10px] text-hud-red" data-command="${escapeHtml(item.command)}" title="Xóa"><i class="fa-solid fa-trash"></i></button>
+                    <div class="absolute top-1.5 right-1.5 flex gap-1 opacity-70 group-hover:opacity-100">
+                        <button class="fb-slash-edit h-6 w-6 border border-hud-cyan/15 bg-black/60 text-[9px] text-hud-muted hover:text-hud-fb" data-command="${escapeHtml(item.command)}" title="Sửa"><i class="fa-solid fa-pen"></i></button>
+                        <button class="fb-slash-delete h-6 w-6 border border-hud-red/15 bg-black/60 text-[9px] text-hud-muted hover:text-hud-red" data-command="${escapeHtml(item.command)}" title="Xóa"><i class="fa-solid fa-trash"></i></button>
+                    </div>
                 </div>
-            `).join("")}
+            `).join("") || `<div class="px-3 py-2 border border-hud-cyan/10 text-hud-muted">Chưa có mẫu phù hợp. Bấm Quản lý để thêm mẫu mới.</div>`}
         </div>`;
     }
 
@@ -2834,7 +2860,8 @@
         const menu = section?.querySelector("#fb-message-slash-menu");
         if (!input || !menu) return;
         const matches = facebookSlashMatches(input.value);
-        menu.classList.toggle("hidden", !matches.length);
+        const active = Boolean(facebookSlashQuery(input.value) || String(input.value || "").trim().endsWith("/"));
+        menu.classList.toggle("hidden", !active);
         menu.innerHTML = renderFacebookSlashMenuContent(matches);
     }
 
@@ -2911,8 +2938,9 @@
         state.facebookSlashEditingCommand = "";
     }
 
-    function deleteFacebookSlashCommand(command, reopenManager = true) {
+    async function deleteFacebookSlashCommand(command, reopenManager = true) {
         persistFacebookSlashCommands(facebookSlashCommands().filter((item) => item.command !== command));
+        await removeFacebookSlashCommand(command);
         if (reopenManager) openFacebookSlashManager();
     }
 
@@ -3264,7 +3292,13 @@
         state.facebookMessagesSyncJobId = "";
         state.facebookMessagesSyncing = false;
         if (job.status === "completed") {
-            const payload = await fetchJSON("/facebook/conversations?limit=25&message_limit=1");
+            const [payload] = await Promise.all([
+                fetchJSON("/facebook/conversations?limit=25&message_limit=1"),
+                loadFacebookSlashCommands().catch((error) => {
+                    console.warn("Facebook slash commands load failed", error);
+                    return [];
+                }),
+            ]);
             await patchFacebookConversationsFromCache(payload.conversations || []);
         }
         return true;
@@ -3622,16 +3656,26 @@
                         sendSelectedMessage();
                     }
                     if (event.target.closest(".fb-slash-manage")) {
+                        event.preventDefault();
+                        event.stopPropagation();
                         openFacebookSlashManager();
+                        return;
                     }
                     const slashEdit = event.target.closest(".fb-slash-edit");
                     if (slashEdit) {
+                        event.preventDefault();
+                        event.stopPropagation();
                         openFacebookSlashManager(slashEdit.dataset.command || "");
+                        return;
                     }
                     const slashDelete = event.target.closest(".fb-slash-delete");
                     if (slashDelete) {
-                        deleteFacebookSlashCommand(slashDelete.dataset.command || "", false);
+                        event.preventDefault();
+                        event.stopPropagation();
+                        deleteFacebookSlashCommand(slashDelete.dataset.command || "", false)
+                            .catch((error) => console.warn("Facebook slash delete failed", error));
                         updateFacebookSlashMenu(section);
+                        return;
                     }
                     const slashItem = event.target.closest(".fb-message-slash-item");
                     if (slashItem) {
@@ -3715,11 +3759,14 @@
         }
         const edit = event.target.closest(".fb-slash-dialog-edit");
         if (edit) {
+            event.preventDefault();
             openFacebookSlashManager(edit.dataset.command || "");
         }
         const del = event.target.closest(".fb-slash-dialog-delete");
         if (del) {
-            deleteFacebookSlashCommand(del.dataset.command || "");
+            event.preventDefault();
+            deleteFacebookSlashCommand(del.dataset.command || "")
+                .catch((error) => console.warn("Facebook slash delete failed", error));
         }
         if (event.target.closest("#fb-slash-new")) {
             state.facebookSlashEditingCommand = "";
@@ -3727,7 +3774,7 @@
         }
     });
 
-    document.addEventListener("submit", (event) => {
+    document.addEventListener("submit", async (event) => {
         if (event.target?.id !== "fb-slash-form") return;
         event.preventDefault();
         const original = document.getElementById("fb-slash-original")?.value || "";
@@ -3736,12 +3783,13 @@
         const text = String(document.getElementById("fb-slash-text")?.value || "").trim();
         if (!command || !label || !text) return;
         if (!command.startsWith("/")) command = `/${command}`;
-        const next = facebookSlashCommands()
-            .filter((item) => item.command !== original && item.command !== command);
-        next.push({ command, label, text });
-        persistFacebookSlashCommands(next.sort((a, b) => a.command.localeCompare(b.command)));
-        openFacebookSlashManager(command);
-        updateFacebookSlashMenu(document.getElementById("page-fb-messages"));
+        try {
+            await saveFacebookSlashCommand(command, label, text, original);
+            openFacebookSlashManager(command);
+            updateFacebookSlashMenu(document.getElementById("page-fb-messages"));
+        } catch (error) {
+            alert(`Không lưu được slash command: ${error.message}`);
+        }
     });
 
     async function renderFacebookPostsPage() {

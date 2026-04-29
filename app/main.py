@@ -40,6 +40,7 @@ from app.facebook_pages import (
     update_facebook_page_group,
     verify_facebook_webhook_signature,
 )
+from app.facebook_slash_commands import delete_facebook_slash_command, list_facebook_slash_commands, upsert_facebook_slash_command
 from app.graph import retry_from_dlq, run_pipeline_async
 from app.job_store import delete_dlq_entry, get_dlq_entry, get_job, get_jobs_version, list_dlq, list_jobs, stats_snapshot, wait_for_jobs_version
 from app.logging import get_logger
@@ -686,6 +687,41 @@ async def mark_facebook_conversation_read_endpoint(conversation_id: str) -> dict
     except RuntimeError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return {"ok": True, "conversation": conversation}
+
+
+@app.get(f"{settings.api_prefix}/facebook/slash-commands")
+async def get_facebook_slash_commands_endpoint() -> dict:
+    commands = await asyncio.to_thread(list_facebook_slash_commands)
+    return {"total": len(commands), "commands": commands}
+
+
+@app.post(f"{settings.api_prefix}/facebook/slash-commands")
+async def upsert_facebook_slash_command_endpoint(request: Request) -> dict:
+    payload = await request.json()
+    try:
+        command = await asyncio.to_thread(
+            upsert_facebook_slash_command,
+            {
+                "command": payload.get("command", ""),
+                "label": payload.get("label", ""),
+                "text": payload.get("text", ""),
+            },
+            str(payload.get("original_command") or ""),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    commands = await asyncio.to_thread(list_facebook_slash_commands)
+    return {"ok": True, "command": command, "commands": commands}
+
+
+@app.delete(f"{settings.api_prefix}/facebook/slash-commands")
+async def delete_facebook_slash_command_endpoint(command: str = Query(...)) -> dict:
+    try:
+        deleted = await asyncio.to_thread(delete_facebook_slash_command, command)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    commands = await asyncio.to_thread(list_facebook_slash_commands)
+    return {"ok": True, "deleted": deleted, "commands": commands}
 
 
 @app.post(f"{settings.api_prefix}/facebook/messages/media")

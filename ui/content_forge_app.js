@@ -3043,6 +3043,16 @@
         updateRealtimeFacebookConversationList(conversationId);
     }
 
+    function facebookComposerIsFocused(conversationId = "") {
+        const active = document.activeElement;
+        return Boolean(
+            active
+            && active.id === "fb-message-input"
+            && active.closest("#fb-conversation-panel")
+            && (!conversationId || state.selectedFacebookConversationId === conversationId)
+        );
+    }
+
     function markFacebookConversationReadLocal(conversationId, persist = true) {
         const conversation = state.facebookConversations.find((item) => item.conversation_id === conversationId);
         if (!conversation) return;
@@ -3055,7 +3065,7 @@
         }
         updateRealtimeFacebookConversationList(conversationId);
         const panel = document.querySelector("#fb-conversation-panel");
-        if (panel && state.selectedFacebookConversationId === conversationId) {
+        if (panel && state.selectedFacebookConversationId === conversationId && !facebookComposerIsFocused(conversationId)) {
             const selected = detail || conversation;
             panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(selected, false)}`;
             scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
@@ -3130,7 +3140,12 @@
         upsertFacebookConversationState(conversation, messages[messages.length - 1] || {});
         updateRealtimeFacebookConversationList(conversation.conversation_id);
         const panel = document.querySelector("#fb-conversation-panel");
-        if (panel && state.selectedFacebookConversationId === conversation.conversation_id && !state.facebookConversationDetails[conversation.conversation_id]) {
+        if (
+            panel
+            && state.selectedFacebookConversationId === conversation.conversation_id
+            && !state.facebookConversationDetails[conversation.conversation_id]
+            && !facebookComposerIsFocused(conversation.conversation_id)
+        ) {
             panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(conversation, false)}`;
             scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
         }
@@ -3196,7 +3211,7 @@
             const loadedDetail = await fetchJSON(`/facebook/conversations/${encodeURIComponent(conversationId)}?message_limit=100`);
             state.facebookConversationDetails[conversationId] = loadedDetail;
             const panel = document.querySelector("#fb-conversation-panel");
-            if (state.selectedFacebookConversationId === conversationId && panel) {
+            if (state.selectedFacebookConversationId === conversationId && panel && !facebookComposerIsFocused(conversationId)) {
                 panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(loadedDetail, false)}`;
                 scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
             }
@@ -3262,7 +3277,7 @@
                         state.facebookConversationDetails[conversationId] = loadedDetail;
                         if (state.selectedFacebookConversationId === conversationId) {
                             const currentPanel = section.querySelector("#fb-conversation-panel");
-                            if (currentPanel) {
+                            if (currentPanel && !facebookComposerIsFocused(conversationId)) {
                                 currentPanel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(loadedDetail, false)}`;
                                 scrollFacebookMessagesToBottom(section);
                             }
@@ -3448,7 +3463,7 @@
                         state.facebookConversationDetails[conversationId] = detail;
                         if (state.selectedFacebookConversationId === conversationId) {
                             const panel = section.querySelector("#fb-conversation-panel");
-                            if (panel) {
+                            if (panel && !facebookComposerIsFocused(conversationId)) {
                                 panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(detail, false)}`;
                                 scrollFacebookMessagesToBottom(section);
                             }

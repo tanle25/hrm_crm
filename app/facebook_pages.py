@@ -579,6 +579,26 @@ def _parse_graph_time_for_db(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _parse_graph_time_utc(value: str | None) -> datetime | None:
+    parsed = _parse_graph_time(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _apply_read_state_to_conversation(conversation: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    existing = existing or _get_cached_facebook_conversation(str(conversation.get("conversation_id") or "")) or {}
+    read_at = _parse_graph_time_utc(str(existing.get("read_at") or ""))
+    updated_time = _parse_graph_time_utc(str(conversation.get("updated_time") or ""))
+    if read_at and updated_time and read_at >= updated_time:
+        conversation["unread_count"] = 0
+        conversation["status"] = "open"
+        conversation["read_at"] = existing.get("read_at")
+    return conversation
+
+
 def _comment_sentiment(message: str) -> str:
     text = (message or "").lower()
     if any(term in text for term in ["lỗi", "tệ", "chậm", "không trả lời", "hoàn tiền", "bực", "kém", "xấu", "lừa", "scam"]):
@@ -1860,7 +1880,7 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 500, sync_job_
                                 message["sticker"] = extras["sticker"]
                             if extras.get("reply_to"):
                                 message["reply_to"] = extras["reply_to"]
-                        conversation = _normalize_conversation(page, item)
+                        conversation = _apply_read_state_to_conversation(_normalize_conversation(page, item))
                         conversations.append(conversation)
                         fetched_for_page += 1
                         _upsert_facebook_conversation(conversation)

@@ -2983,7 +2983,7 @@
 
     function markFacebookConversationReadLocal(conversationId, persist = true) {
         const conversation = state.facebookConversations.find((item) => item.conversation_id === conversationId);
-        if (!conversation || !Number(conversation.unread_count || 0)) return;
+        if (!conversation) return;
         conversation.unread_count = 0;
         conversation.status = "open";
         const detail = state.facebookConversationDetails[conversationId];
@@ -3218,6 +3218,9 @@
         if (payload?.type === "facebook.conversation.synced") {
             const conversation = payload?.conversation || {};
             patchFacebookConversationFromSummary(conversation);
+            if (conversation?.conversation_id === state.selectedFacebookConversationId) {
+                markFacebookConversationReadLocal(conversation.conversation_id);
+            }
             refreshFacebookSelectedConversationIfNeeded(conversation).catch((error) => console.warn("Facebook synced conversation refresh failed", error));
             return;
         }

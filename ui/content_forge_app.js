@@ -2874,9 +2874,19 @@
         const conversation = state.facebookConversations.find((item) => item.conversation_id === conversationId);
         const list = document.getElementById("fb-conversation-list");
         if (!conversation || !list) return;
+        list.querySelector(".fb-conversation-empty")?.remove();
         const existing = list.querySelector(`.fb-conversation-item[data-conversation-id="${CSS.escape(conversationId)}"]`);
         existing?.remove();
-        list.insertAdjacentHTML("afterbegin", renderFacebookConversationItem(conversation, state.selectedFacebookConversationId));
+        const html = renderFacebookConversationItem(conversation, state.selectedFacebookConversationId);
+        const nextSibling = Array.from(list.querySelectorAll(".fb-conversation-item")).find((item) => {
+            const other = state.facebookConversations.find((entry) => entry.conversation_id === item.dataset.conversationId);
+            return String(other?.updated_time || "").localeCompare(String(conversation.updated_time || "")) < 0;
+        });
+        if (nextSibling) {
+            nextSibling.insertAdjacentHTML("beforebegin", html);
+        } else {
+            list.insertAdjacentHTML("beforeend", html);
+        }
         const inserted = list.querySelector(`.fb-conversation-item[data-conversation-id="${CSS.escape(conversationId)}"]`);
         if (inserted) bindFacebookConversationButton(inserted);
         list.querySelectorAll(".fb-conversation-item").forEach((item) => {
@@ -2886,8 +2896,17 @@
 
     function patchFacebookConversationFromSummary(conversation) {
         if (!conversation?.conversation_id) return;
-        upsertFacebookConversationState(conversation, (conversation.messages || [])[0] || {});
+        const messages = conversation.messages || [];
+        if (!state.selectedFacebookConversationId) {
+            state.selectedFacebookConversationId = conversation.conversation_id;
+        }
+        upsertFacebookConversationState(conversation, messages[messages.length - 1] || {});
         updateRealtimeFacebookConversationList(conversation.conversation_id);
+        const panel = document.querySelector("#fb-conversation-panel");
+        if (panel && state.selectedFacebookConversationId === conversation.conversation_id && !state.facebookConversationDetails[conversation.conversation_id]) {
+            panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(conversation, false)}`;
+            scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
+        }
     }
 
     async function patchFacebookConversationsFromCache(conversations) {
@@ -3029,6 +3048,12 @@
     }
 
     function applyFacebookMessageRealtime(payload) {
+        if (payload?.type === "facebook.conversation.synced") {
+            const conversation = payload?.conversation || {};
+            patchFacebookConversationFromSummary(conversation);
+            refreshFacebookSelectedConversationIfNeeded(conversation).catch((error) => console.warn("Facebook synced conversation refresh failed", error));
+            return;
+        }
         if (payload?.type === "facebook.conversations.sync.completed") {
             applyFacebookConversationSyncCompleted(payload).catch((error) => console.warn("Facebook sync completed handler failed", error));
             return;
@@ -3134,7 +3159,7 @@
                             <div id="fb-conversation-list" class="flex-1 min-h-0 overflow-y-auto">
                                 ${conversations.map((conversation) => {
                                     return renderFacebookConversationItem(conversation, selected?.conversation_id || "");
-                                }).join("") || `<div class="p-6 text-center text-hud-muted text-sm">Chưa có hội thoại trong DB. Hệ thống sẽ sync nền nếu page token có quyền inbox.</div>`}
+                                }).join("") || `<div class="fb-conversation-empty p-6 text-center text-hud-muted text-sm">Chưa có hội thoại trong DB. Hệ thống sẽ sync nền nếu page token có quyền inbox.</div>`}
                             </div>
                         </div>
                         <div id="fb-conversation-panel" class="hud-card flex flex-col overflow-hidden fade-in min-h-0" style="border-color: rgba(74, 158, 255, 0.3);">

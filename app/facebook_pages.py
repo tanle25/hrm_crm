@@ -1644,6 +1644,20 @@ def _publish_facebook_message_event(conversation: dict[str, Any], message: dict[
     )
 
 
+def _publish_facebook_conversation_synced(conversation: dict[str, Any], sync_job_id: str = "") -> None:
+    latest_message = (conversation.get("messages") or [])[-1] if conversation.get("messages") else {}
+    publish_realtime_event(
+        "facebook:messages",
+        {
+            "type": "facebook.conversation.synced",
+            "conversation_id": conversation.get("conversation_id") or "",
+            "conversation": conversation,
+            "message": latest_message,
+            "sync_job_id": sync_job_id,
+        },
+    )
+
+
 def _conversation_with_cached_messages(conversation: dict[str, Any], message_limit: int) -> dict[str, Any]:
     conversation_id = str(conversation.get("conversation_id") or "")
     message_limit = max(0, min(message_limit, 200))
@@ -1740,7 +1754,7 @@ def debug_facebook_messages(conversation_id: str = "", message_id: str = "") -> 
     }
 
 
-def sync_facebook_conversations(limit: int = 50, max_pages: int = 500) -> dict[str, Any]:
+def sync_facebook_conversations(limit: int = 50, max_pages: int = 500, sync_job_id: str = "") -> dict[str, Any]:
     settings = get_settings()
     limit = max(1, min(limit, 100))
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 1000))]
@@ -1811,6 +1825,7 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 500) -> dict[s
                                     "customer_id": conversation.get("customer_id") or "",
                                 }
                             )
+                        _publish_facebook_conversation_synced(conversation, sync_job_id)
                     after = ((payload.get("paging") or {}).get("cursors") or {}).get("after")
                     if not after or fetched_for_page >= per_page_limit:
                         break
@@ -1839,7 +1854,7 @@ def run_facebook_conversation_sync_job(job_id: str, limit: int = 50) -> dict[str
     job["started_at"] = _now()
     _upsert_facebook_sync_job(job)
     try:
-        result = sync_facebook_conversations(limit)
+        result = sync_facebook_conversations(limit, sync_job_id=job_id)
         job["status"] = "completed"
         job["completed_at"] = _now()
         job["result"] = {

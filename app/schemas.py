@@ -150,7 +150,10 @@ class FacebookConversationListResponse(BaseModel):
 
 class FacebookMessageSendRequest(BaseModel):
     conversation_id: str
-    message: str
+    message: str = ""
+    attachment_url: str = ""
+    attachment_type: str = "image"
+    attachment_name: str = ""
 
 
 class FacebookMessageSendResponse(BaseModel):

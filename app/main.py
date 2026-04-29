@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
+import secrets
 from contextlib import suppress
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -29,6 +31,7 @@ from app.facebook_pages import (
     latest_facebook_sync_jobs,
     list_facebook_page_groups,
     list_facebook_pages,
+    mark_facebook_conversation_read,
     process_facebook_webhook,
     send_facebook_message,
     sync_facebook_comments,
@@ -105,10 +108,13 @@ settings = get_settings()
 app = FastAPI(title=settings.app_name, version="2.0.0")
 log = get_logger("content_forge.api")
 UI_DIR = Path("ui")
+FACEBOOK_MESSAGE_MEDIA_DIR = Path("data/facebook_message_media")
 app.include_router(facebook_content_router)
 
 if UI_DIR.exists():
     app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
+FACEBOOK_MESSAGE_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/public/facebook-message-media", StaticFiles(directory=FACEBOOK_MESSAGE_MEDIA_DIR), name="facebook-message-media")
 
 
 AUTH_EXEMPT_PATHS = {
@@ -134,6 +140,8 @@ def _is_exempt_path(path: str) -> bool:
     if path in AUTH_EXEMPT_PATHS:
         return True
     if path.startswith("/ui/"):
+        return True
+    if path.startswith("/public/facebook-message-media/"):
         return True
     if path.startswith(f"{settings.api_prefix}/auth/"):
         return True
@@ -654,13 +662,72 @@ async def facebook_realtime_debug_endpoint() -> dict:
 @app.post(f"{settings.api_prefix}/facebook/messages/send", response_model=FacebookMessageSendResponse)
 async def send_facebook_message_endpoint(request: FacebookMessageSendRequest) -> FacebookMessageSendResponse:
     try:
-        result = await asyncio.to_thread(send_facebook_message, request.conversation_id, request.message)
+        result = await asyncio.to_thread(
+            send_facebook_message,
+            request.conversation_id,
+            request.message,
+            request.attachment_url,
+            request.attachment_type,
+            request.attachment_name,
+        )
     except httpx.HTTPStatusError as error:
         detail = error.response.text[:500] if error.response is not None else str(error)
         raise HTTPException(status_code=400, detail=f"Facebook message send failed: {detail}") from error
     except RuntimeError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return FacebookMessageSendResponse(**result)
+
+
+@app.post(f"{settings.api_prefix}/facebook/conversations/{{conversation_id}}/read")
+async def mark_facebook_conversation_read_endpoint(conversation_id: str) -> dict:
+    try:
+        conversation = await asyncio.to_thread(mark_facebook_conversation_read, conversation_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"ok": True, "conversation": conversation}
+
+
+@app.post(f"{settings.api_prefix}/facebook/messages/media")
+async def upload_facebook_message_media_endpoint(request: Request, file: UploadFile = File(...)) -> dict:
+    content_type = str(file.content_type or "application/octet-stream")
+    allowed = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "video/mp4": ".mp4",
+        "audio/mpeg": ".mp3",
+        "audio/mp4": ".m4a",
+        "application/pdf": ".pdf",
+    }
+    extension = allowed.get(content_type) or mimetypes.guess_extension(content_type) or ""
+    if content_type.startswith("image/") and not extension:
+        extension = ".jpg"
+    if not (content_type.startswith("image/") or content_type.startswith("video/") or content_type.startswith("audio/") or content_type == "application/pdf"):
+        raise HTTPException(status_code=400, detail="Unsupported media type.")
+    max_bytes = 25 * 1024 * 1024
+    media_id = secrets.token_hex(16)
+    target = FACEBOOK_MESSAGE_MEDIA_DIR / f"{media_id}{extension}"
+    size = 0
+    with target.open("wb") as handle:
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > max_bytes:
+                target.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail="Media file is too large.")
+            handle.write(chunk)
+    proto = str(request.headers.get("x-forwarded-proto") or request.url.scheme or "https")
+    host = str(request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc)
+    public_url = f"{proto}://{host}/public/facebook-message-media/{target.name}"
+    media_type = "image" if content_type.startswith("image/") else "video" if content_type.startswith("video/") else "audio" if content_type.startswith("audio/") else "file"
+    return {
+        "media_id": media_id,
+        "url": public_url,
+        "type": media_type,
+        "name": file.filename or target.name,
+        "mime_type": content_type,
+        "size": size,
+    }
 
 
 @app.get(f"{settings.api_prefix}/facebook/messages/debug")

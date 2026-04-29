@@ -1632,6 +1632,37 @@ def _refresh_conversation_cache(
     return payload
 
 
+def mark_facebook_conversation_read(conversation_id: str) -> dict[str, Any]:
+    conversation_id = (conversation_id or "").strip()
+    if not conversation_id:
+        raise RuntimeError("conversation_id is required.")
+    conversation = _get_cached_facebook_conversation(conversation_id)
+    if not conversation:
+        raise RuntimeError("Facebook conversation not found.")
+    page_id = str(conversation.get("page_id") or "")
+    customer_id = str(conversation.get("customer_id") or "")
+    page = next((item for item in _list_facebook_page_records() if str(item.get("page_id") or "") == page_id), None)
+    if page and page.get("page_access_token") and customer_id:
+        settings = get_settings()
+        base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
+        with httpx.Client(timeout=httpx.Timeout(8.0, connect=3.0)) as client:
+            try:
+                response = client.post(
+                    f"{base_url}/{page_id}/messages",
+                    params={"access_token": page["page_access_token"]},
+                    json={"recipient": {"id": customer_id}, "sender_action": "mark_seen"},
+                )
+                response.raise_for_status()
+            except httpx.HTTPError:
+                pass
+    conversation["unread_count"] = 0
+    conversation["status"] = "open"
+    conversation["read_at"] = _now()
+    _upsert_facebook_conversation(conversation)
+    _publish_facebook_conversation_synced(conversation)
+    return conversation
+
+
 def _publish_facebook_message_event(conversation: dict[str, Any], message: dict[str, Any], event_type: str = "facebook.message.upserted") -> None:
     publish_realtime_event(
         "facebook:messages",
@@ -1908,13 +1939,24 @@ def enqueue_facebook_conversation_sync(limit: int = 50) -> dict[str, Any]:
     return run_facebook_conversation_sync_job(job["job_id"], limit)
 
 
-def send_facebook_message(conversation_id: str, message: str) -> dict[str, Any]:
+def send_facebook_message(
+    conversation_id: str,
+    message: str = "",
+    attachment_url: str = "",
+    attachment_type: str = "image",
+    attachment_name: str = "",
+) -> dict[str, Any]:
     conversation_id = (conversation_id or "").strip()
     message = (message or "").strip()
+    attachment_url = (attachment_url or "").strip()
+    attachment_type = (attachment_type or "image").strip().lower()
+    attachment_name = (attachment_name or "").strip()
     if not conversation_id:
         raise RuntimeError("conversation_id is required.")
-    if not message:
-        raise RuntimeError("Message is required.")
+    if not message and not attachment_url:
+        raise RuntimeError("Message or attachment is required.")
+    if attachment_type not in {"image", "video", "audio", "file"}:
+        attachment_type = "file"
     conversation = _get_cached_facebook_conversation(conversation_id)
     if not conversation:
         raise RuntimeError("Conversation not found in local cache. Sync inbox first.")
@@ -1928,21 +1970,42 @@ def send_facebook_message(conversation_id: str, message: str) -> dict[str, Any]:
 
     settings = get_settings()
     base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
+    sent_ids: list[str] = []
     with httpx.Client(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
-        response = client.post(
-            f"{base_url}/{page_id}/messages",
-            params={"access_token": page["page_access_token"]},
-            json={
-                "recipient": {"id": customer_id},
-                "messaging_type": "RESPONSE",
-                "message": {"text": message},
-            },
-        )
-        response.raise_for_status()
-        payload = response.json()
+        if attachment_url:
+            response = client.post(
+                f"{base_url}/{page_id}/messages",
+                params={"access_token": page["page_access_token"]},
+                json={
+                    "recipient": {"id": customer_id},
+                    "messaging_type": "RESPONSE",
+                    "message": {
+                        "attachment": {
+                            "type": attachment_type,
+                            "payload": {"url": attachment_url, "is_reusable": True},
+                        }
+                    },
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+            sent_ids.append(str(payload.get("message_id") or ""))
+        if message:
+            response = client.post(
+                f"{base_url}/{page_id}/messages",
+                params={"access_token": page["page_access_token"]},
+                json={
+                    "recipient": {"id": customer_id},
+                    "messaging_type": "RESPONSE",
+                    "message": {"text": message},
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+            sent_ids.append(str(payload.get("message_id") or ""))
 
     sent_message = {
-        "message_id": str(payload.get("message_id") or ""),
+        "message_id": sent_ids[-1] if sent_ids else "",
         "conversation_id": conversation_id,
         "page_id": page_id,
         "customer_id": customer_id,
@@ -1953,8 +2016,18 @@ def send_facebook_message(conversation_id: str, message: str) -> dict[str, Any]:
         "to_id": customer_id,
         "to_name": conversation.get("customer_name") or "Facebook User",
         "direction": "outbound",
-        "attachments": [],
-        "fallback_label": "",
+        "attachments": [
+            {
+                "attachment_id": "",
+                "type": attachment_type,
+                "mime_type": "",
+                "name": attachment_name,
+                "url": attachment_url,
+                "preview_url": attachment_url if attachment_type == "image" else "",
+                "size": 0,
+            }
+        ] if attachment_url else [],
+        "fallback_label": "Đã gửi tệp đính kèm" if attachment_url and not message else "",
         "reply_to": {},
     }
     _upsert_facebook_message(sent_message)
@@ -1967,6 +2040,7 @@ def send_facebook_message(conversation_id: str, message: str) -> dict[str, Any]:
         str(conversation.get("page_picture_url") or ""),
     )
     conversation["status"] = "open"
+    conversation["unread_count"] = 0
     _upsert_facebook_conversation(conversation)
     _publish_facebook_message_event(conversation, sent_message, "facebook.message.sent")
     return {"sent": True, "conversation_id": conversation_id, "message_id": sent_message["message_id"]}
@@ -2051,6 +2125,13 @@ def process_facebook_webhook(payload: dict[str, Any]) -> dict[str, Any]:
                 str(page.get("name") or existing_conversation.get("page_name") or ""),
                 str(page.get("picture_url") or existing_conversation.get("page_picture_url") or ""),
             )
+            if is_echo:
+                conversation["unread_count"] = 0
+                conversation["status"] = "open"
+            else:
+                conversation["unread_count"] = _safe_int(existing_conversation.get("unread_count")) + 1
+                conversation["status"] = "unread"
+            _upsert_facebook_conversation(conversation)
             _publish_facebook_message_event(conversation, normalized)
             processed += 1
     return {"processed": processed}

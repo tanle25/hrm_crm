@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 import httpx
 
@@ -28,6 +29,7 @@ except ImportError:  # pragma: no cover
 DATA_PATH = Path("data/facebook_pages.json")
 GROUPS_PATH = Path("data/facebook_page_groups.json")
 SYNC_JOBS_PATH = Path("data/facebook_sync_jobs")
+MESSAGE_MEDIA_DIR = Path("data/facebook_message_media")
 STORE_LOCK = Lock()
 MESSAGE_DETAIL_FIELDS = "id,created_time,from,to,message,attachments,shares,sticker,reply_to{id,message,created_time,from,attachments,shares,sticker}"
 POST_ANALYTICS_KEYS = ["reach", "impressions", "engagement", "clicks", "comments", "reactions", "shares"]
@@ -1344,6 +1346,23 @@ def _attachment_has_media_url(attachment: dict[str, Any]) -> bool:
     return bool(str(attachment.get("url") or attachment.get("preview_url") or "").strip())
 
 
+def _delete_local_message_media(url: str) -> None:
+    parsed = urlparse(str(url or ""))
+    prefix = "/public/facebook-message-media/"
+    if not parsed.path.startswith(prefix):
+        return
+    filename = Path(unquote(parsed.path.removeprefix(prefix))).name
+    if not filename:
+        return
+    target = (MESSAGE_MEDIA_DIR / filename).resolve()
+    root = MESSAGE_MEDIA_DIR.resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return
+    target.unlink(missing_ok=True)
+
+
 def _message_fallback_label(message_text: str, attachments: list[dict[str, Any]], shares: dict[str, Any], sticker: dict[str, Any]) -> str:
     if message_text:
         return ""
@@ -2019,6 +2038,7 @@ def send_facebook_message(
             response.raise_for_status()
             payload = response.json()
             sent_ids.append(str(payload.get("message_id") or ""))
+            _delete_local_message_media(attachment["url"])
         if message:
             response = client.post(
                 f"{base_url}/{page_id}/messages",

@@ -68,6 +68,8 @@
         facebookSlashCommands: null,
         facebookSlashCommandsLoaded: false,
         facebookSlashEditingCommand: "",
+        facebookCreateScheduleMode: "now",
+        facebookCreateScheduledAt: "",
     };
 
     function escapeHtml(value) {
@@ -500,12 +502,16 @@
         const pageIds = Array.from(document.querySelectorAll(".fb-create-page-checkbox:checked")).map((input) => input.value.trim()).filter(Boolean);
         const groups = state.selectedFacebookCreateGroups || [];
         const hashtagCount = Number.parseInt(document.getElementById("fb-create-hashtag-count")?.value || "5", 10);
+        const scheduleMode = document.querySelector('input[name="schedule"]:checked')?.value || "now";
         return {
             brief,
             page_ids: pageIds,
             groups,
             tone: document.getElementById("fb-create-tone")?.value || "",
             hashtag_count: Number.isFinite(hashtagCount) ? Math.max(0, Math.min(12, hashtagCount)) : 5,
+            schedule_mode: scheduleMode,
+            scheduled_at: state.facebookCreateScheduledAt ? new Date(state.facebookCreateScheduledAt).toISOString() : "",
+            scheduled_at_local: state.facebookCreateScheduledAt || "",
             images: (state.facebookCreateImages || []).map((image) => ({
                 image_id: image.image_id || "",
                 name: image.name || "",
@@ -513,6 +519,74 @@
                 size: Number(image.size || 0),
             })),
         };
+    }
+
+    function toDatetimeLocalValue(date) {
+        const pad = (value) => String(value).padStart(2, "0");
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    function nextFacebookScheduleTimeFromHour(hourMinute) {
+        const match = String(hourMinute || "").match(/^(\d{1,2}):(\d{2})/);
+        const now = new Date();
+        const target = new Date(now);
+        target.setHours(match ? Number(match[1]) : 20, match ? Number(match[2]) : 0, 0, 0);
+        if (target.getTime() <= now.getTime() + 10 * 60 * 1000) {
+            target.setDate(target.getDate() + 1);
+        }
+        return target;
+    }
+
+    function renderFacebookScheduleDialog(defaultValue = "") {
+        const fallback = new Date(Date.now() + 30 * 60 * 1000);
+        const value = defaultValue || state.facebookCreateScheduledAt || toDatetimeLocalValue(fallback);
+        return `<div id="fb-schedule-dialog" class="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center p-4" style="z-index:9999;">
+            <div class="hud-card w-full max-w-md p-0 relative overflow-hidden" style="border-color: rgba(74, 158, 255, 0.45); box-shadow: 0 0 40px rgba(74, 158, 255, 0.14);">
+                <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                <div class="header-strip px-5 py-4 flex items-center gap-3" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.18), rgba(0, 240, 255, 0.04));">
+                    <i class="fa-solid fa-clock text-hud-fb"></i>
+                    <div>
+                        <div class="font-display text-white text-sm font-black uppercase-widest">Hẹn giờ đăng bài</div>
+                        <div class="text-[10px] text-hud-muted">Chọn ngày giờ để Facebook scheduled post.</div>
+                    </div>
+                    <button id="fb-schedule-close" class="ml-auto h-9 w-9 border border-white/10 bg-black/30 text-hud-muted hover:text-white hover:border-hud-fb/50 text-xs"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <form id="fb-schedule-form" class="p-5 space-y-4">
+                    <div>
+                        <label class="block text-[10px] uppercase-wide text-hud-fb mb-2">Ngày giờ đăng</label>
+                        <input id="fb-schedule-datetime" type="datetime-local" class="hud-input w-full px-4 py-3 text-sm" value="${escapeHtml(value)}">
+                        <div class="text-[10px] text-hud-muted mt-2">Nên chọn thời điểm sau hiện tại ít nhất 10 phút.</div>
+                    </div>
+                    <div class="flex justify-end gap-2 pt-2">
+                        <button id="fb-schedule-cancel" type="button" class="btn-ghost px-4 py-2 text-[10px] uppercase-wide font-bold">Hủy</button>
+                        <button type="submit" class="px-5 py-2 text-[10px] uppercase-wide font-bold" style="background:#4a9eff;color:white;border:1px solid #4a9eff;"><i class="fa-solid fa-check"></i> Chọn giờ</button>
+                    </div>
+                </form>
+            </div>
+        </div>`;
+    }
+
+    function openFacebookScheduleDialog(defaultValue = "") {
+        document.getElementById("fb-schedule-dialog")?.remove();
+        document.body.insertAdjacentHTML("beforeend", renderFacebookScheduleDialog(defaultValue));
+    }
+
+    function closeFacebookScheduleDialog() {
+        document.getElementById("fb-schedule-dialog")?.remove();
+    }
+
+    async function applyFacebookBestTimeSchedule() {
+        try {
+            const stats = await fetchJSON("/facebook/stats?days=7");
+            const bestTime = stats.best_posting_time || "20:00";
+            const target = nextFacebookScheduleTimeFromHour(bestTime);
+            state.facebookCreateScheduledAt = toDatetimeLocalValue(target);
+            setFacebookCreateFeedback("success", `AI đã chọn giờ vàng: ${state.facebookCreateScheduledAt.replace("T", " ")}.`);
+        } catch (error) {
+            const target = nextFacebookScheduleTimeFromHour("20:00");
+            state.facebookCreateScheduledAt = toDatetimeLocalValue(target);
+            setFacebookCreateFeedback("warn", `Không lấy được giờ vàng từ stats, tạm dùng ${state.facebookCreateScheduledAt.replace("T", " ")}.`);
+        }
     }
 
     function setFacebookCreateFeedback(kind, message) {
@@ -3792,6 +3866,10 @@
     }
 
     document.addEventListener("click", (event) => {
+        if (event.target.closest("#fb-schedule-close") || event.target.closest("#fb-schedule-cancel")) {
+            closeFacebookScheduleDialog();
+            return;
+        }
         if (event.target.closest(".fb-slash-manage")) {
             event.preventDefault();
             event.stopPropagation();
@@ -3826,6 +3904,18 @@
     }, true);
 
     document.addEventListener("submit", async (event) => {
+        if (event.target?.id === "fb-schedule-form") {
+            event.preventDefault();
+            const value = String(document.getElementById("fb-schedule-datetime")?.value || "").trim();
+            if (!value) return;
+            state.facebookCreateScheduledAt = value;
+            const scheduledRadio = document.querySelector('input[name="schedule"][value="scheduled"]');
+            if (scheduledRadio) scheduledRadio.checked = true;
+            state.facebookCreateScheduleMode = "scheduled";
+            closeFacebookScheduleDialog();
+            setFacebookCreateFeedback("success", `Đã chọn lịch đăng: ${value.replace("T", " ")}.`);
+            return;
+        }
         if (event.target?.id !== "fb-slash-form") return;
         event.preventDefault();
         const original = document.getElementById("fb-slash-original")?.value || "";
@@ -4382,6 +4472,20 @@
         document.getElementById("fb-create-preview")?.addEventListener("click", () => {
             previewFacebookCreateVariants();
         });
+        document.querySelectorAll('input[name="schedule"]').forEach((input) => {
+            input.addEventListener("change", async () => {
+                state.facebookCreateScheduleMode = input.value || "now";
+                if (input.value === "scheduled") {
+                    openFacebookScheduleDialog();
+                }
+                if (input.value === "best_time") {
+                    await applyFacebookBestTimeSchedule();
+                }
+                if (input.value === "now") {
+                    state.facebookCreateScheduledAt = "";
+                }
+            });
+        });
         document.getElementById("fb-create-enqueue")?.addEventListener("click", async () => {
             const payload = facebookCreatePayload();
             if (!payload.brief) {
@@ -4391,6 +4495,16 @@
             if (!state.facebookCreatePreview?.posts?.length) {
                 setFacebookCreateFeedback("error", "Cần bấm PREVIEW và duyệt nội dung trước khi enqueue đăng bài.");
                 return;
+            }
+            if (payload.schedule_mode === "scheduled" && !payload.scheduled_at) {
+                openFacebookScheduleDialog();
+                setFacebookCreateFeedback("warn", "Cần chọn ngày giờ trước khi hẹn giờ đăng bài.");
+                return;
+            }
+            if (payload.schedule_mode === "best_time" && !payload.scheduled_at) {
+                await applyFacebookBestTimeSchedule();
+                payload.scheduled_at = state.facebookCreateScheduledAt ? new Date(state.facebookCreateScheduledAt).toISOString() : "";
+                payload.scheduled_at_local = state.facebookCreateScheduledAt || "";
             }
             setSelectedFacebookCreatePages(payload.page_ids);
             setSelectedFacebookCreateGroups(payload.groups);
@@ -4406,10 +4520,13 @@
                         brief: payload.brief,
                         variants: state.facebookCreatePreview.posts,
                         images: payload.images,
-                        publish_status: "publish",
+                        publish_status: payload.schedule_mode === "now" ? "publish" : "scheduled",
+                        scheduled_at: payload.scheduled_at,
+                        schedule_mode: payload.schedule_mode === "best_time" ? "best_time" : (payload.schedule_mode === "scheduled" ? "manual" : ""),
                     }),
                 });
-                setFacebookCreateFeedback("success", `Đã enqueue job Facebook ${result.job_id}. Hệ thống đang đăng ${state.facebookCreatePreview.posts.length} post trong nền.`);
+                const scheduledText = payload.schedule_mode === "now" ? "đang đăng" : `đã hẹn giờ ${payload.scheduled_at_local.replace("T", " ")}`;
+                setFacebookCreateFeedback("success", `Đã enqueue job Facebook ${result.job_id}. Hệ thống ${scheduledText} ${state.facebookCreatePreview.posts.length} post.`);
             } catch (error) {
                 setFacebookCreateFeedback("error", `Enqueue failed: ${error.message}`);
             } finally {

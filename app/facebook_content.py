@@ -5,7 +5,7 @@ import json
 import shutil
 import tempfile
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -100,7 +100,9 @@ class FacebookContentJobCreateRequest(BaseModel):
     brief: str = Field(..., min_length=1, max_length=8000)
     variants: list[FacebookPostVariant] = Field(default_factory=list)
     images: list[FacebookContentImageInput] = Field(default_factory=list)
-    publish_status: Literal["draft", "publish"] = "publish"
+    publish_status: Literal["draft", "publish", "scheduled"] = "publish"
+    scheduled_at: str = ""
+    schedule_mode: Literal["manual", "best_time", ""] = ""
 
 
 class FacebookContentJobResponse(BaseModel):
@@ -113,6 +115,29 @@ class FacebookContentJobResponse(BaseModel):
 
 def _now() -> str:
     return datetime.utcnow().isoformat()
+
+
+def _parse_scheduled_at(value: str) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _scheduled_timestamp(value: str) -> int | None:
+    parsed = _parse_scheduled_at(value)
+    if not parsed:
+        return None
+    minimum = datetime.now(timezone.utc) + timedelta(minutes=10)
+    if parsed < minimum:
+        raise RuntimeError("Scheduled publish time must be at least 10 minutes in the future.")
+    return int(parsed.timestamp())
 
 
 def _job_path(job_id: str) -> Path:
@@ -200,7 +225,13 @@ def _page_token_map() -> dict[str, dict[str, Any]]:
     return {str(page.get("page_id") or ""): page for page in _list_facebook_page_records()}
 
 
-def _publish_single_page(client: httpx.Client, page: dict[str, Any], variant: dict[str, Any], image_paths: list[Path]) -> dict[str, Any]:
+def _publish_single_page(
+    client: httpx.Client,
+    page: dict[str, Any],
+    variant: dict[str, Any],
+    image_paths: list[Path],
+    scheduled_at: str = "",
+) -> dict[str, Any]:
     page_id = str(variant.get("page_id") or page.get("page_id") or "")
     token = str(page.get("page_access_token") or "")
     if not page_id or not token:
@@ -226,20 +257,28 @@ def _publish_single_page(client: httpx.Client, page: dict[str, Any], variant: di
             media_id = str(response.json().get("id") or "")
             if media_id:
                 attached_media.append({"media_fbid": media_id})
+    scheduled_ts = _scheduled_timestamp(scheduled_at) if scheduled_at else None
     if attached_media:
         feed_data = {"message": message}
         for index, item in enumerate(attached_media):
             feed_data[f"attached_media[{index}]"] = json.dumps(item)
+        if scheduled_ts:
+            feed_data["published"] = "false"
+            feed_data["scheduled_publish_time"] = str(scheduled_ts)
         response = client.post(
             f"{base_url}/{page_id}/feed",
             params={"access_token": token},
             data=feed_data,
         )
     else:
+        feed_data = {"message": message}
+        if scheduled_ts:
+            feed_data["published"] = "false"
+            feed_data["scheduled_publish_time"] = str(scheduled_ts)
         response = client.post(
             f"{base_url}/{page_id}/feed",
             params={"access_token": token},
-            data={"message": message},
+            data=feed_data,
         )
     response.raise_for_status()
     payload = response.json()
@@ -247,10 +286,11 @@ def _publish_single_page(client: httpx.Client, page: dict[str, Any], variant: di
     return {
         "page_id": page_id,
         "page_name": variant.get("page_name") or page.get("name") or "",
-        "status": "published",
+        "status": "scheduled" if scheduled_ts else "published",
         "facebook_post_id": post_id,
         "permalink": f"https://www.facebook.com/{post_id}" if post_id else "",
-        "published_at": _now(),
+        "published_at": "" if scheduled_ts else _now(),
+        "scheduled_at": scheduled_at if scheduled_ts else "",
     }
 
 
@@ -267,7 +307,13 @@ def _run_publish_job(job_id: str) -> None:
         for variant in job.get("variants", []):
             page_id = str(variant.get("page_id") or "")
             try:
-                result = _publish_single_page(client, pages.get(page_id) or {}, variant, image_paths)
+                result = _publish_single_page(
+                    client,
+                    pages.get(page_id) or {},
+                    variant,
+                    image_paths,
+                    str(job.get("scheduled_at") or ""),
+                )
             except Exception as exc:
                 result = {
                     "page_id": page_id,
@@ -281,7 +327,12 @@ def _run_publish_job(job_id: str) -> None:
             job["status"] = "posting"
             _upsert_job(job)
     failures = [item for item in results if item.get("status") == "failed"]
-    job["status"] = "failed" if failures and len(failures) == len(results) else "completed"
+    if failures and len(failures) == len(results):
+        job["status"] = "failed"
+    elif job.get("publish_status") == "scheduled":
+        job["status"] = "scheduled"
+    else:
+        job["status"] = "completed"
     job["completed_at"] = _now()
     job["results"] = results
     _upsert_job(job)
@@ -383,21 +434,29 @@ async def upload_facebook_content_images(files: list[UploadFile] = File(default=
 async def create_facebook_content_job(request: FacebookContentJobCreateRequest, background_tasks: BackgroundTasks) -> FacebookContentJobResponse:
     if not request.variants:
         raise HTTPException(status_code=400, detail="At least one Facebook post variant is required.")
+    if request.publish_status == "scheduled":
+        try:
+            if _scheduled_timestamp(request.scheduled_at) is None:
+                raise RuntimeError("Scheduled publish time is required.")
+        except RuntimeError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
     job_id = uuid.uuid4().hex
     now = _now()
     job = {
         "job_id": job_id,
-        "status": "queued" if request.publish_status == "publish" else "draft",
+        "status": "queued" if request.publish_status in {"publish", "scheduled"} else "draft",
         "created_at": now,
         "updated_at": now,
         "brief": request.brief,
         "variants": [item.model_dump() for item in request.variants],
         "images": [item.model_dump() for item in request.images],
         "publish_status": request.publish_status,
+        "scheduled_at": request.scheduled_at,
+        "schedule_mode": request.schedule_mode,
         "results": [],
     }
     await asyncio.to_thread(_upsert_job, job)
-    if request.publish_status == "publish":
+    if request.publish_status in {"publish", "scheduled"}:
         background_tasks.add_task(_run_publish_job, job_id)
     return FacebookContentJobResponse(job_id=job_id, status=job["status"], created_at=now, updated_at=now, data=job)
 

@@ -2439,8 +2439,31 @@
             const [x, y] = point(item, index, "reach").split(",");
             return `<circle cx="${x}" cy="${y}" r="3"/>`;
         }).join("");
+        const hoverTargets = items.map((item, index) => {
+            const [reachX, reachY] = point(item, index, "reach").split(",").map(Number);
+            const [, engagementY] = point(item, index, "engagement").split(",").map(Number);
+            const tooltipX = Math.min(width - 190, Math.max(54, reachX - 78));
+            const tooltipY = Math.max(46, Math.min(reachY, engagementY) - 54);
+            return `
+                <g class="fb-chart-hover">
+                    <line x1="${reachX.toFixed(1)}" y1="${top}" x2="${reachX.toFixed(1)}" y2="${height - bottom}" stroke="#00f0ff" stroke-width="0.7" stroke-opacity="0" stroke-dasharray="4 5"/>
+                    <circle cx="${reachX.toFixed(1)}" cy="${reachY.toFixed(1)}" r="8" fill="#4a9eff" fill-opacity="0"/>
+                    <rect x="${tooltipX.toFixed(1)}" y="${tooltipY.toFixed(1)}" width="156" height="48" fill="rgba(0,0,0,0.9)" stroke="#00f0ff" stroke-opacity="0.55" class="fb-chart-tooltip"/>
+                    <text x="${(tooltipX + 10).toFixed(1)}" y="${(tooltipY + 16).toFixed(1)}" fill="#ffffff" font-size="9" font-family="JetBrains Mono" class="fb-chart-tooltip">${escapeHtml(item.date || "")}</text>
+                    <text x="${(tooltipX + 10).toFixed(1)}" y="${(tooltipY + 31).toFixed(1)}" fill="#4a9eff" font-size="9" font-family="JetBrains Mono" class="fb-chart-tooltip">Reach ${formatCompact(item.reach || 0)}</text>
+                    <text x="${(tooltipX + 86).toFixed(1)}" y="${(tooltipY + 31).toFixed(1)}" fill="#22c55e" font-size="9" font-family="JetBrains Mono" class="fb-chart-tooltip">Eng ${formatCompact(item.engagement || 0)}</text>
+                    <rect x="${Math.max(left, reachX - 14).toFixed(1)}" y="${top}" width="28" height="${height - top - bottom}" fill="transparent"/>
+                </g>
+            `;
+        }).join("");
         return `
             <svg viewBox="0 0 ${width} ${height}" class="w-full h-56">
+                <style>
+                    .fb-chart-tooltip { opacity: 0; pointer-events: none; transition: opacity 0.12s ease; }
+                    .fb-chart-hover:hover .fb-chart-tooltip { opacity: 1; }
+                    .fb-chart-hover:hover line { stroke-opacity: 0.65; }
+                    .fb-chart-hover:hover circle { fill-opacity: 0.18; }
+                </style>
                 <defs><linearGradient id="fbReachArea" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#4a9eff" stop-opacity="0.35"/><stop offset="100%" stop-color="#4a9eff" stop-opacity="0"/></linearGradient></defs>
                 <g stroke="rgba(74,158,255,0.1)" stroke-width="0.5">
                     <line x1="40" y1="40" x2="780" y2="40"/><line x1="40" y1="100" x2="780" y2="100"/><line x1="40" y1="160" x2="780" y2="160"/><line x1="40" y1="220" x2="780" y2="220"/>
@@ -2450,6 +2473,7 @@
                 ${reachPoints ? `<polyline points="${reachPoints}" fill="none" stroke="#4a9eff" stroke-width="2" style="filter: drop-shadow(0 0 4px #4a9eff);"/>` : ""}
                 ${engagementPoints ? `<polyline points="${engagementPoints}" fill="none" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="5 5"/>` : ""}
                 <g fill="#4a9eff">${dots}</g>
+                ${hoverTargets}
             </svg>
         `;
     }

@@ -2792,16 +2792,20 @@
     function renderFacebookSlashMenu(inputValue = "") {
         const matches = facebookSlashMatches(inputValue);
         return `<div id="fb-message-slash-menu" class="${matches.length ? "" : "hidden"} border border-hud-cyan/25 bg-black/70 p-2 text-[11px]">
-            <div class="text-[9px] uppercase-widest font-bold text-hud-cyan mb-2"><i class="fa-solid fa-terminal"></i> Slash menu</div>
-            <div class="space-y-1">
-                ${matches.map((item) => `
-                    <button class="fb-message-slash-item w-full text-left px-3 py-2 border border-hud-cyan/10 hover:border-hud-fb/50 hover:bg-hud-fb/10" data-command="${escapeHtml(item.command)}">
-                        <span class="font-mono text-hud-fb font-bold">${escapeHtml(item.command)}</span>
-                        <span class="text-white font-bold ml-2">${escapeHtml(item.label)}</span>
-                        <span class="block text-hud-muted mt-0.5 truncate">${escapeHtml(item.text)}</span>
-                    </button>
-                `).join("")}
-            </div>
+            ${renderFacebookSlashMenuContent(matches)}
+        </div>`;
+    }
+
+    function renderFacebookSlashMenuContent(matches) {
+        return `<div class="text-[9px] uppercase-widest font-bold text-hud-cyan mb-2"><i class="fa-solid fa-terminal"></i> Slash menu</div>
+        <div class="space-y-1">
+            ${matches.map((item) => `
+                <button class="fb-message-slash-item w-full text-left px-3 py-2 border border-hud-cyan/10 hover:border-hud-fb/50 hover:bg-hud-fb/10" data-command="${escapeHtml(item.command)}">
+                    <span class="font-mono text-hud-fb font-bold">${escapeHtml(item.command)}</span>
+                    <span class="text-white font-bold ml-2">${escapeHtml(item.label)}</span>
+                    <span class="block text-hud-muted mt-0.5 truncate">${escapeHtml(item.text)}</span>
+                </button>
+            `).join("")}
         </div>`;
     }
 
@@ -2809,10 +2813,9 @@
         const input = section?.querySelector("#fb-message-input");
         const menu = section?.querySelector("#fb-message-slash-menu");
         if (!input || !menu) return;
-        const html = renderFacebookSlashMenu(input.value);
-        const template = document.createElement("template");
-        template.innerHTML = html.trim();
-        menu.replaceWith(template.content.firstElementChild);
+        const matches = facebookSlashMatches(input.value);
+        menu.classList.toggle("hidden", !matches.length);
+        menu.innerHTML = renderFacebookSlashMenuContent(matches);
     }
 
     function applyFacebookSlashCommand(section, command) {

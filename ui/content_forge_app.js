@@ -71,6 +71,10 @@
         facebookCreateScheduleMode: "now",
         facebookCreateScheduledAt: "",
         facebookContentJobsRefreshTimer: null,
+        selectedFacebookReelPageIds: JSON.parse(localStorage.getItem("content_forge_fb_reel_page_ids") || "[]"),
+        selectedFacebookReelGroups: JSON.parse(localStorage.getItem("content_forge_fb_reel_groups") || "[]"),
+        facebookReelVideo: null,
+        facebookReelJobsRefreshTimer: null,
     };
 
     function escapeHtml(value) {
@@ -216,6 +220,16 @@
     function setSelectedFacebookCreateGroups(groups) {
         state.selectedFacebookCreateGroups = Array.isArray(groups) ? groups.filter(Boolean) : [];
         localStorage.setItem("content_forge_fb_create_groups", JSON.stringify(state.selectedFacebookCreateGroups));
+    }
+
+    function setSelectedFacebookReelPages(pageIds) {
+        state.selectedFacebookReelPageIds = Array.isArray(pageIds) ? pageIds.filter(Boolean) : [];
+        localStorage.setItem("content_forge_fb_reel_page_ids", JSON.stringify(state.selectedFacebookReelPageIds));
+    }
+
+    function setSelectedFacebookReelGroups(groups) {
+        state.selectedFacebookReelGroups = Array.isArray(groups) ? groups.filter(Boolean) : [];
+        localStorage.setItem("content_forge_fb_reel_groups", JSON.stringify(state.selectedFacebookReelGroups));
     }
 
     function setSelectedShopeeSites(siteIds) {
@@ -4077,6 +4091,401 @@
         }
     }
 
+    function facebookReelFeedback(kind, message) {
+        const feedback = document.getElementById("fb-reels-feedback");
+        if (!feedback) return;
+        const tone = {
+            error: "text-hud-red border-hud-red/30 bg-hud-red/10",
+            success: "text-hud-green border-hud-green/30 bg-hud-green/10",
+            loading: "text-hud-cyan border-hud-cyan/30 bg-hud-cyan/10",
+            warn: "text-hud-amber border-hud-amber/30 bg-hud-amber/10",
+        }[kind] || "text-hud-muted border-hud-fb/20 bg-black/20";
+        feedback.className = `text-[11px] border p-3 ${tone}`;
+        feedback.textContent = message;
+        feedback.classList.remove("hidden");
+    }
+
+    function facebookReelBadge(status) {
+        const key = String(status || "").toLowerCase();
+        if (["completed", "published"].includes(key)) return ["green", "PUBLISHED", "fa-check"];
+        if (key === "scheduled") return ["amber", "SCHEDULED", "fa-clock"];
+        if (["queued", "pending"].includes(key)) return ["cyan", "QUEUED", "fa-hourglass-half"];
+        if (["uploading", "processing", "running"].includes(key)) return ["cyan", "UPLOADING", "fa-spinner fa-spin"];
+        if (["failed", "error"].includes(key)) return ["red", "FAILED", "fa-triangle-exclamation"];
+        return ["", String(status || "DRAFT").toUpperCase(), "fa-circle"];
+    }
+
+    function renderFacebookReelVideoPreview() {
+        const slot = document.getElementById("fb-reels-video-preview");
+        if (!slot) return;
+        const video = state.facebookReelVideo;
+        if (!video) {
+            slot.classList.add("hidden");
+            slot.innerHTML = "";
+            return;
+        }
+        slot.classList.remove("hidden");
+        const warnings = video.warnings || [];
+        slot.innerHTML = `
+            <div class="rounded-2xl border border-hud-fb/20 bg-[#0f1720] p-4">
+                <div class="flex items-start gap-4">
+                    <div class="w-16 h-24 border border-hud-fb/30 bg-black/40 flex items-center justify-center text-hud-fb shrink-0">
+                        <i class="fa-solid fa-film text-xl"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-white font-black text-sm truncate">${escapeHtml(video.name || "Reel video")}</div>
+                        <div class="mt-2 grid grid-cols-4 gap-2 text-center">
+                            <div class="border border-hud-fb/15 bg-black/20 px-2 py-2"><div class="metric-num text-hud-cyan">${formatNumber((video.size || 0) / 1024 / 1024, 1)}MB</div><div class="text-[8px] text-hud-muted uppercase-widest">SIZE</div></div>
+                            <div class="border border-hud-fb/15 bg-black/20 px-2 py-2"><div class="metric-num text-hud-cyan">${formatNumber(video.duration_sec || 0, 1)}s</div><div class="text-[8px] text-hud-muted uppercase-widest">DURATION</div></div>
+                            <div class="border border-hud-fb/15 bg-black/20 px-2 py-2"><div class="metric-num text-hud-cyan">${formatNumber(video.width || 0)}×${formatNumber(video.height || 0)}</div><div class="text-[8px] text-hud-muted uppercase-widest">RES</div></div>
+                            <div class="border border-hud-fb/15 bg-black/20 px-2 py-2"><div class="metric-num text-hud-cyan">${formatNumber(video.fps || 0, 1)}</div><div class="text-[8px] text-hud-muted uppercase-widest">FPS</div></div>
+                        </div>
+                        ${warnings.length ? `<div class="mt-3 border border-hud-amber/30 bg-hud-amber/10 text-hud-amber text-[11px] p-3">${escapeHtml(warnings.join(" | "))}</div>` : `<div class="mt-3 text-[11px] text-hud-green"><i class="fa-solid fa-check"></i> Video đạt validate cơ bản cho Reels.</div>`}
+                        <button id="fb-reels-video-clear" type="button" class="mt-3 text-[10px] text-hud-red border border-hud-red/30 px-3 py-1.5 hover:bg-hud-red/10"><i class="fa-solid fa-trash"></i> XÓA VIDEO TẠM</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        slot.querySelector("#fb-reels-video-clear")?.addEventListener("click", () => {
+            state.facebookReelVideo = null;
+            const input = document.getElementById("fb-reels-video");
+            if (input) input.value = "";
+            renderFacebookReelVideoPreview();
+        });
+    }
+
+    async function uploadFacebookReelVideo(file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        const response = await fetch(`${API_BASE}/facebook/reels/videos`, {
+            method: "POST",
+            body: formData,
+        });
+        if (!response.ok) {
+            let message = `${response.status} ${response.statusText}`;
+            try {
+                const data = await response.json();
+                message = data.detail || data.message || message;
+            } catch (_) {}
+            throw new Error(message);
+        }
+        return response.json();
+    }
+
+    async function renderFacebookReelTargets() {
+        const pageList = document.getElementById("fb-reels-page-list");
+        const groupList = document.getElementById("fb-reels-group-list");
+        const help = document.getElementById("fb-reels-help");
+        if (!pageList || !groupList) return;
+        try {
+            const [pagesPayload, groupsPayload] = await Promise.all([
+                fetchJSON("/facebook/pages"),
+                fetchJSON("/facebook/page-groups").catch(() => ({ groups: [] })),
+            ]);
+            const pages = pagesPayload.pages || [];
+            const groups = groupsPayload.groups || [];
+            const validPageIds = state.selectedFacebookReelPageIds.filter((pageId) => pages.some((page) => String(page.page_id || "") === pageId));
+            const validGroups = state.selectedFacebookReelGroups.filter((group) => groups.some((item) => String(item.name || "") === group));
+            setSelectedFacebookReelPages(validPageIds);
+            setSelectedFacebookReelGroups(validGroups);
+            groupList.innerHTML = groups.length ? groups.map((group) => {
+                const name = String(group.name || "");
+                return `<button type="button" class="fb-reels-group-chip badge ${validGroups.includes(name) ? "green" : "cyan"} hover:brightness-125" data-group="${escapeHtml(name)}">${escapeHtml(name)} · ${formatNumber(group.page_count || 0)}</button>`;
+            }).join("") : `<div class="text-[11px] text-hud-muted px-2 py-2">Chưa có nhóm page.</div>`;
+            pageList.innerHTML = pages.length ? pages.map((page) => {
+                const pageId = String(page.page_id || "");
+                return `
+                    <label class="fb-reels-page-row flex items-center gap-3 rounded-xl border border-hud-fb/12 bg-black/25 px-3 py-2 hover:border-hud-fb/40 transition cursor-pointer" data-page-id="${escapeHtml(pageId)}" data-page-group="${escapeHtml(page.group || "")}">
+                        <input type="checkbox" class="fb-reels-page-checkbox" value="${escapeHtml(pageId)}" ${validPageIds.includes(pageId) ? "checked" : ""}/>
+                        <div class="w-9 h-9 rounded-full overflow-hidden bg-hud-fb/10 flex items-center justify-center flex-shrink-0">
+                            ${page.picture_url ? `<img src="${escapeHtml(page.picture_url)}" alt="" class="w-full h-full object-cover"/>` : `<i class="fa-brands fa-facebook text-hud-fb text-xs"></i>`}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-white text-[12px] font-bold truncate">${escapeHtml(page.name || pageId)}</div>
+                            <div class="text-[10px] text-hud-muted truncate">${escapeHtml(page.group || "Chưa có nhóm")}</div>
+                        </div>
+                    </label>
+                `;
+            }).join("") : `<div class="text-[11px] text-hud-muted px-2 py-2">Chưa có fanpage nào.</div>`;
+            const updateHelp = () => {
+                if (help) help.textContent = `${state.selectedFacebookReelGroups.length} nhóm · ${state.selectedFacebookReelPageIds.length} page đã chọn`;
+            };
+            groupList.querySelectorAll(".fb-reels-group-chip").forEach((button) => {
+                button.addEventListener("click", () => {
+                    const group = button.dataset.group || "";
+                    const nextGroups = state.selectedFacebookReelGroups.includes(group)
+                        ? state.selectedFacebookReelGroups.filter((item) => item !== group)
+                        : [...state.selectedFacebookReelGroups, group];
+                    setSelectedFacebookReelGroups(nextGroups);
+                    button.classList.toggle("green", nextGroups.includes(group));
+                    button.classList.toggle("cyan", !nextGroups.includes(group));
+                    pageList.querySelectorAll(".fb-reels-page-row").forEach((row) => {
+                        if (row.dataset.pageGroup !== group) return;
+                        const checkbox = row.querySelector(".fb-reels-page-checkbox");
+                        if (checkbox) checkbox.checked = nextGroups.includes(group);
+                    });
+                    setSelectedFacebookReelPages(Array.from(pageList.querySelectorAll(".fb-reels-page-checkbox:checked")).map((input) => input.value));
+                    updateHelp();
+                });
+            });
+            pageList.querySelectorAll(".fb-reels-page-checkbox").forEach((checkbox) => {
+                checkbox.addEventListener("change", () => {
+                    setSelectedFacebookReelPages(Array.from(pageList.querySelectorAll(".fb-reels-page-checkbox:checked")).map((input) => input.value));
+                    updateHelp();
+                });
+            });
+            updateHelp();
+        } catch (error) {
+            groupList.innerHTML = `<div class="text-[11px] text-hud-red px-2 py-2">Không tải được nhóm page.</div>`;
+            pageList.innerHTML = `<div class="text-[11px] text-hud-red px-2 py-2">Không tải được fanpage.</div>`;
+        }
+    }
+
+    function facebookReelJobCounts(job) {
+        return (job.results || []).reduce((acc, result) => {
+            const status = String(result.status || "").toLowerCase();
+            if (status === "scheduled") acc.scheduled += 1;
+            else if (["published", "completed"].includes(status)) acc.published += 1;
+            else if (status === "failed") acc.failed += 1;
+            else acc.pending += 1;
+            return acc;
+        }, { published: 0, scheduled: 0, failed: 0, pending: 0 });
+    }
+
+    function renderFacebookReelJob(job) {
+        const [tone, label, icon] = facebookReelBadge(job.status);
+        const counts = facebookReelJobCounts(job);
+        return `
+            <article class="hud-card p-4" style="border-color: rgba(74, 158, 255, 0.25);">
+                <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                <div class="flex items-start gap-4">
+                    <div class="w-10 h-14 border border-hud-fb/30 bg-hud-fb/10 flex items-center justify-center text-hud-fb shrink-0"><i class="fa-solid fa-film"></i></div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-start gap-3">
+                            <div class="flex-1 min-w-0">
+                                <div class="text-white font-black text-sm truncate">${escapeHtml(job.title || (job.caption || "Facebook Reel").split(/\r?\n/)[0])}</div>
+                                <div class="text-[10px] text-hud-muted mt-1 truncate">${escapeHtml(job.caption || "")}</div>
+                            </div>
+                            <span class="badge ${tone}"><i class="fa-solid ${icon} text-[9px]"></i>${label}</span>
+                        </div>
+                        <div class="mt-3 flex flex-wrap gap-2 text-[10px] uppercase-wide">
+                            <span class="badge" style="color:#4a9eff; border-color: rgba(74, 158, 255, 0.45);">REEL ${escapeHtml(String(job.job_id || "").slice(0, 8))}</span>
+                            <span class="text-hud-muted"><i class="fa-solid fa-clock"></i> ${escapeHtml(job.scheduled_at ? `Hẹn giờ · ${formatDate(job.scheduled_at)}` : formatDate(job.updated_at || job.created_at))}</span>
+                            <span class="text-hud-muted"><i class="fa-solid fa-users"></i> ${formatNumber((job.targets || []).length)} page</span>
+                            <span class="text-hud-muted"><i class="fa-solid fa-trash"></i> video local xóa sau xử lý</span>
+                        </div>
+                        ${(job.warnings || []).length ? `<div class="mt-3 text-[10px] text-hud-amber border border-hud-amber/25 bg-hud-amber/10 p-2">${escapeHtml((job.warnings || []).join(" | "))}</div>` : ""}
+                        <div class="mt-3 grid grid-cols-4 gap-2 text-center">
+                            <div class="border border-hud-green/20 bg-hud-green/5 px-2 py-2"><div class="metric-num text-lg text-hud-green">${formatNumber(counts.published)}</div><div class="text-[8px] uppercase-widest text-hud-muted">PUBLISHED</div></div>
+                            <div class="border border-hud-amber/20 bg-hud-amber/5 px-2 py-2"><div class="metric-num text-lg text-hud-amber">${formatNumber(counts.scheduled)}</div><div class="text-[8px] uppercase-widest text-hud-muted">SCHEDULED</div></div>
+                            <div class="border border-hud-cyan/20 bg-hud-cyan/5 px-2 py-2"><div class="metric-num text-lg text-hud-cyan">${formatNumber(counts.pending)}</div><div class="text-[8px] uppercase-widest text-hud-muted">PENDING</div></div>
+                            <div class="border border-hud-red/20 bg-hud-red/5 px-2 py-2"><div class="metric-num text-lg text-hud-red">${formatNumber(counts.failed)}</div><div class="text-[8px] uppercase-widest text-hud-muted">FAILED</div></div>
+                        </div>
+                        <div class="mt-3 grid gap-2">
+                            ${(job.results || []).map((result) => {
+                                const [resultTone, resultLabel, resultIcon] = facebookReelBadge(result.status);
+                                return `
+                                    <div class="flex items-center gap-3 border border-hud-fb/10 bg-black/20 px-3 py-2 text-[10px]">
+                                        <span class="badge ${resultTone} shrink-0"><i class="fa-solid ${resultIcon} text-[9px]"></i>${resultLabel}</span>
+                                        <span class="text-white font-bold truncate min-w-[120px]">${escapeHtml(result.page_name || result.page_id || "Facebook Page")}</span>
+                                        <span class="text-hud-muted truncate flex-1">${escapeHtml(redactSensitiveText(result.error || result.facebook_reel_id || result.facebook_post_id || ""))}</span>
+                                        ${result.permalink ? `<a class="text-hud-fb hover:text-white" href="${escapeHtml(result.permalink)}" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : ""}
+                                    </div>
+                                `;
+                            }).join("") || `<div class="text-[10px] text-hud-muted uppercase-wide">Chưa có kết quả publish.</div>`}
+                        </div>
+                    </div>
+                </div>
+            </article>
+        `;
+    }
+
+    async function renderFacebookReelsPage() {
+        const section = document.getElementById("page-fb-reels");
+        if (!section) return;
+        if (state.facebookReelJobsRefreshTimer) {
+            clearTimeout(state.facebookReelJobsRefreshTimer);
+            state.facebookReelJobsRefreshTimer = null;
+        }
+        section.innerHTML = `
+            <div class="max-w-[1440px] mx-auto grid gap-6 xl:grid-cols-[minmax(0,1fr)_460px] items-start">
+                <div class="space-y-6">
+                    <div class="hud-card fade-in" style="border-color: rgba(74, 158, 255, 0.3);">
+                        <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                        <div class="header-strip px-6 py-4" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15), rgba(74, 158, 255, 0.02)); border-bottom-color: rgba(74, 158, 255, 0.4);">
+                            <div class="flex items-center gap-3">
+                                <i class="fa-solid fa-film text-hud-fb"></i>
+                                <h3 class="font-display font-black text-sm text-white uppercase-widest">FACEBOOK REELS PUBLISHER</h3>
+                                <span class="badge amber ml-auto">VIDEO TẠM · XÓA SAU XỬ LÝ</span>
+                            </div>
+                        </div>
+                        <div class="p-7 space-y-5">
+                            <div>
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-upload"></i> VIDEO REELS</label>
+                                <label class="block rounded-2xl border border-hud-fb/25 bg-[#101923] px-4 py-5 cursor-pointer hover:bg-[#162333] hover:border-hud-fb/60 transition">
+                                    <input id="fb-reels-video" type="file" accept="video/*" class="hidden"/>
+                                    <div class="flex items-center gap-3 text-xs">
+                                        <span class="w-12 h-12 rounded-full bg-[#24384f] flex items-center justify-center"><i class="fa-solid fa-film text-hud-fb"></i></span>
+                                        <div class="flex-1 min-w-0">
+                                            <div class="text-white font-bold">Chọn video dọc 9:16</div>
+                                            <div class="text-hud-muted text-[10px]">Khuyến nghị 4-60 giây, tối thiểu 540x960, 23fps+. File chỉ lưu tạm trên server.</div>
+                                        </div>
+                                        <i class="fa-solid fa-plus text-hud-fb"></i>
+                                    </div>
+                                </label>
+                            </div>
+                            <div id="fb-reels-video-preview" class="hidden"></div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">TIÊU ĐỀ</label>
+                                    <input id="fb-reels-title" class="hud-input w-full px-4 py-3 text-sm" maxlength="255" placeholder="Tiêu đề ngắn cho Reel"/>
+                                </div>
+                                <div>
+                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">LỊCH ĐĂNG</label>
+                                    <select id="fb-reels-publish-status" class="hud-select w-full px-4 py-3 text-sm">
+                                        <option value="publish">Đăng ngay</option>
+                                        <option value="scheduled">Hẹn giờ</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="fb-reels-schedule-wrap" class="hidden">
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">NGÀY GIỜ ĐĂNG</label>
+                                <input id="fb-reels-scheduled-at" type="datetime-local" class="hud-input w-full px-4 py-3 text-sm"/>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">CAPTION</label>
+                                <textarea id="fb-reels-caption" class="hud-textarea w-full min-h-[190px] px-4 py-3 text-sm" placeholder="Hook 1-2 dòng đầu, mô tả ngắn, CTA, hotline/Zalo, hashtag..."></textarea>
+                            </div>
+                            <div id="fb-reels-feedback" class="hidden text-[11px] border p-3"></div>
+                            <button id="fb-reels-enqueue" class="w-full py-3 text-sm uppercase tracking-[0.25em] font-black flex items-center justify-center gap-3" style="background: linear-gradient(135deg, #4a9eff 0%, #2d7bd4 100%); border: 2px solid #4a9eff; color: #fff; box-shadow: 0 0 20px rgba(74, 158, 255, 0.4); font-family: Orbitron;">
+                                <i class="fa-solid fa-paper-plane"></i> ENQUEUE REELS JOB
+                            </button>
+                        </div>
+                    </div>
+                    <div id="fb-reels-job-list" class="space-y-4"></div>
+                </div>
+                <aside class="hud-card fade-in sticky top-5" style="border-color: rgba(74, 158, 255, 0.28);">
+                    <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                    <div class="header-strip px-5 py-4" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15), rgba(74, 158, 255, 0.02)); border-bottom-color: rgba(74, 158, 255, 0.35);">
+                        <div class="flex items-center gap-3">
+                            <i class="fa-solid fa-users-viewfinder text-hud-fb"></i>
+                            <h3 class="font-display font-black text-sm text-white uppercase-widest">CHỌN FANPAGE</h3>
+                        </div>
+                    </div>
+                    <div class="p-5">
+                        <label class="text-[10px] font-bold uppercase-widest mb-3 flex items-center gap-2" style="color:#4a9eff;"><i class="fa-solid fa-layer-group"></i><span>NHÓM PAGE</span></label>
+                        <div id="fb-reels-group-list" class="flex flex-wrap gap-2 mb-3"></div>
+                        <label class="text-[10px] font-bold uppercase-widest mb-3 mt-5 flex items-center gap-2" style="color:#4a9eff;"><i class="fa-brands fa-facebook"></i><span>DANH SÁCH PAGE</span></label>
+                        <div id="fb-reels-page-list" class="max-h-[680px] overflow-y-auto space-y-2 pr-1"><div class="text-[11px] text-hud-muted">Đang tải fanpage...</div></div>
+                        <p id="fb-reels-help" class="text-[10px] text-hud-muted mt-3">Chọn nhóm để tích nhanh các page trong nhóm.</p>
+                    </div>
+                </aside>
+            </div>
+        `;
+        renderFacebookReelVideoPreview();
+        await renderFacebookReelTargets();
+        await renderFacebookReelJobs();
+        section.querySelector("#fb-reels-video")?.addEventListener("change", async (event) => {
+            const file = Array.from(event.target.files || [])[0];
+            if (!file) return;
+            facebookReelFeedback("loading", "Đang upload tạm và validate video Reels...");
+            try {
+                state.facebookReelVideo = await uploadFacebookReelVideo(file);
+                renderFacebookReelVideoPreview();
+                facebookReelFeedback("success", "Đã upload tạm video. File local sẽ được xóa sau khi job xử lý.");
+            } catch (error) {
+                state.facebookReelVideo = null;
+                renderFacebookReelVideoPreview();
+                facebookReelFeedback("error", `Upload video failed: ${error.message}`);
+            }
+        });
+        section.querySelector("#fb-reels-publish-status")?.addEventListener("change", (event) => {
+            section.querySelector("#fb-reels-schedule-wrap")?.classList.toggle("hidden", event.target.value !== "scheduled");
+        });
+        section.querySelector("#fb-reels-enqueue")?.addEventListener("click", async () => {
+            const video = state.facebookReelVideo;
+            const caption = String(section.querySelector("#fb-reels-caption")?.value || "").trim();
+            const title = String(section.querySelector("#fb-reels-title")?.value || "").trim();
+            const publishStatus = String(section.querySelector("#fb-reels-publish-status")?.value || "publish");
+            const scheduledLocal = String(section.querySelector("#fb-reels-scheduled-at")?.value || "");
+            if (!video?.video_id) {
+                facebookReelFeedback("error", "Cần upload video Reels trước.");
+                return;
+            }
+            if (!caption) {
+                facebookReelFeedback("error", "Cần nhập caption cho Reel.");
+                return;
+            }
+            if (!state.selectedFacebookReelPageIds.length && !state.selectedFacebookReelGroups.length) {
+                facebookReelFeedback("error", "Cần chọn ít nhất một page hoặc nhóm page.");
+                return;
+            }
+            if (publishStatus === "scheduled" && !scheduledLocal) {
+                facebookReelFeedback("warn", "Cần chọn ngày giờ trước khi hẹn giờ.");
+                return;
+            }
+            const button = section.querySelector("#fb-reels-enqueue");
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ENQUEUEING`;
+            }
+            try {
+                const result = await fetchJSON("/facebook/reels/jobs", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        video_id: video.video_id,
+                        caption,
+                        title,
+                        page_ids: state.selectedFacebookReelPageIds,
+                        groups: state.selectedFacebookReelGroups,
+                        publish_status: publishStatus,
+                        scheduled_at: scheduledLocal ? new Date(scheduledLocal).toISOString() : "",
+                        schedule_mode: publishStatus === "scheduled" ? "manual" : "",
+                    }),
+                });
+                state.facebookReelVideo = null;
+                const input = section.querySelector("#fb-reels-video");
+                if (input) input.value = "";
+                renderFacebookReelVideoPreview();
+                facebookReelFeedback("success", `Đã enqueue Reel job ${result.job_id}. Video local sẽ được xóa sau khi xử lý.`);
+                await renderFacebookReelJobs();
+            } catch (error) {
+                facebookReelFeedback("error", `Enqueue Reel failed: ${error.message}`);
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = `<i class="fa-solid fa-paper-plane"></i> ENQUEUE REELS JOB`;
+                }
+            }
+        });
+    }
+
+    async function renderFacebookReelJobs() {
+        const slot = document.getElementById("fb-reels-job-list");
+        if (!slot) return;
+        try {
+            const payload = await fetchJSON("/facebook/reels/jobs?limit=50");
+            const jobs = payload.jobs || [];
+            const active = jobs.some((job) => ["queued", "uploading", "processing", "running"].includes(String(job.status || "").toLowerCase()));
+            slot.innerHTML = `
+                <div class="hud-card p-3 flex items-center gap-3" style="border-color: rgba(74, 158, 255, 0.25);">
+                    <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
+                    <div class="font-display text-white font-black text-xs uppercase-widest"><i class="fa-solid fa-list-check text-hud-fb"></i> REELS JOBS</div>
+                    <span class="badge cyan ml-auto">${formatNumber(payload.total || jobs.length)} JOBS</span>
+                    <button id="fb-reels-jobs-refresh" class="btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> REFRESH</button>
+                </div>
+                ${jobs.map(renderFacebookReelJob).join("") || `<div class="hud-card p-8 text-center text-hud-muted text-sm" style="border-color: rgba(74, 158, 255, 0.25);">Chưa có job Reels.</div>`}
+            `;
+            slot.querySelector("#fb-reels-jobs-refresh")?.addEventListener("click", renderFacebookReelJobs);
+            if (state.facebookReelJobsRefreshTimer) clearTimeout(state.facebookReelJobsRefreshTimer);
+            if (active && document.getElementById("page-fb-reels")?.classList.contains("active")) {
+                state.facebookReelJobsRefreshTimer = setTimeout(renderFacebookReelJobs, 5000);
+            }
+        } catch (error) {
+            slot.innerHTML = `<div class="text-hud-red text-sm">Failed to load Reel jobs: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
     function facebookContentJobBadge(status) {
         const key = String(status || "").toLowerCase();
         if (["completed", "published"].includes(key)) return ["green", "COMPLETED", "fa-check"];
@@ -4641,11 +5050,16 @@
             clearTimeout(state.facebookContentJobsRefreshTimer);
             state.facebookContentJobsRefreshTimer = null;
         }
+        if (pageKey !== "fb-reels" && state.facebookReelJobsRefreshTimer) {
+            clearTimeout(state.facebookReelJobsRefreshTimer);
+            state.facebookReelJobsRefreshTimer = null;
+        }
         if (pageKey === "submit") {
             await renderSubmitSiteOptions();
             await renderRecentSubmissions();
         }
         if (pageKey === "fb-create") await renderFacebookCreateTargets();
+        if (pageKey === "fb-reels") await renderFacebookReelsPage();
         if (pageKey === "fb-jobs") await renderFacebookContentJobsPage();
         if (pageKey === "jobs") await renderJobsPage();
         if (pageKey === "detail") await renderDetailPage();

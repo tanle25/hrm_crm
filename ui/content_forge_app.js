@@ -2878,7 +2878,7 @@
     function renderFacebookSlashManagerDialog() {
         const commands = facebookSlashCommands();
         const editing = commands.find((item) => item.command === state.facebookSlashEditingCommand) || {};
-        return `<div id="fb-slash-dialog" class="fixed inset-0 z-[80] bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
+        return `<div id="fb-slash-dialog" class="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center p-4" style="z-index:9999;">
             <div class="hud-card w-full max-w-4xl p-0 relative overflow-hidden" style="border-color: rgba(0, 240, 255, 0.35); box-shadow: 0 0 40px rgba(0, 240, 255, 0.12);">
                 <span class="c-tl"></span><span class="c-br"></span>
                 <div class="header-strip px-5 py-4 flex items-center gap-3" style="background: linear-gradient(90deg, rgba(0, 240, 255, 0.16) 0%, rgba(74, 158, 255, 0.04) 55%, rgba(0, 240, 255, 0.1) 100%);">
@@ -3768,6 +3768,12 @@
     }
 
     document.addEventListener("click", (event) => {
+        if (event.target.closest(".fb-slash-manage")) {
+            event.preventDefault();
+            event.stopPropagation();
+            openFacebookSlashManager();
+            return;
+        }
         if (event.target.closest("#fb-slash-close")) {
             closeFacebookSlashManager();
         }
@@ -3787,6 +3793,13 @@
             openFacebookSlashManager();
         }
     });
+
+    document.addEventListener("click", (event) => {
+        if (!event.target.closest(".fb-slash-manage")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        openFacebookSlashManager();
+    }, true);
 
     document.addEventListener("submit", async (event) => {
         if (event.target?.id !== "fb-slash-form") return;

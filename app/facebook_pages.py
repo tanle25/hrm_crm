@@ -2210,7 +2210,7 @@ def process_facebook_webhook(payload: dict[str, Any]) -> dict[str, Any]:
 def facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:
     cache_key = f"{max(1, min(days, 30))}:{max(1, min(max_pages, 100))}"
     cached = _get_cached_facebook_stats(cache_key)
-    if cached:
+    if cached and _safe_int((cached.get("totals") or {}).get("posts")):
         cached["cached"] = True
         return cached
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
@@ -2227,6 +2227,14 @@ def _facebook_stats_from_cached_posts(days: int, page_count: int, warnings: list
     now = datetime.now(timezone.utc)
     since = now - timedelta(days=normalized_days)
     posts = _list_cached_facebook_posts_since(since, 1000)
+    effective_warnings = list(warnings or [])
+    used_latest_fallback = False
+    if not posts and _count_cached_facebook_posts():
+        posts = _list_cached_facebook_posts(1000, 0)
+        used_latest_fallback = True
+        effective_warnings.append(
+            f"No cached Facebook posts in the last {normalized_days} days; showing latest cached posts instead."
+        )
     reach_by_day: defaultdict[str, int] = defaultdict(int)
     engagement_by_day: defaultdict[str, int] = defaultdict(int)
     comments = 0
@@ -2283,7 +2291,14 @@ def _facebook_stats_from_cached_posts(days: int, page_count: int, warnings: list
     ctr = round((engagement_total / reach_total) * 100, 2) if reach_total else 0.0
     covered_posts = sum(analytics_counts.get(status, 0) for status in ["available", "partial", "stale"])
     analytics_coverage = round((covered_posts / len(posts)) * 100, 2) if posts else 0.0
-    labels = [(since + timedelta(days=index + 1)).date().isoformat() for index in range(normalized_days)]
+    if used_latest_fallback and posts:
+        parsed_dates = [_parse_graph_time(str(post.get("created_time") or "")) for post in posts]
+        parsed_dates = [item for item in parsed_dates if item]
+        start_date = min(parsed_dates) if parsed_dates else since
+        start_date = max(start_date, now - timedelta(days=90))
+        labels = [(start_date + timedelta(days=index)).date().isoformat() for index in range((now.date() - start_date.date()).days + 1)]
+    else:
+        labels = [(since + timedelta(days=index + 1)).date().isoformat() for index in range(normalized_days)]
     best_hour = max(hour_buckets.items(), key=lambda item: item[1])[0] if hour_buckets else None
     content_performance = []
     for label, data in content_types.items():
@@ -2317,7 +2332,7 @@ def _facebook_stats_from_cached_posts(days: int, page_count: int, warnings: list
         "top_posts": top_posts[:5],
         "best_posting_time": f"{best_hour:02d}:00" if best_hour is not None else "",
         "content_performance": content_performance[:6],
-        "warnings": (warnings or [])[:20],
+        "warnings": effective_warnings[:20],
         "cached": True,
     }
 
@@ -2325,6 +2340,9 @@ def _facebook_stats_from_cached_posts(days: int, page_count: int, warnings: list
 def sync_facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[str, Any]:
     cache_key = f"{max(1, min(days, 30))}:{max(1, min(max_pages, 100))}"
     pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
-    payload = _facebook_stats_from_cached_posts(days, len(pages), ["Stats recomputed from cached Facebook posts. Use Posts sync to refresh Graph metrics."])
+    posts_payload = sync_facebook_posts(limit=10, max_pages=max_pages)
+    warnings = ["Stats refreshed from Facebook posts sync."]
+    warnings.extend(posts_payload.get("warnings") or [])
+    payload = _facebook_stats_from_cached_posts(days, len(pages), warnings)
     _upsert_facebook_stats(cache_key, payload)
     return payload

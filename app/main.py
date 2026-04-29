@@ -608,7 +608,7 @@ async def get_facebook_conversations(limit: int = 25, message_limit: int = 1) ->
     result = await asyncio.to_thread(
         facebook_conversations,
         max(1, min(limit, 100)),
-        25,
+        500,
         max(0, min(message_limit, 200)),
     )
     return FacebookConversationListResponse(**result)

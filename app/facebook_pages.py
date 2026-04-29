@@ -1633,7 +1633,7 @@ def _conversation_with_cached_messages(conversation: dict[str, Any], message_lim
     return conversation
 
 
-def facebook_conversations(limit: int = 50, max_pages: int = 25, message_limit: int = 1) -> dict[str, Any]:
+def facebook_conversations(limit: int = 50, max_pages: int = 500, message_limit: int = 1) -> dict[str, Any]:
     conversations = _list_cached_facebook_conversations(limit)
     enriched: list[dict[str, Any]] = []
     if max(0, min(message_limit, 200)) == 1:
@@ -1655,7 +1655,7 @@ def facebook_conversations(limit: int = 50, max_pages: int = 25, message_limit: 
     else:
         for conversation in conversations:
             enriched.append(_conversation_with_cached_messages(conversation, message_limit))
-    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 1000))]
     warnings = [] if enriched else ["No cached Facebook conversations yet. Run sync to fetch inbox from Graph API."]
     return {
         "total": len(enriched),
@@ -1707,10 +1707,10 @@ def debug_facebook_messages(conversation_id: str = "", message_id: str = "") -> 
     }
 
 
-def sync_facebook_conversations(limit: int = 50, max_pages: int = 25) -> dict[str, Any]:
+def sync_facebook_conversations(limit: int = 50, max_pages: int = 500) -> dict[str, Any]:
     settings = get_settings()
     limit = max(1, min(limit, 100))
-    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 100))]
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")][: max(1, min(max_pages, 1000))]
     base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
     conversations: list[dict[str, Any]] = []
     warnings: list[str] = []

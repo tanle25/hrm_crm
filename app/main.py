@@ -46,6 +46,7 @@ from app.job_store import delete_dlq_entry, get_dlq_entry, get_job, get_jobs_ver
 from app.logging import get_logger
 from app.metrics import dlq_size, jobs_submitted, start_metrics_server_once
 from app.postgres import init_schema as init_postgres_schema, migrate_local_state as migrate_local_postgres_state
+from app.public_chat import router as public_chat_router
 from app.queue import create_job_id, enqueue_job, enqueue_saved_state, init_job_state, queue_is_full, update_job
 from app.rag_categories import create_category, list_categories
 from app.rag import delete_source_documents, get_source_documents, get_taxonomy_summary, ingest_url, list_rag_sources, search_knowledge
@@ -111,6 +112,7 @@ log = get_logger("content_forge.api")
 UI_DIR = Path("ui")
 FACEBOOK_MESSAGE_MEDIA_DIR = Path("data/facebook_message_media")
 app.include_router(facebook_content_router)
+app.include_router(public_chat_router)
 
 if UI_DIR.exists():
     app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
@@ -186,6 +188,8 @@ async def auth_middleware(request: Request, call_next):
     if _is_exempt_path(path):
         return await call_next(request)
     if _is_authenticated_request(request):
+        return await call_next(request)
+    if path.startswith(f"{settings.api_prefix}/public/") and verify_api_token(_request_api_token(request)):
         return await call_next(request)
     if path.startswith(f"{settings.api_prefix}/facebook/") and verify_api_token(_request_api_token(request)):
         return await call_next(request)

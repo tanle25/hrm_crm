@@ -64,7 +64,7 @@
         facebookMessagesAutoSynced: false,
         facebookConversationDetails: {},
         facebookConversationDetailPending: {},
-        facebookMessageDraftMedia: null,
+        facebookMessageDraftMedia: [],
     };
 
     function escapeHtml(value) {
@@ -2768,7 +2768,7 @@
             return `<div class="p-10 text-center text-hud-muted">Chọn một hội thoại để xem tin nhắn.</div>`;
         }
         const messages = selected.messages || [];
-        const draftMedia = state.facebookMessageDraftMedia?.conversation_id === selected.conversation_id ? state.facebookMessageDraftMedia : null;
+        const draftMedia = (state.facebookMessageDraftMedia || []).filter((item) => item.conversation_id === selected.conversation_id);
         return `
             <div class="header-strip px-4 py-3 flex items-center gap-3" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
                 <div class="w-8 h-8 rounded-full bg-hud-fb/20 border border-hud-fb flex items-center justify-center flex-shrink-0">
@@ -2779,7 +2779,7 @@
                     <div class="text-[9px] uppercase-wide" style="color:#4a9eff;">${escapeHtml(selected.page_name || "Facebook Page")} · ${escapeHtml(selected.customer_id || "")}</div>
                 </div>
                 <div class="ml-auto flex gap-2 items-center">
-                    <span class="badge ${Number(selected.unread_count || 0) ? "amber" : "cyan"}">${Number(selected.unread_count || 0) ? "UNREAD" : "OPEN"}</span>
+                    <span class="badge ${Number(selected.unread_count || 0) ? "amber" : "cyan"}">${Number(selected.unread_count || 0) ? `${formatNumber(selected.unread_count)} UNREAD` : "OPEN"}</span>
                     <button class="btn-ghost px-2.5 py-1.5 text-[10px]" title="Gắn thẻ"><i class="fa-solid fa-user-tag"></i> TAG</button>
                     <button class="btn-ghost px-2.5 py-1.5 text-[10px]" title="Báo cáo"><i class="fa-solid fa-flag"></i></button>
                 </div>
@@ -2794,17 +2794,21 @@
                     <div class="text-[9px] uppercase-widest font-bold mb-1 text-hud-cyan"><i class="fa-solid fa-robot"></i> AI SUGGEST</div>
                     <div class="text-white/90">Chọn một hội thoại để hệ thống gợi ý phản hồi theo ngữ cảnh. Bạn vẫn có thể chỉnh lại trước khi gửi.</div>
                 </div>
-                <div id="fb-message-media-preview" class="${draftMedia ? "" : "hidden"} border border-hud-fb/30 bg-hud-fb/10 px-3 py-2 text-[11px] text-white/90 flex items-center gap-3">
-                    <i class="fa-solid ${draftMedia?.type === "image" ? "fa-image" : draftMedia?.type === "video" ? "fa-video" : draftMedia?.type === "audio" ? "fa-microphone" : "fa-paperclip"} text-hud-fb"></i>
-                    <span class="min-w-0 flex-1">
-                        <span class="block font-bold truncate">${escapeHtml(draftMedia?.name || "Media")}</span>
-                        <span class="block text-[9px] text-hud-muted uppercase-wide">${escapeHtml(draftMedia?.type || "")} · ${formatNumber(draftMedia?.size || 0)} bytes</span>
-                    </span>
-                    <button id="fb-message-media-remove" class="btn-ghost px-2 py-1 text-[10px]" title="Bỏ media"><i class="fa-solid fa-xmark"></i></button>
+                <div id="fb-message-media-preview" class="${draftMedia.length ? "" : "hidden"} border border-hud-fb/30 bg-hud-fb/10 px-3 py-2 text-[11px] text-white/90 space-y-2">
+                    ${draftMedia.map((item) => `
+                        <div class="flex items-center gap-3" data-media-id="${escapeHtml(item.media_id || "")}">
+                            <i class="fa-solid ${item.type === "image" ? "fa-image" : item.type === "video" ? "fa-video" : item.type === "audio" ? "fa-microphone" : "fa-paperclip"} text-hud-fb"></i>
+                            <span class="min-w-0 flex-1">
+                                <span class="block font-bold truncate">${escapeHtml(item.name || "Media")}</span>
+                                <span class="block text-[9px] text-hud-muted uppercase-wide">${escapeHtml(item.type || "")} · ${formatNumber(item.size || 0)} bytes</span>
+                            </span>
+                            <button class="fb-message-media-remove btn-ghost px-2 py-1 text-[10px]" data-media-id="${escapeHtml(item.media_id || "")}" title="Bỏ media"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                    `).join("")}
                 </div>
                 <div class="flex gap-2">
                     <input id="fb-message-input" type="text" placeholder="Gõ phản hồi của bạn..." class="hud-input flex-1 px-3 py-2 text-xs"/>
-                    <input id="fb-message-media-input" type="file" class="hidden" accept="image/*,video/mp4,audio/*,application/pdf"/>
+                    <input id="fb-message-media-input" type="file" class="hidden" accept="image/*,video/mp4,audio/*,application/pdf" multiple/>
                     <button id="fb-message-media-button" class="btn-ghost px-3 py-2 text-[10px]" title="Đính kèm"><i class="fa-solid fa-paperclip"></i></button>
                     <button class="btn-ghost px-3 py-2 text-[10px] uppercase-wide font-bold" style="background: rgba(0, 240, 255, 0.15); color: #00f0ff;"><i class="fa-solid fa-robot"></i> AI</button>
                     <button id="fb-message-send" class="px-4 py-2 text-xs uppercase-wide font-bold" style="background:#4a9eff;color:#fff;border:1px solid #4a9eff;"><i class="fa-solid fa-paper-plane"></i></button>
@@ -2873,6 +2877,7 @@
             next,
             ...state.facebookConversations.filter((item) => item.conversation_id !== conversationId),
         ].sort((a, b) => String(b.updated_time || "").localeCompare(String(a.updated_time || "")));
+        updateFacebookUnreadBadges();
     }
 
     function appendRealtimeFacebookMessage(message) {
@@ -2912,8 +2917,9 @@
             ?.remove();
     }
 
-    function createOptimisticFacebookMessage(conversationId, text, media = null) {
+    function createOptimisticFacebookMessage(conversationId, text, mediaItems = []) {
         const conversation = state.facebookConversations.find((item) => item.conversation_id === conversationId) || {};
+        const attachments = (Array.isArray(mediaItems) ? mediaItems : [mediaItems]).filter((item) => item?.url);
         return {
             message_id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
             conversation_id: conversationId,
@@ -2926,7 +2932,7 @@
             to_id: conversation.customer_id || "",
             to_name: conversation.customer_name || "Facebook User",
             direction: "outbound",
-            attachments: media?.url ? [{
+            attachments: attachments.map((media) => ({
                 attachment_id: media.media_id || "",
                 type: media.type || "file",
                 mime_type: media.mime_type || "",
@@ -2934,8 +2940,8 @@
                 url: media.url || "",
                 preview_url: media.type === "image" ? media.url || "" : "",
                 size: media.size || 0,
-            }] : [],
-            fallback_label: media?.url && !text ? "Đã gửi tệp đính kèm" : "",
+            })),
+            fallback_label: attachments.length && !text ? "Đã gửi tệp đính kèm" : "",
             reply_to: {},
             local_status: "sending",
         };
@@ -2996,6 +3002,27 @@
             fetchJSON(`/facebook/conversations/${encodeURIComponent(conversationId)}/read`, { method: "POST" })
                 .catch((error) => console.warn("Facebook mark read failed", error));
         }
+        updateFacebookUnreadBadges();
+    }
+
+    function facebookUnreadTotal() {
+        return state.facebookConversations.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
+    }
+
+    function updateFacebookUnreadBadges() {
+        const total = facebookUnreadTotal();
+        const sidebar = document.getElementById("fb-messages-sidebar-unread");
+        if (sidebar) {
+            sidebar.textContent = formatNumber(total);
+            sidebar.classList.toggle("hidden", total <= 0);
+            sidebar.classList.toggle("bg-hud-red/20", total > 0);
+            sidebar.classList.toggle("text-hud-red", total > 0);
+            sidebar.classList.toggle("blink", total > 0);
+            sidebar.classList.toggle("bg-hud-fb/20", total <= 0);
+            sidebar.classList.toggle("text-hud-fb", total <= 0);
+        }
+        const header = document.getElementById("fb-messages-header-unread");
+        if (header) header.textContent = `INBOX · ${formatNumber(total)} UNREAD`;
     }
 
     async function uploadFacebookMessageMedia(file, conversationId) {
@@ -3283,6 +3310,7 @@
             const payload = await fetchJSON("/facebook/conversations?limit=25&message_limit=1");
             const conversations = payload.conversations || [];
             state.facebookConversations = conversations;
+            updateFacebookUnreadBadges();
             connectFacebookMessagesStream();
             startFacebookMessagesFallbackSync();
             if (!state.selectedFacebookConversationId && conversations[0]) state.selectedFacebookConversationId = conversations[0].conversation_id;
@@ -3303,7 +3331,7 @@
                             <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
                             <div class="header-strip px-4 py-3 flex items-center gap-2" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
                                 <i class="fa-solid fa-inbox text-hud-fb"></i>
-                                <span class="font-display font-black text-[10px] text-white uppercase-widest">INBOX · ${formatNumber(unread)} UNREAD</span>
+                                <span id="fb-messages-header-unread" class="font-display font-black text-[10px] text-white uppercase-widest">INBOX · ${formatNumber(unread)} UNREAD</span>
                                 <button id="fb-messages-refresh" class="ml-auto btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i></button>
                             </div>
                             <div id="fb-conversation-list" class="flex-1 min-h-0 overflow-y-auto">
@@ -3371,11 +3399,11 @@
                 const feedback = section.querySelector("#fb-message-feedback");
                 const message = String(input?.value || "").trim();
                 const selectedConversationId = state.selectedFacebookConversationId;
-                const draftMedia = state.facebookMessageDraftMedia?.conversation_id === selectedConversationId ? state.facebookMessageDraftMedia : null;
-                if (!selectedConversationId || (!message && !draftMedia?.url)) return;
+                const draftMedia = (state.facebookMessageDraftMedia || []).filter((item) => item.conversation_id === selectedConversationId);
+                if (!selectedConversationId || (!message && !draftMedia.length)) return;
                 const optimisticMessage = createOptimisticFacebookMessage(selectedConversationId, message, draftMedia);
                 if (input) input.value = "";
-                state.facebookMessageDraftMedia = null;
+                state.facebookMessageDraftMedia = (state.facebookMessageDraftMedia || []).filter((item) => item.conversation_id !== selectedConversationId);
                 section.querySelector("#fb-message-media-preview")?.classList.add("hidden");
                 if (feedback) feedback.classList.add("hidden");
                 appendOptimisticFacebookMessage(optimisticMessage);
@@ -3385,9 +3413,13 @@
                         body: JSON.stringify({
                             conversation_id: selectedConversationId,
                             message,
-                            attachment_url: draftMedia?.url || "",
-                            attachment_type: draftMedia?.type || "image",
-                            attachment_name: draftMedia?.name || "",
+                            attachments: draftMedia.map((item) => ({
+                                media_id: item.media_id || "",
+                                url: item.url || "",
+                                type: item.type || "file",
+                                name: item.name || "",
+                                mime_type: item.mime_type || "",
+                            })),
                         }),
                     });
                     if (result?.message_id) {
@@ -3424,8 +3456,10 @@
                     if (event.target.closest("#fb-message-media-button")) {
                         section.querySelector("#fb-message-media-input")?.click();
                     }
-                    if (event.target.closest("#fb-message-media-remove")) {
-                        state.facebookMessageDraftMedia = null;
+                    const removeMediaButton = event.target.closest(".fb-message-media-remove");
+                    if (removeMediaButton) {
+                        const mediaId = removeMediaButton.dataset.mediaId || "";
+                        state.facebookMessageDraftMedia = (state.facebookMessageDraftMedia || []).filter((item) => item.media_id !== mediaId);
                         const panel = section.querySelector("#fb-conversation-panel");
                         const selectedConversationId = state.selectedFacebookConversationId;
                         const selected = state.facebookConversationDetails[selectedConversationId]
@@ -3438,17 +3472,24 @@
                 });
                 section.addEventListener("change", async (event) => {
                     if (event.target?.id !== "fb-message-media-input") return;
-                    const file = event.target.files?.[0];
+                    const files = Array.from(event.target.files || []).slice(0, 10);
                     const selectedConversationId = state.selectedFacebookConversationId;
-                    if (!file || !selectedConversationId) return;
+                    if (!files.length || !selectedConversationId) return;
                     const feedback = section.querySelector("#fb-message-feedback");
                     try {
                         if (feedback) {
                             feedback.className = "text-[11px] border p-2 text-hud-fb border-hud-fb/30 bg-hud-fb/10";
-                            feedback.textContent = "Đang tải media lên server...";
+                            feedback.textContent = `Đang tải ${formatNumber(files.length)} media lên server...`;
                             feedback.classList.remove("hidden");
                         }
-                        state.facebookMessageDraftMedia = await uploadFacebookMessageMedia(file, selectedConversationId);
+                        const uploaded = [];
+                        for (const file of files) {
+                            uploaded.push(await uploadFacebookMessageMedia(file, selectedConversationId));
+                        }
+                        state.facebookMessageDraftMedia = [
+                            ...(state.facebookMessageDraftMedia || []).filter((item) => item.conversation_id !== selectedConversationId),
+                            ...uploaded,
+                        ];
                         if (feedback) feedback.classList.add("hidden");
                         const panel = section.querySelector("#fb-conversation-panel");
                         const selected = state.facebookConversationDetails[selectedConversationId]

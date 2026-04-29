@@ -154,12 +154,14 @@ class FacebookMessageSendRequest(BaseModel):
     attachment_url: str = ""
     attachment_type: str = "image"
     attachment_name: str = ""
+    attachments: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class FacebookMessageSendResponse(BaseModel):
     sent: bool
     conversation_id: str
     message_id: str = ""
+    message_ids: List[str] = Field(default_factory=list)
 
 
 class SubmitResponse(BaseModel):

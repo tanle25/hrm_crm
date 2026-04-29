@@ -669,6 +669,7 @@ async def send_facebook_message_endpoint(request: FacebookMessageSendRequest) ->
             request.attachment_url,
             request.attachment_type,
             request.attachment_name,
+            request.attachments,
         )
     except httpx.HTTPStatusError as error:
         detail = error.response.text[:500] if error.response is not None else str(error)

@@ -1945,18 +1945,47 @@ def send_facebook_message(
     attachment_url: str = "",
     attachment_type: str = "image",
     attachment_name: str = "",
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     conversation_id = (conversation_id or "").strip()
     message = (message or "").strip()
     attachment_url = (attachment_url or "").strip()
     attachment_type = (attachment_type or "image").strip().lower()
     attachment_name = (attachment_name or "").strip()
+    normalized_attachments: list[dict[str, str]] = []
+    for item in attachments or []:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url:
+            continue
+        item_type = str(item.get("type") or "image").strip().lower()
+        if item_type not in {"image", "video", "audio", "file"}:
+            item_type = "file"
+        normalized_attachments.append(
+            {
+                "url": url,
+                "type": item_type,
+                "name": str(item.get("name") or "").strip(),
+                "mime_type": str(item.get("mime_type") or "").strip(),
+                "media_id": str(item.get("media_id") or item.get("attachment_id") or "").strip(),
+            }
+        )
+    if attachment_url:
+        normalized_attachments.insert(
+            0,
+            {
+                "url": attachment_url,
+                "type": attachment_type if attachment_type in {"image", "video", "audio", "file"} else "file",
+                "name": attachment_name,
+                "mime_type": "",
+                "media_id": "",
+            },
+        )
     if not conversation_id:
         raise RuntimeError("conversation_id is required.")
-    if not message and not attachment_url:
+    if not message and not normalized_attachments:
         raise RuntimeError("Message or attachment is required.")
-    if attachment_type not in {"image", "video", "audio", "file"}:
-        attachment_type = "file"
     conversation = _get_cached_facebook_conversation(conversation_id)
     if not conversation:
         raise RuntimeError("Conversation not found in local cache. Sync inbox first.")
@@ -1972,7 +2001,7 @@ def send_facebook_message(
     base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
     sent_ids: list[str] = []
     with httpx.Client(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
-        if attachment_url:
+        for attachment in normalized_attachments:
             response = client.post(
                 f"{base_url}/{page_id}/messages",
                 params={"access_token": page["page_access_token"]},
@@ -1981,8 +2010,8 @@ def send_facebook_message(
                     "messaging_type": "RESPONSE",
                     "message": {
                         "attachment": {
-                            "type": attachment_type,
-                            "payload": {"url": attachment_url, "is_reusable": True},
+                            "type": attachment["type"],
+                            "payload": {"url": attachment["url"], "is_reusable": True},
                         }
                     },
                 },
@@ -2018,16 +2047,17 @@ def send_facebook_message(
         "direction": "outbound",
         "attachments": [
             {
-                "attachment_id": "",
-                "type": attachment_type,
-                "mime_type": "",
-                "name": attachment_name,
-                "url": attachment_url,
-                "preview_url": attachment_url if attachment_type == "image" else "",
+                "attachment_id": item.get("media_id") or "",
+                "type": item["type"],
+                "mime_type": item.get("mime_type") or "",
+                "name": item.get("name") or "",
+                "url": item["url"],
+                "preview_url": item["url"] if item["type"] == "image" else "",
                 "size": 0,
             }
-        ] if attachment_url else [],
-        "fallback_label": "Đã gửi tệp đính kèm" if attachment_url and not message else "",
+            for item in normalized_attachments
+        ],
+        "fallback_label": "Đã gửi tệp đính kèm" if normalized_attachments and not message else "",
         "reply_to": {},
     }
     _upsert_facebook_message(sent_message)
@@ -2043,7 +2073,7 @@ def send_facebook_message(
     conversation["unread_count"] = 0
     _upsert_facebook_conversation(conversation)
     _publish_facebook_message_event(conversation, sent_message, "facebook.message.sent")
-    return {"sent": True, "conversation_id": conversation_id, "message_id": sent_message["message_id"]}
+    return {"sent": True, "conversation_id": conversation_id, "message_id": sent_message["message_id"], "message_ids": sent_ids}
 
 
 def verify_facebook_webhook_signature(body: bytes, signature: str | None) -> bool:

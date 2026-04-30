@@ -143,6 +143,10 @@ class VideoResult:
     error: Optional[str] = None
 
 
+def _join_prompt_parts(*parts: Optional[str]) -> str:
+    return "\n".join(str(part).strip() for part in parts if str(part or "").strip())
+
+
 # ─── Client ─────────────────────────────────────────────────
 
 class FlowKitClient:
@@ -634,12 +638,36 @@ class FlowKitClient:
             raise ConnectionError("FlowKit not connected. Start Chrome + extension + FlowKit agent.")
 
         orientation = "VERTICAL" if str(orientation or "").upper() in {"VERTICAL", "PORTRAIT", "9:16"} else "HORIZONTAL"
+        orientation_instruction = (
+            "Create a true vertical 9:16 portrait composition for mobile Reels/Shorts. "
+            "Do not place a horizontal 16:9 frame inside a vertical canvas. Fill the entire portrait frame."
+            if orientation == "VERTICAL"
+            else "Create a true horizontal 16:9 landscape composition. Fill the entire widescreen frame."
+        )
+        material_instruction = ""
+        try:
+            material_info = await self.get_material(material)
+            material_instruction = material_info.get("scene_prefix") or material_info.get("style_instruction") or ""
+        except Exception:
+            material_instruction = ""
         char_dicts = None
 
         # ── 1. Project ──
         if project_id:
             _notify("project", f"Using existing project: {project_id}")
             project = await self.get_project(project_id)
+            try:
+                await self.update_project(
+                    project_id,
+                    material=material,
+                    language=language,
+                    allow_music=allow_music,
+                    allow_voice=allow_voice,
+                    **({"story": story} if story else {}),
+                )
+                _notify("project", f"Project settings updated: {material}, {orientation}")
+            except Exception as exc:
+                _notify("project", f"Project settings update skipped: {exc}")
         else:
             _notify("project", f"Creating project: {title}")
             if characters:
@@ -726,13 +754,13 @@ class FlowKitClient:
 
                 sc = await self.create_scene(
                     video_id=video_id,
-                    prompt=scene.prompt,
-                    video_prompt=scene.video_prompt,
+                    prompt=_join_prompt_parts(material_instruction, orientation_instruction, scene.prompt),
+                    video_prompt=_join_prompt_parts(orientation_instruction, scene.video_prompt),
                     display_order=i,
                     chain_type=chain,
                     character_names=scene.character_names,
                     parent_scene_id=parent_id,
-                    image_prompt=scene.image_prompt,
+                    image_prompt=_join_prompt_parts(material_instruction, orientation_instruction, scene.image_prompt),
                     transition_prompt=scene.transition_prompt,
                     orientation=orientation,
                 )

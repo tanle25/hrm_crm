@@ -4233,14 +4233,38 @@
     }
 
     function renderFlowkitResultsGrid(jobs) {
+        const active = jobs.filter((job) => ["queued", "processing"].includes(String(job.status || "").toLowerCase()));
         const completed = jobs.flatMap((job) => {
             const request = job.request || {};
             return flowkitOutputItems(job).map((item) => ({ ...item, job, request }));
         });
-        if (!completed.length) {
+        if (!completed.length && !active.length) {
             return `<div class="hud-card p-8 text-center text-hud-muted text-sm">Chưa có video hoàn tất.</div>`;
         }
-        return `<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">${completed.map(({ job, request, videoUrl, index }) => {
+        const skeletons = active.map((job) => {
+            const request = job.request || {};
+            const pct = flowkitProgressValue(job);
+            const progress = job.progress || [];
+            const last = progress[progress.length - 1] || {};
+            return `
+                <article class="hud-card p-4 overflow-hidden" style="border-color: rgba(0, 240, 255, 0.25);">
+                    <span class="c-tl"></span><span class="c-br"></span>
+                    <div class="${request.orientation === "VERTICAL" ? "aspect-[9/16] max-h-[520px]" : "aspect-video"} border border-hud-cyan/20 bg-black/50 relative grid place-items-center overflow-hidden">
+                        <div class="absolute inset-0 opacity-30 animate-pulse" style="background: linear-gradient(90deg, transparent, rgba(0,240,255,.18), transparent);"></div>
+                        <div class="relative text-center px-5">
+                            <div class="font-display text-hud-cyan text-4xl font-black">${pct}%</div>
+                            <div class="mt-2 h-2 w-48 max-w-full bg-black/70 border border-hud-cyan/20">
+                                <div class="h-full bg-hud-cyan" style="width:${pct}%"></div>
+                            </div>
+                            <div class="mt-3 text-[10px] text-hud-muted uppercase-wide">${escapeHtml(last.stage || "processing")}</div>
+                        </div>
+                    </div>
+                    <div class="mt-3 text-white font-black text-sm truncate">${escapeHtml(request.title || job.job_id || "FlowKit Video")}</div>
+                    <div class="mt-1 text-[10px] text-hud-muted truncate">${escapeHtml(last.detail || "Đang tạo video...")}</div>
+                </article>
+            `;
+        }).join("");
+        const resultCards = completed.map(({ job, request, videoUrl, index }) => {
             return `
                 <article class="hud-card p-4" style="border-color: rgba(0, 240, 255, 0.25);">
                     <span class="c-tl"></span><span class="c-br"></span>
@@ -4252,7 +4276,8 @@
                     </div>
                 </article>
             `;
-        }).join("")}</div>`;
+        }).join("");
+        return `<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">${skeletons}${resultCards}</div>`;
     }
 
     async function flowkitLoadJobs() {
@@ -4280,8 +4305,6 @@
         if (progressPanel) progressPanel.innerHTML = renderFlowkitProgressPanel();
         const resultsGrid = document.getElementById("flowkit-results-grid");
         if (resultsGrid) resultsGrid.innerHTML = renderFlowkitResultsGrid(state.flowkitLastJobs || []);
-        const resultsJobs = document.getElementById("flowkit-results-job-list");
-        if (resultsJobs) resultsJobs.innerHTML = (state.flowkitLastJobs || []).map((job) => renderFlowkitJob(job, true)).join("");
         bindFlowkitRegenerateButtons(document.getElementById("page-flowkit"));
     }
 
@@ -4511,7 +4534,6 @@
                     <span class="badge cyan ml-auto">${formatNumber(jobs.length)} JOBS</span>
                 </div>
                 <div id="flowkit-results-grid">${renderFlowkitResultsGrid(jobs)}</div>
-                <div id="flowkit-results-job-list" class="space-y-4">${jobs.map((job) => renderFlowkitJob(job, true)).join("")}</div>
             </div>
         `;
     }

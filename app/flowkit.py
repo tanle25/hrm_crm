@@ -56,6 +56,7 @@ class FlowKitGenerateRequest(BaseModel):
     allow_voice: bool = False
     characters: Optional[list[FlowKitCharacterRequest]] = None
     generate_refs: bool = True
+    output_count: int = Field(default=1, ge=1, le=4)
 
 
 class FlowKitQuickGenerateRequest(BaseModel):
@@ -184,6 +185,18 @@ def _finish_job(job_id: str, result: VideoResult) -> None:
     _upsert_job(job)
 
 
+def _finish_multi_output_job(job_id: str, results: list[VideoResult]) -> None:
+    job = _get_job(job_id)
+    if not job:
+        return
+    payloads = [_result_payload(result) for result in results]
+    job["status"] = "completed"
+    job["completed_at"] = _now()
+    job["result"] = payloads[0] if payloads else None
+    job["outputs"] = payloads
+    _upsert_job(job)
+
+
 def _fail_job(job_id: str, error: str) -> None:
     job = _get_job(job_id)
     if not job:
@@ -231,24 +244,35 @@ async def _run_generate_job(job_id: str, request: FlowKitGenerateRequest) -> Non
         job["status"] = "processing"
         _upsert_job(job)
     try:
-        result = await _client().generate_video(
-            title=request.title,
-            scenes=_scene_inputs(request.scenes),
-            project_id=request.project_id,
-            description=request.description,
-            story=request.story,
-            material=request.material,
-            language=request.language,
-            allow_music=request.allow_music,
-            allow_voice=request.allow_voice,
-            characters=_character_inputs(request.characters),
-            generate_refs=request.generate_refs,
-            orientation=request.orientation,
-            video_gen_mode=request.video_gen_mode,
-            upscale_4k=request.upscale_4k,
-            on_progress=lambda stage, detail: _update_progress(job_id, stage, detail),
-        )
-        _finish_job(job_id, result)
+        results: list[VideoResult] = []
+        output_count = max(1, min(int(request.output_count or 1), 4))
+        project_id = request.project_id
+        for index in range(output_count):
+            title = request.title if output_count == 1 else f"{request.title} - Variant {index + 1}"
+            _update_progress(job_id, "output", f"Generating output {index + 1}/{output_count}")
+            result = await _client().generate_video(
+                title=title,
+                scenes=_scene_inputs(request.scenes),
+                project_id=project_id,
+                description=request.description,
+                story=request.story,
+                material=request.material,
+                language=request.language,
+                allow_music=request.allow_music,
+                allow_voice=request.allow_voice,
+                characters=_character_inputs(request.characters),
+                generate_refs=request.generate_refs if index == 0 else False,
+                orientation=request.orientation,
+                video_gen_mode=request.video_gen_mode,
+                upscale_4k=request.upscale_4k,
+                on_progress=lambda stage, detail: _update_progress(job_id, stage, detail),
+            )
+            project_id = project_id or result.project_id
+            results.append(result)
+        if output_count == 1:
+            _finish_job(job_id, results[0])
+        else:
+            _finish_multi_output_job(job_id, results)
     except Exception as exc:
         _fail_job(job_id, str(exc))
         log.error("flowkit_job_failed", job_id=job_id, error=str(exc))

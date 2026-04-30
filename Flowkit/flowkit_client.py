@@ -373,6 +373,7 @@ class FlowKitClient:
         parent_scene_id: str = None,
         image_prompt: str = None,
         transition_prompt: str = None,
+        orientation: str = None,
     ) -> dict:
         data = {
             "video_id": video_id,
@@ -380,6 +381,8 @@ class FlowKitClient:
             "display_order": display_order,
             "chain_type": chain_type,
         }
+        if orientation:
+            data["orientation"] = orientation
         if video_prompt:
             data["video_prompt"] = video_prompt
         if character_names:
@@ -630,6 +633,7 @@ class FlowKitClient:
         if not await self.is_connected():
             raise ConnectionError("FlowKit not connected. Start Chrome + extension + FlowKit agent.")
 
+        orientation = "VERTICAL" if str(orientation or "").upper() in {"VERTICAL", "PORTRAIT", "9:16"} else "HORIZONTAL"
         char_dicts = None
 
         # ── 1. Project ──
@@ -708,7 +712,7 @@ class FlowKitClient:
 
             # ── 3. Video container + scenes ──
             _notify("video", "Creating video container...")
-            video = await self.create_video_container(project_id, title)
+            video = await self.create_video_container(project_id, title, orientation=orientation)
             video_id = video["id"]
             result.video_id = video_id
 
@@ -730,6 +734,7 @@ class FlowKitClient:
                     parent_scene_id=parent_id,
                     image_prompt=scene.image_prompt,
                     transition_prompt=scene.transition_prompt,
+                    orientation=orientation,
                 )
                 scene_objects.append(sc)
                 result.scenes.append(SceneResult(id=sc["id"], prompt=scene.prompt))

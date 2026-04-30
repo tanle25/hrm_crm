@@ -4156,17 +4156,25 @@
         const status = String(job?.status || "").toLowerCase();
         if (status === "completed") return 100;
         if (status === "failed") return 100;
-        const stages = ["health", "project", "video", "scenes", "images", "videos", "upscale", "concat"];
+        const stages = ["health", "output", "project", "video", "scenes", "images", "videos", "upscale", "concat"];
         const progress = job?.progress || [];
         const last = progress[progress.length - 1]?.stage || "";
         const index = Math.max(0, stages.indexOf(last));
         return Math.min(92, Math.max(8, Math.round(((index + 1) / stages.length) * 100)));
     }
 
-    function flowkitVideoUrl(job) {
-        const result = job?.result || {};
+    function flowkitResultVideoUrl(result) {
         const scenes = result.scenes || [];
         return result.concat_url || scenes.find((scene) => scene.upscale_url)?.upscale_url || scenes.find((scene) => scene.video_url)?.video_url || "";
+    }
+
+    function flowkitVideoUrl(job) {
+        return flowkitResultVideoUrl(job?.result || {});
+    }
+
+    function flowkitOutputItems(job) {
+        const outputs = Array.isArray(job?.outputs) && job.outputs.length ? job.outputs : (job?.result ? [job.result] : []);
+        return outputs.map((result, index) => ({ result, index, videoUrl: flowkitResultVideoUrl(result) })).filter((item) => item.videoUrl);
     }
 
     function renderFlowkitJob(job, compact = false) {
@@ -4207,7 +4215,7 @@
                         ${lastProgress.detail ? `<div class="mt-3 text-[11px] text-hud-cyan border border-hud-cyan/20 bg-hud-cyan/10 p-2">${escapeHtml(lastProgress.stage || "progress")}: ${escapeHtml(lastProgress.detail)}</div>` : ""}
                         ${videoUrl ? `
                             <div class="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] items-end">
-                                <video src="${escapeHtml(videoUrl)}" controls class="w-full max-h-[360px] bg-black border border-hud-cyan/20"></video>
+                                <video src="${escapeHtml(videoUrl)}" controls class="w-full ${request.orientation === "VERTICAL" ? "aspect-[9/16] max-h-[520px]" : "max-h-[360px]"} bg-black border border-hud-cyan/20 object-contain"></video>
                                 <a href="${escapeHtml(videoUrl)}" download target="_blank" rel="noopener noreferrer" class="btn-ghost px-4 py-3 text-xs uppercase-wide font-bold text-center">
                                     <i class="fa-solid fa-download"></i> DOWNLOAD
                                 </a>
@@ -4225,18 +4233,19 @@
     }
 
     function renderFlowkitResultsGrid(jobs) {
-        const completed = jobs.filter((job) => String(job.status || "").toLowerCase() === "completed" && flowkitVideoUrl(job));
+        const completed = jobs.flatMap((job) => {
+            const request = job.request || {};
+            return flowkitOutputItems(job).map((item) => ({ ...item, job, request }));
+        });
         if (!completed.length) {
             return `<div class="hud-card p-8 text-center text-hud-muted text-sm">Chưa có video hoàn tất.</div>`;
         }
-        return `<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">${completed.map((job) => {
-            const videoUrl = flowkitVideoUrl(job);
-            const request = job.request || {};
+        return `<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">${completed.map(({ job, request, videoUrl, index }) => {
             return `
                 <article class="hud-card p-4" style="border-color: rgba(0, 240, 255, 0.25);">
                     <span class="c-tl"></span><span class="c-br"></span>
-                    <video src="${escapeHtml(videoUrl)}" controls class="w-full aspect-video bg-black border border-hud-cyan/20 object-contain"></video>
-                    <div class="mt-3 text-white font-black text-sm truncate">${escapeHtml(request.title || job.job_id)}</div>
+                    <video src="${escapeHtml(videoUrl)}" controls class="w-full ${request.orientation === "VERTICAL" ? "aspect-[9/16] max-h-[520px]" : "aspect-video"} bg-black border border-hud-cyan/20 object-contain"></video>
+                    <div class="mt-3 text-white font-black text-sm truncate">${escapeHtml(request.title || job.job_id)}${index ? ` #${index + 1}` : ""}</div>
                     <div class="mt-2 flex gap-2">
                         <a href="${escapeHtml(videoUrl)}" download target="_blank" rel="noopener noreferrer" class="btn-ghost flex-1 px-3 py-2 text-[10px] uppercase-wide font-bold text-center"><i class="fa-solid fa-download"></i> Download</a>
                         <button class="flowkit-regenerate btn-ghost px-3 py-2 text-[10px] uppercase-wide font-bold" data-job-id="${escapeHtml(job.job_id)}"><i class="fa-solid fa-rotate-right"></i> Tạo lại</button>
@@ -4259,10 +4268,21 @@
             state.flowkitJobsRefreshTimer = setTimeout(async () => {
                 try {
                     await flowkitLoadJobs();
-                    await renderFlowkitPage(false);
+                    flowkitRefreshDynamicPanels();
+                    flowkitScheduleJobsRefresh();
                 } catch (_) {}
             }, 3500);
         }
+    }
+
+    function flowkitRefreshDynamicPanels() {
+        const progressPanel = document.getElementById("flowkit-progress-panel");
+        if (progressPanel) progressPanel.innerHTML = renderFlowkitProgressPanel();
+        const resultsGrid = document.getElementById("flowkit-results-grid");
+        if (resultsGrid) resultsGrid.innerHTML = renderFlowkitResultsGrid(state.flowkitLastJobs || []);
+        const resultsJobs = document.getElementById("flowkit-results-job-list");
+        if (resultsJobs) resultsJobs.innerHTML = (state.flowkitLastJobs || []).map((job) => renderFlowkitJob(job, true)).join("");
+        bindFlowkitRegenerateButtons(document.getElementById("page-flowkit"));
     }
 
     function renderFlowkitHeader() {
@@ -4334,7 +4354,7 @@
                                 <select id="flowkit-project" class="hud-select w-full px-4 py-3 text-sm">${flowkitProjectOptions()}</select>
                             </div>
                         </div>
-                        <div class="grid gap-4 md:grid-cols-3">
+                        <div class="grid gap-4 md:grid-cols-4">
                             <div>
                                 <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">MATERIAL</label>
                                 <select id="flowkit-material" class="hud-select w-full px-4 py-3 text-sm">
@@ -4352,6 +4372,12 @@
                                 <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">VIDEO MODE</label>
                                 <select id="flowkit-mode" class="hud-select w-full px-4 py-3 text-sm">
                                     ${["i2v", "i2v_fl", "r2v"].map((mode) => `<option value="${mode}" ${(state.flowkitDraft.video_gen_mode || "i2v") === mode ? "selected" : ""}>${mode}</option>`).join("")}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">OUTPUTS</label>
+                                <select id="flowkit-output-count" class="hud-select w-full px-4 py-3 text-sm">
+                                    ${[1, 2, 3, 4].map((count) => `<option value="${count}" ${Number(state.flowkitDraft.output_count || 1) === count ? "selected" : ""}>${count} video</option>`).join("")}
                                 </select>
                             </div>
                         </div>
@@ -4484,8 +4510,8 @@
                     <div class="font-display text-white font-black text-xs uppercase-widest"><i class="fa-solid fa-photo-film text-hud-cyan"></i> KẾT QUẢ VIDEO</div>
                     <span class="badge cyan ml-auto">${formatNumber(jobs.length)} JOBS</span>
                 </div>
-                ${renderFlowkitResultsGrid(jobs)}
-                <div id="flowkit-job-list" class="space-y-4">${jobs.map((job) => renderFlowkitJob(job, true)).join("")}</div>
+                <div id="flowkit-results-grid">${renderFlowkitResultsGrid(jobs)}</div>
+                <div id="flowkit-results-job-list" class="space-y-4">${jobs.map((job) => renderFlowkitJob(job, true)).join("")}</div>
             </div>
         `;
     }
@@ -4498,6 +4524,7 @@
             material: String(section.querySelector("#flowkit-material")?.value || "realistic"),
             orientation: String(section.querySelector("#flowkit-orientation")?.value || "VERTICAL"),
             video_gen_mode: String(section.querySelector("#flowkit-mode")?.value || "i2v"),
+            output_count: Number.parseInt(section.querySelector("#flowkit-output-count")?.value || "1", 10),
             upscale: Boolean(section.querySelector("#flowkit-upscale")?.checked),
             music: Boolean(section.querySelector("#flowkit-music")?.checked),
             voice: Boolean(section.querySelector("#flowkit-voice")?.checked),
@@ -4630,6 +4657,7 @@
                         material: state.flowkitDraft.material || "realistic",
                         orientation: state.flowkitDraft.orientation || "VERTICAL",
                         video_gen_mode: state.flowkitDraft.video_gen_mode || "i2v",
+                        output_count: Math.max(1, Math.min(Number(state.flowkitDraft.output_count || 1), 4)),
                         upscale_4k: Boolean(state.flowkitDraft.upscale),
                         allow_music: Boolean(state.flowkitDraft.music),
                         allow_voice: Boolean(state.flowkitDraft.voice),
@@ -4646,6 +4674,38 @@
                     button.innerHTML = `<i class="fa-solid fa-play"></i> GENERATE VIDEO`;
                 }
             }
+        });
+    }
+
+    function bindFlowkitRegenerateButtons(section) {
+        if (!section) return;
+        section.querySelectorAll(".flowkit-regenerate").forEach((button) => {
+            if (button.dataset.bound === "1") return;
+            button.dataset.bound = "1";
+            button.addEventListener("click", () => {
+                const job = (state.flowkitLastJobs || []).find((item) => item.job_id === button.dataset.jobId);
+                if (job?.request) {
+                    state.flowkitTab = "create";
+                    state.flowkitSelectedProjectId = job.request.project_id || "";
+                    state.flowkitDraft = {
+                        title: job.request.title || "",
+                        story: job.request.story || "",
+                        material: job.request.material || "realistic",
+                        orientation: job.request.orientation || "VERTICAL",
+                        video_gen_mode: job.request.video_gen_mode || "i2v",
+                        output_count: Number(job.request.output_count || 1),
+                        upscale: Boolean(job.request.upscale_4k),
+                        music: Boolean(job.request.allow_music),
+                        voice: Boolean(job.request.allow_voice),
+                    };
+                    state.flowkitCharacters = job.request.characters || [];
+                    state.flowkitScenes = (job.request.scenes || []).map((scene) => ({
+                        ...scene,
+                        character_names_text: (scene.character_names || []).join(", "),
+                    }));
+                    renderFlowkitPage(false);
+                }
+            });
         });
     }
 
@@ -4693,31 +4753,7 @@
                 renderFlowkitPage(false);
             });
         });
-        section.querySelectorAll(".flowkit-regenerate").forEach((button) => {
-            button.addEventListener("click", () => {
-                const job = (state.flowkitLastJobs || []).find((item) => item.job_id === button.dataset.jobId);
-                if (job?.request) {
-                    state.flowkitTab = "create";
-                    state.flowkitSelectedProjectId = job.request.project_id || "";
-                    state.flowkitDraft = {
-                        title: job.request.title || "",
-                        story: job.request.story || "",
-                        material: job.request.material || "realistic",
-                        orientation: job.request.orientation || "VERTICAL",
-                        video_gen_mode: job.request.video_gen_mode || "i2v",
-                        upscale: Boolean(job.request.upscale_4k),
-                        music: Boolean(job.request.allow_music),
-                        voice: Boolean(job.request.allow_voice),
-                    };
-                    state.flowkitCharacters = job.request.characters || [];
-                    state.flowkitScenes = (job.request.scenes || []).map((scene) => ({
-                        ...scene,
-                        character_names_text: (scene.character_names || []).join(", "),
-                    }));
-                    renderFlowkitPage(false);
-                }
-            });
-        });
+        bindFlowkitRegenerateButtons(section);
         if (state.flowkitTab === "create") bindFlowkitCreate(section);
         flowkitScheduleJobsRefresh();
     }

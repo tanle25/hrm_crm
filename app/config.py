@@ -160,7 +160,7 @@ def get_settings() -> Settings:
         flowkit_base_url=os.getenv("FLOWKIT_BASE_URL", "https://flow.tanflux.tech"),
         flowkit_api_key=os.getenv("FLOWKIT_API_KEY", "tanflux-flowkit-2026"),
         flowkit_poll_interval_sec=_env_int("FLOWKIT_POLL_INTERVAL_SEC", 10),
-        flowkit_image_timeout_sec=_env_int("FLOWKIT_IMAGE_TIMEOUT_SEC", 120),
-        flowkit_video_timeout_sec=_env_int("FLOWKIT_VIDEO_TIMEOUT_SEC", 300),
-        flowkit_upscale_timeout_sec=_env_int("FLOWKIT_UPSCALE_TIMEOUT_SEC", 600),
+        flowkit_image_timeout_sec=_env_int("FLOWKIT_IMAGE_TIMEOUT_SEC", 180),
+        flowkit_video_timeout_sec=_env_int("FLOWKIT_VIDEO_TIMEOUT_SEC", 900),
+        flowkit_upscale_timeout_sec=_env_int("FLOWKIT_UPSCALE_TIMEOUT_SEC", 1200),
     )

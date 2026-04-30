@@ -520,7 +520,7 @@ class FlowKitClient:
     # POLL HELPERS
     # ═══════════════════════════════════════════════════════════
 
-    async def poll_request(self, request_id: str, timeout: int = None, label: str = "") -> dict:
+    async def poll_request(self, request_id: str, timeout: int = None, label: str = "", on_progress: callable = None) -> dict:
         """Poll a request until COMPLETED or FAILED."""
         timeout = timeout or self.video_timeout
         start = time.time()
@@ -530,6 +530,8 @@ class FlowKitClient:
 
             if status == "COMPLETED":
                 logger.info(f"  ✓ {label} completed ({int(time.time() - start)}s)")
+                if on_progress:
+                    on_progress(f"{label} completed ({int(time.time() - start)}s)")
                 return result
 
             if status == "FAILED":
@@ -542,6 +544,8 @@ class FlowKitClient:
                 raise TimeoutError(f"{label} timeout after {timeout}s (status: {status})")
 
             logger.info(f"  ⏳ {label} {status}... ({int(elapsed)}s)")
+            if on_progress:
+                on_progress(f"{label} {status}... ({int(elapsed)}s)")
             await asyncio.sleep(self.poll_interval)
 
     async def poll_batch(self, video_id: str, req_type: str = None, timeout: int = 600) -> dict:
@@ -688,7 +692,12 @@ class FlowKitClient:
                     _notify("refs", f"  → Queued ref for {char['name']}")
 
                 for name, char_id, req_id in ref_requests:
-                    ref_result = await self.poll_request(req_id, self.image_timeout, f"Ref {name}")
+                    ref_result = await self.poll_request(
+                        req_id,
+                        self.image_timeout,
+                        f"Ref {name}",
+                        on_progress=lambda detail: _notify("refs", detail),
+                    )
                     result.characters[name] = {
                         "id": char_id,
                         "media_id": ref_result.get("media_id"),
@@ -762,7 +771,12 @@ class FlowKitClient:
                 _notify("images", f"  → Queued image for scene {i}")
 
             for i, req_id in image_requests:
-                img_result = await self.poll_request(req_id, self.image_timeout, f"Image scene {i}")
+                img_result = await self.poll_request(
+                    req_id,
+                    self.image_timeout,
+                    f"Image scene {i}",
+                    on_progress=lambda detail: _notify("images", detail),
+                )
                 result.scenes[i].image_url = img_result.get("output_url")
                 result.scenes[i].image_media_id = img_result.get("media_id")
 
@@ -787,7 +801,12 @@ class FlowKitClient:
                 _notify("videos", f"  → Queued video for scene {i}")
 
             for i, req_id in video_requests:
-                vid_result = await self.poll_request(req_id, self.video_timeout, f"Video scene {i}")
+                vid_result = await self.poll_request(
+                    req_id,
+                    self.video_timeout,
+                    f"Video scene {i}",
+                    on_progress=lambda detail: _notify("videos", detail),
+                )
                 result.scenes[i].video_url = vid_result.get("output_url")
                 result.scenes[i].video_media_id = vid_result.get("media_id")
                 result.scenes[i].status = "VIDEO_READY"
@@ -808,7 +827,12 @@ class FlowKitClient:
                     _notify("upscale", f"  → Queued 4K for scene {i}")
 
                 for i, req_id in upscale_requests:
-                    up_result = await self.poll_request(req_id, self.upscale_timeout, f"Upscale scene {i}")
+                    up_result = await self.poll_request(
+                        req_id,
+                        self.upscale_timeout,
+                        f"Upscale scene {i}",
+                        on_progress=lambda detail: _notify("upscale", detail),
+                    )
                     result.scenes[i].upscale_url = up_result.get("output_url")
 
             result.status = "COMPLETED"

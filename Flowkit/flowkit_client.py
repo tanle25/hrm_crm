@@ -630,13 +630,14 @@ class FlowKitClient:
         if not await self.is_connected():
             raise ConnectionError("FlowKit not connected. Start Chrome + extension + FlowKit agent.")
 
+        char_dicts = None
+
         # ── 1. Project ──
         if project_id:
             _notify("project", f"Using existing project: {project_id}")
             project = await self.get_project(project_id)
         else:
             _notify("project", f"Creating project: {title}")
-            char_dicts = None
             if characters:
                 char_dicts = [
                     {

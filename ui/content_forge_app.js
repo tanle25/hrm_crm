@@ -77,6 +77,14 @@
         facebookReelJobsRefreshTimer: null,
         flowkitJobsRefreshTimer: null,
         flowkitMaterials: [],
+        flowkitTab: "create",
+        flowkitHealth: null,
+        flowkitProjects: [],
+        flowkitSelectedProjectId: "",
+        flowkitDraft: {},
+        flowkitCharacters: [],
+        flowkitScenes: [],
+        flowkitLastJobs: [],
     };
 
     function escapeHtml(value) {
@@ -4101,15 +4109,33 @@
         return ["cyan", "PROCESSING", "fa-spinner fa-spin"];
     }
 
-    function flowkitScenesFromTextarea() {
-        const raw = String(document.getElementById("flowkit-scenes")?.value || "").trim();
-        if (!raw) return [];
-        return raw.split(/\n\s*---+\s*\n/g).map((block) => {
-            const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-            const prompt = lines[0] || "";
-            const videoPrompt = lines.slice(1).join("\n");
-            return { prompt, video_prompt: videoPrompt };
-        }).filter((scene) => scene.prompt);
+    function flowkitDefaultMaterials() {
+        const fallback = [
+            { id: "realistic", name: "Realistic" },
+            { id: "cinematic", name: "Cinematic" },
+            { id: "product_ad", name: "Product Ad" },
+            { id: "anime", name: "Anime" },
+            { id: "3d_pixar", name: "3D Pixar" },
+            { id: "watercolor", name: "Watercolor" },
+        ];
+        const remote = Array.isArray(state.flowkitMaterials) ? state.flowkitMaterials : [];
+        const byId = new Map([...fallback, ...remote].map((item) => [item.id, item]));
+        return Array.from(byId.values()).slice(0, 12);
+    }
+
+    function flowkitEnsureDraft() {
+        if (!Array.isArray(state.flowkitCharacters)) state.flowkitCharacters = [];
+        if (!Array.isArray(state.flowkitScenes) || !state.flowkitScenes.length) {
+            state.flowkitScenes = [{
+                prompt: "",
+                video_prompt: "",
+                image_prompt: "",
+                character_names_text: "",
+                chain_type: "ROOT",
+                upload_image_media_id: "",
+                upload_image_name: "",
+            }];
+        }
     }
 
     function flowkitFeedback(kind, message) {
@@ -4126,13 +4152,32 @@
         feedback.classList.remove("hidden");
     }
 
-    function renderFlowkitJob(job) {
+    function flowkitProgressValue(job) {
+        const status = String(job?.status || "").toLowerCase();
+        if (status === "completed") return 100;
+        if (status === "failed") return 100;
+        const stages = ["health", "project", "video", "scenes", "images", "videos", "upscale", "concat"];
+        const progress = job?.progress || [];
+        const last = progress[progress.length - 1]?.stage || "";
+        const index = Math.max(0, stages.indexOf(last));
+        return Math.min(92, Math.max(8, Math.round(((index + 1) / stages.length) * 100)));
+    }
+
+    function flowkitVideoUrl(job) {
+        const result = job?.result || {};
+        const scenes = result.scenes || [];
+        return result.concat_url || scenes.find((scene) => scene.upscale_url)?.upscale_url || scenes.find((scene) => scene.video_url)?.video_url || "";
+    }
+
+    function renderFlowkitJob(job, compact = false) {
         const [tone, label, icon] = flowkitBadge(job.status);
         const request = job.request || {};
         const result = job.result || {};
         const scenes = result.scenes || [];
         const progress = job.progress || [];
         const lastProgress = progress[progress.length - 1] || {};
+        const pct = flowkitProgressValue(job);
+        const videoUrl = flowkitVideoUrl(job);
         return `
             <article class="hud-card p-4 fade-in" style="border-color: rgba(0, 240, 255, 0.25);">
                 <span class="c-tl"></span><span class="c-br"></span>
@@ -4144,9 +4189,12 @@
                         <div class="flex items-start gap-3">
                             <div class="flex-1 min-w-0">
                                 <div class="text-white font-black text-sm truncate">${escapeHtml(request.title || job.job_id || "FlowKit Video")}</div>
-                                <div class="text-[10px] text-hud-muted mt-1 truncate">${escapeHtml(request.description || request.story || lastProgress.detail || "Veo 3 generation job")}</div>
+                                <div class="text-[10px] text-hud-muted mt-1 truncate">${escapeHtml(request.story || lastProgress.detail || "Veo generation job")}</div>
                             </div>
                             <span class="badge ${tone} shrink-0"><i class="fa-solid ${icon} text-[9px]"></i>${label}</span>
+                        </div>
+                        <div class="mt-3 h-1.5 bg-black/50 border border-hud-cyan/15 overflow-hidden">
+                            <div class="h-full ${job.status === "failed" ? "bg-hud-red" : "bg-hud-cyan"}" style="width:${pct}%"></div>
                         </div>
                         <div class="mt-3 flex flex-wrap gap-2 text-[10px] uppercase-wide">
                             <span class="badge cyan">JOB ${escapeHtml(String(job.job_id || "").slice(0, 8))}</span>
@@ -4157,19 +4205,17 @@
                         </div>
                         ${job.error ? `<div class="mt-3 text-[11px] text-hud-red border border-hud-red/25 bg-hud-red/10 p-2">${escapeHtml(job.error)}</div>` : ""}
                         ${lastProgress.detail ? `<div class="mt-3 text-[11px] text-hud-cyan border border-hud-cyan/20 bg-hud-cyan/10 p-2">${escapeHtml(lastProgress.stage || "progress")}: ${escapeHtml(lastProgress.detail)}</div>` : ""}
-                        ${scenes.length ? `
-                            <div class="mt-3 grid gap-2">
-                                ${scenes.map((scene, index) => `
-                                    <div class="border border-hud-cyan/10 bg-black/20 px-3 py-2 text-[10px]">
-                                        <div class="flex items-center gap-2">
-                                            <span class="badge cyan">SCENE ${index + 1}</span>
-                                            <span class="text-white font-bold truncate">${escapeHtml(scene.status || "READY")}</span>
-                                            <span class="text-hud-muted truncate flex-1">${escapeHtml(scene.prompt || "")}</span>
-                                            ${scene.video_url ? `<a href="${escapeHtml(scene.video_url)}" target="_blank" rel="noopener noreferrer" class="text-hud-cyan hover:text-white"><i class="fa-solid fa-play"></i></a>` : ""}
-                                            ${scene.upscale_url ? `<a href="${escapeHtml(scene.upscale_url)}" target="_blank" rel="noopener noreferrer" class="text-hud-amber hover:text-white"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></a>` : ""}
-                                        </div>
-                                    </div>
-                                `).join("")}
+                        ${videoUrl ? `
+                            <div class="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] items-end">
+                                <video src="${escapeHtml(videoUrl)}" controls class="w-full max-h-[360px] bg-black border border-hud-cyan/20"></video>
+                                <a href="${escapeHtml(videoUrl)}" download target="_blank" rel="noopener noreferrer" class="btn-ghost px-4 py-3 text-xs uppercase-wide font-bold text-center">
+                                    <i class="fa-solid fa-download"></i> DOWNLOAD
+                                </a>
+                            </div>
+                        ` : ""}
+                        ${!compact && progress.length ? `
+                            <div class="mt-4 border border-hud-cyan/15 bg-black/25 p-3 max-h-44 overflow-auto text-[10px] font-mono text-hud-muted space-y-1">
+                                ${progress.slice(-12).map((item) => `<div><span class="text-hud-cyan">${escapeHtml(item.stage || "log")}</span> · ${escapeHtml(item.detail || "")}</div>`).join("")}
                             </div>
                         ` : ""}
                     </div>
@@ -4178,143 +4224,395 @@
         `;
     }
 
-    async function renderFlowkitJobs() {
-        const slot = document.getElementById("flowkit-job-list");
-        if (!slot) return;
-        try {
-            const payload = await fetchJSON("/flowkit/jobs?limit=50");
-            const jobs = payload.jobs || [];
-            const active = jobs.some((job) => ["queued", "processing"].includes(String(job.status || "").toLowerCase()));
-            slot.innerHTML = `
-                <div class="hud-card p-3 flex items-center gap-3" style="border-color: rgba(0, 240, 255, 0.25);">
+    function renderFlowkitResultsGrid(jobs) {
+        const completed = jobs.filter((job) => String(job.status || "").toLowerCase() === "completed" && flowkitVideoUrl(job));
+        if (!completed.length) {
+            return `<div class="hud-card p-8 text-center text-hud-muted text-sm">Chưa có video hoàn tất.</div>`;
+        }
+        return `<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">${completed.map((job) => {
+            const videoUrl = flowkitVideoUrl(job);
+            const request = job.request || {};
+            return `
+                <article class="hud-card p-4" style="border-color: rgba(0, 240, 255, 0.25);">
                     <span class="c-tl"></span><span class="c-br"></span>
-                    <div class="font-display text-white font-black text-xs uppercase-widest"><i class="fa-solid fa-list-check text-hud-cyan"></i> FLOWKIT JOBS</div>
-                    <span class="badge cyan ml-auto">${formatNumber(payload.total || jobs.length)} JOBS</span>
-                    <button id="flowkit-jobs-refresh" class="btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> REFRESH</button>
-                </div>
-                ${jobs.map(renderFlowkitJob).join("") || `<div class="hud-card p-8 text-center text-hud-muted text-sm">Chưa có job FlowKit.</div>`}
+                    <video src="${escapeHtml(videoUrl)}" controls class="w-full aspect-video bg-black border border-hud-cyan/20 object-contain"></video>
+                    <div class="mt-3 text-white font-black text-sm truncate">${escapeHtml(request.title || job.job_id)}</div>
+                    <div class="mt-2 flex gap-2">
+                        <a href="${escapeHtml(videoUrl)}" download target="_blank" rel="noopener noreferrer" class="btn-ghost flex-1 px-3 py-2 text-[10px] uppercase-wide font-bold text-center"><i class="fa-solid fa-download"></i> Download</a>
+                        <button class="flowkit-regenerate btn-ghost px-3 py-2 text-[10px] uppercase-wide font-bold" data-job-id="${escapeHtml(job.job_id)}"><i class="fa-solid fa-rotate-right"></i> Tạo lại</button>
+                    </div>
+                </article>
             `;
-            slot.querySelector("#flowkit-jobs-refresh")?.addEventListener("click", renderFlowkitJobs);
-            if (state.flowkitJobsRefreshTimer) clearTimeout(state.flowkitJobsRefreshTimer);
-            if (active && document.getElementById("page-flowkit")?.classList.contains("active")) {
-                state.flowkitJobsRefreshTimer = setTimeout(renderFlowkitJobs, 5000);
-            }
-        } catch (error) {
-            slot.innerHTML = `<div class="text-hud-red text-sm">Failed to load FlowKit jobs: ${escapeHtml(error.message)}</div>`;
+        }).join("")}</div>`;
+    }
+
+    async function flowkitLoadJobs() {
+        const payload = await fetchJSON("/flowkit/jobs?limit=80");
+        state.flowkitLastJobs = payload.jobs || [];
+        return state.flowkitLastJobs;
+    }
+
+    function flowkitScheduleJobsRefresh() {
+        if (state.flowkitJobsRefreshTimer) clearTimeout(state.flowkitJobsRefreshTimer);
+        const active = (state.flowkitLastJobs || []).some((job) => ["queued", "processing"].includes(String(job.status || "").toLowerCase()));
+        if (active && document.getElementById("page-flowkit")?.classList.contains("active")) {
+            state.flowkitJobsRefreshTimer = setTimeout(async () => {
+                try {
+                    await flowkitLoadJobs();
+                    await renderFlowkitPage(false);
+                } catch (_) {}
+            }, 3500);
         }
     }
 
-    async function renderFlowkitPage() {
-        const section = document.getElementById("page-flowkit");
-        if (!section) return;
-        if (state.flowkitJobsRefreshTimer) {
-            clearTimeout(state.flowkitJobsRefreshTimer);
-            state.flowkitJobsRefreshTimer = null;
-        }
-        let health = { connected: false };
-        let materials = [];
-        try {
-            [health, materials] = await Promise.all([
-                fetchJSON("/flowkit/health"),
-                fetchJSON("/flowkit/materials").catch(() => []),
-            ]);
-            state.flowkitMaterials = materials;
-        } catch (error) {
-            health = { connected: false, error: error.message };
-        }
-        section.innerHTML = `
-            <div class="max-w-[1440px] mx-auto grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px] items-start">
-                <div class="space-y-6">
-                    <div class="hud-card fade-in" style="border-color: rgba(0, 240, 255, 0.3);">
-                        <span class="c-tl"></span><span class="c-br"></span>
-                        <div class="header-strip px-6 py-4">
-                            <div class="flex items-center gap-3">
-                                <i class="fa-solid fa-wand-magic-sparkles text-hud-cyan"></i>
-                                <h3 class="font-display font-black text-sm text-white uppercase-widest">FLOWKIT VIDEO GENERATOR</h3>
-                                <span class="badge ${health.connected ? "green" : "red"} ml-auto">${health.connected ? "CONNECTED" : "DISCONNECTED"}</span>
-                            </div>
-                        </div>
-                        <div class="p-7 space-y-5">
-                            ${health.error ? `<div class="border border-hud-red/30 bg-hud-red/10 text-hud-red text-[11px] p-3">${escapeHtml(health.error)}</div>` : ""}
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">TIÊU ĐỀ VIDEO</label>
-                                    <input id="flowkit-title" class="hud-input w-full px-4 py-3 text-sm" placeholder="VD: Reel giới thiệu mẫu điếu mới"/>
-                                </div>
-                                <div>
-                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">STYLE</label>
-                                    <select id="flowkit-material" class="hud-select w-full px-4 py-3 text-sm">
-                                        ${(materials.length ? materials : [{ id: "realistic", name: "Realistic" }, { id: "3d_pixar", name: "3D Pixar" }, { id: "anime", name: "Anime" }]).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name || item.id)}</option>`).join("")}
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="grid grid-cols-3 gap-4">
-                                <div>
-                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">TỶ LỆ</label>
-                                    <select id="flowkit-orientation" class="hud-select w-full px-4 py-3 text-sm">
-                                        <option value="VERTICAL">VERTICAL 9:16</option>
-                                        <option value="HORIZONTAL">HORIZONTAL 16:9</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">MODE</label>
-                                    <select id="flowkit-mode" class="hud-select w-full px-4 py-3 text-sm">
-                                        <option value="i2v">I2V</option>
-                                        <option value="i2v_fl">I2V FIRST-LAST</option>
-                                        <option value="r2v">REFERENCE VIDEO</option>
-                                    </select>
-                                </div>
-                                <label class="border border-hud-cyan/20 bg-black/30 p-3 cursor-pointer flex items-center gap-3">
-                                    <input id="flowkit-upscale" type="checkbox" class="hud-checkbox"/>
-                                    <span class="text-[11px] text-white font-bold uppercase-wide">Upscale 4K</span>
-                                </label>
-                            </div>
-                            <div>
-                                <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">SCENES</label>
-                                <textarea id="flowkit-scenes" class="hud-textarea w-full min-h-[260px] px-4 py-3 text-sm" placeholder="Mỗi scene cách nhau bằng dòng ---&#10;Scene 1 prompt&#10;0-3s: camera close up... 3-6s: movement...&#10;---&#10;Scene 2 prompt..."></textarea>
-                                <div class="text-[10px] text-hud-muted mt-2">Dòng đầu mỗi block là prompt ảnh/frame đầu. Các dòng sau là video prompt chuyển động.</div>
-                            </div>
-                            <div id="flowkit-feedback" class="hidden text-[11px] border p-3"></div>
-                            <button id="flowkit-generate" class="w-full py-3 text-sm uppercase tracking-[0.25em] font-black flex items-center justify-center gap-3" style="background: linear-gradient(135deg, #00f0ff 0%, #0088ff 100%); border: 2px solid #00f0ff; color: #001018; box-shadow: 0 0 20px rgba(0, 240, 255, 0.35); font-family: Orbitron;">
-                                <i class="fa-solid fa-play"></i> GENERATE VIDEO
-                            </button>
-                        </div>
+    function renderFlowkitHeader() {
+        const health = state.flowkitHealth || { connected: false };
+        return `
+            <div class="hud-card fade-in" style="border-color: rgba(0, 240, 255, 0.3);">
+                <span class="c-tl"></span><span class="c-br"></span>
+                <div class="px-6 py-5 flex flex-wrap items-center gap-4">
+                    <div class="w-12 h-12 border border-hud-cyan/40 bg-hud-cyan/10 flex items-center justify-center text-hud-cyan">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i>
                     </div>
-                    <div id="flowkit-job-list" class="space-y-4"></div>
+                    <div>
+                        <h3 class="font-display font-black text-white uppercase-widest text-sm">FLOWKIT VIDEO STUDIO</h3>
+                        <p class="text-[10px] text-hud-muted uppercase-wide mt-1">Google Flow/Veo generation · Projects · Results</p>
+                    </div>
+                    <div class="ml-auto flex flex-wrap items-center gap-2">
+                        <span class="badge ${health.connected ? "green" : "red"}">${health.connected ? "ONLINE" : "OFFLINE"}</span>
+                        <span class="badge cyan">TIER ${escapeHtml(health.tier || "-")}</span>
+                        <button id="flowkit-refresh" class="btn-ghost px-3 py-2 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> Refresh</button>
+                    </div>
                 </div>
-                <aside class="hud-card fade-in sticky top-5" style="border-color: rgba(0, 240, 255, 0.25);">
-                    <span class="c-tl"></span><span class="c-br"></span>
-                    <div class="header-strip px-5 py-4">
-                        <div class="font-display font-black text-sm text-white uppercase-widest"><i class="fa-solid fa-signal text-hud-cyan"></i> FLOWKIT STATUS</div>
-                    </div>
-                    <div class="p-5 space-y-4 text-[11px]">
-                        <div class="grid grid-cols-2 gap-3">
-                            <div class="border border-hud-cyan/15 bg-black/25 p-3"><div class="text-hud-muted uppercase-wide">Connection</div><div class="${health.connected ? "text-hud-green" : "text-hud-red"} font-bold">${health.connected ? "Connected" : "Disconnected"}</div></div>
-                            <div class="border border-hud-cyan/15 bg-black/25 p-3"><div class="text-hud-muted uppercase-wide">Tier</div><div class="text-white font-bold">${escapeHtml(health.tier || "-")}</div></div>
-                        </div>
-                        <div class="border border-hud-cyan/15 bg-black/25 p-3">
-                            <div class="text-hud-muted uppercase-wide">Base URL</div>
-                            <div class="text-hud-cyan break-all">${escapeHtml(health.base_url || "")}</div>
-                        </div>
-                        <div class="text-hud-muted leading-relaxed">
-                            FlowKit tạo video AI bằng Google Flow/Veo. Video tạo xong có thể dùng lại để đăng Facebook Reels ở trang Đăng Reels.
-                        </div>
-                    </div>
-                </aside>
             </div>
         `;
-        await renderFlowkitJobs();
+    }
+
+    function renderFlowkitTabs() {
+        const tabs = [
+            ["create", "Tạo Video", "fa-clapperboard"],
+            ["projects", "Projects", "fa-folder-tree"],
+            ["results", "Kết quả", "fa-photo-film"],
+        ];
+        return `<div class="flex flex-wrap gap-2">${tabs.map(([key, label, icon]) => `
+            <button class="flowkit-tab btn-ghost px-4 py-2 text-[11px] uppercase-wide font-bold ${state.flowkitTab === key ? "text-hud-cyan border-hud-cyan/60 bg-hud-cyan/10" : ""}" data-tab="${key}">
+                <i class="fa-solid ${icon}"></i> ${label}
+            </button>
+        `).join("")}</div>`;
+    }
+
+    function flowkitProjectOptions() {
+        const projects = Array.isArray(state.flowkitProjects) ? state.flowkitProjects : [];
+        return `
+            <option value="">Tạo project mới</option>
+            ${projects.map((project) => {
+                const id = project.id || project.project_id || "";
+                const name = project.title || project.name || id;
+                return `<option value="${escapeHtml(id)}" ${state.flowkitSelectedProjectId === id ? "selected" : ""}>${escapeHtml(name)}</option>`;
+            }).join("")}
+        `;
+    }
+
+    function renderFlowkitCreateTab() {
+        flowkitEnsureDraft();
+        return `
+            <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_430px] items-start">
+                <div class="hud-card fade-in" style="border-color: rgba(0, 240, 255, 0.3);">
+                    <span class="c-tl"></span><span class="c-br"></span>
+                    <div class="header-strip px-6 py-4 flex items-center gap-3">
+                        <i class="fa-solid fa-video text-hud-cyan"></i>
+                        <h3 class="font-display font-black text-sm text-white uppercase-widest">TẠO VIDEO</h3>
+                    </div>
+                    <div class="p-6 space-y-5">
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div>
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">TITLE</label>
+                                <input id="flowkit-title" class="hud-input w-full px-4 py-3 text-sm" value="${escapeHtml(state.flowkitDraft.title || "")}" placeholder="VD: Reel giới thiệu sản phẩm mới"/>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">PROJECT</label>
+                                <select id="flowkit-project" class="hud-select w-full px-4 py-3 text-sm">${flowkitProjectOptions()}</select>
+                            </div>
+                        </div>
+                        <div class="grid gap-4 md:grid-cols-3">
+                            <div>
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">MATERIAL</label>
+                                <select id="flowkit-material" class="hud-select w-full px-4 py-3 text-sm">
+                                    ${flowkitDefaultMaterials().map((item) => `<option value="${escapeHtml(item.id)}" ${state.flowkitDraft.material === item.id ? "selected" : ""}>${escapeHtml(item.name || item.id)}</option>`).join("")}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">ORIENTATION</label>
+                                <select id="flowkit-orientation" class="hud-select w-full px-4 py-3 text-sm">
+                                    <option value="VERTICAL" ${state.flowkitDraft.orientation !== "HORIZONTAL" ? "selected" : ""}>9:16 Vertical</option>
+                                    <option value="HORIZONTAL" ${state.flowkitDraft.orientation === "HORIZONTAL" ? "selected" : ""}>16:9 Horizontal</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">VIDEO MODE</label>
+                                <select id="flowkit-mode" class="hud-select w-full px-4 py-3 text-sm">
+                                    ${["i2v", "i2v_fl", "r2v"].map((mode) => `<option value="${mode}" ${(state.flowkitDraft.video_gen_mode || "i2v") === mode ? "selected" : ""}>${mode}</option>`).join("")}
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">STORY</label>
+                            <textarea id="flowkit-story" class="hud-textarea w-full min-h-[120px] px-4 py-3 text-sm" placeholder="Bối cảnh, thông điệp, cảm xúc và mục tiêu video...">${escapeHtml(state.flowkitDraft.story || "")}</textarea>
+                        </div>
+                        <div class="grid gap-3 md:grid-cols-3">
+                            ${[
+                                ["flowkit-upscale", "4K upscale", "fa-up-right-and-down-left-from-center"],
+                                ["flowkit-music", "Music", "fa-music"],
+                                ["flowkit-voice", "Voice", "fa-microphone-lines"],
+                            ].map(([id, label, icon]) => `
+                                <label class="border border-hud-cyan/20 bg-black/30 p-3 cursor-pointer flex items-center gap-3">
+                                    <input id="${id}" type="checkbox" class="hud-checkbox" ${state.flowkitDraft[id.replace("flowkit-", "")] ? "checked" : ""}/>
+                                    <span class="text-[11px] text-white font-bold uppercase-wide"><i class="fa-solid ${icon} text-hud-cyan"></i> ${label}</span>
+                                </label>
+                            `).join("")}
+                        </div>
+                        <div class="flex items-center gap-3 pt-2">
+                            <div class="font-display text-white font-black text-xs uppercase-widest"><i class="fa-solid fa-users text-hud-cyan"></i> Characters</div>
+                            <button id="flowkit-add-character" class="btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold ml-auto"><i class="fa-solid fa-plus"></i> Add</button>
+                        </div>
+                        <div id="flowkit-characters" class="space-y-3">${renderFlowkitCharacters()}</div>
+                        <div class="flex items-center gap-3 pt-2">
+                            <div class="font-display text-white font-black text-xs uppercase-widest"><i class="fa-solid fa-layer-group text-hud-cyan"></i> Scenes</div>
+                            <button id="flowkit-add-scene" class="btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold ml-auto"><i class="fa-solid fa-plus"></i> Add Scene</button>
+                        </div>
+                        <div id="flowkit-scenes" class="space-y-4">${renderFlowkitScenes()}</div>
+                        <div id="flowkit-feedback" class="hidden text-[11px] border p-3"></div>
+                        <button id="flowkit-generate" class="w-full py-3 text-sm uppercase tracking-[0.25em] font-black flex items-center justify-center gap-3" style="background: linear-gradient(135deg, #00f0ff 0%, #0088ff 100%); border: 2px solid #00f0ff; color: #001018; box-shadow: 0 0 20px rgba(0, 240, 255, 0.35); font-family: Orbitron;">
+                            <i class="fa-solid fa-play"></i> GENERATE VIDEO
+                        </button>
+                    </div>
+                </div>
+                <aside id="flowkit-progress-panel" class="space-y-4">${renderFlowkitProgressPanel()}</aside>
+            </div>
+        `;
+    }
+
+    function renderFlowkitCharacters() {
+        if (!state.flowkitCharacters.length) {
+            return `<div class="border border-dashed border-hud-cyan/25 bg-black/20 p-4 text-hud-muted text-xs">Chưa có character. Thêm character nếu video cần nhân vật cố định.</div>`;
+        }
+        return state.flowkitCharacters.map((character, index) => `
+            <div class="border border-hud-cyan/20 bg-black/25 p-4" data-character-index="${index}">
+                <div class="grid gap-3 md:grid-cols-[1fr_150px_auto] items-start">
+                    <input class="flowkit-character-name hud-input px-3 py-2 text-xs" value="${escapeHtml(character.name || "")}" placeholder="Tên character"/>
+                    <select class="flowkit-character-type hud-select px-3 py-2 text-xs">
+                        ${["character", "animal", "product", "brand", "object"].map((type) => `<option value="${type}" ${character.entity_type === type ? "selected" : ""}>${type}</option>`).join("")}
+                    </select>
+                    <button class="flowkit-remove-character btn-ghost px-3 py-2 text-hud-red" title="Xóa"><i class="fa-solid fa-trash"></i></button>
+                </div>
+                <div class="grid gap-3 md:grid-cols-2 mt-3">
+                    <textarea class="flowkit-character-description hud-textarea px-3 py-2 text-xs min-h-[78px]" placeholder="Mô tả ngoại hình, trang phục, vai trò...">${escapeHtml(character.description || "")}</textarea>
+                    <textarea class="flowkit-character-voice hud-textarea px-3 py-2 text-xs min-h-[78px]" placeholder="Voice description...">${escapeHtml(character.voice_description || "")}</textarea>
+                </div>
+            </div>
+        `).join("");
+    }
+
+    function renderFlowkitScenes() {
+        return state.flowkitScenes.map((scene, index) => `
+            <div class="border border-hud-cyan/20 bg-black/25 p-4" data-scene-index="${index}">
+                <div class="flex items-center gap-3 mb-3">
+                    <span class="badge cyan">SCENE ${index + 1}</span>
+                    <select class="flowkit-scene-chain hud-select px-3 py-2 text-xs max-w-[180px]">
+                        ${["ROOT", "CONTINUATION"].map((type) => `<option value="${type}" ${scene.chain_type === type ? "selected" : ""}>${type}</option>`).join("")}
+                    </select>
+                    <button class="flowkit-remove-scene btn-ghost px-3 py-2 text-hud-red ml-auto" ${state.flowkitScenes.length <= 1 ? "disabled" : ""}><i class="fa-solid fa-trash"></i></button>
+                </div>
+                <div class="grid gap-3">
+                    <textarea class="flowkit-scene-prompt hud-textarea px-3 py-2 text-xs min-h-[90px]" placeholder="Prompt hình/frame đầu...">${escapeHtml(scene.prompt || "")}</textarea>
+                    <textarea class="flowkit-scene-video-prompt hud-textarea px-3 py-2 text-xs min-h-[90px]" placeholder="Video prompt: camera movement, action, timing...">${escapeHtml(scene.video_prompt || "")}</textarea>
+                    <input class="flowkit-scene-characters hud-input px-3 py-2 text-xs" value="${escapeHtml(scene.character_names_text || "")}" placeholder="Character names, cách nhau bằng dấu phẩy"/>
+                    <label class="flowkit-scene-drop border border-dashed border-hud-cyan/35 bg-hud-cyan/5 p-4 text-center cursor-pointer block">
+                        <input class="flowkit-scene-file hidden" type="file" accept="image/*"/>
+                        <div class="text-hud-cyan text-lg"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                        <div class="text-white font-bold text-xs mt-1">${scene.upload_image_name ? escapeHtml(scene.upload_image_name) : "Kéo thả hoặc chọn ảnh tham chiếu"}</div>
+                        <div class="text-hud-muted text-[10px] mt-1">${scene.upload_image_media_id ? `media_id: ${escapeHtml(scene.upload_image_media_id)}` : "Nếu không upload, FlowKit sẽ tự generate ảnh scene."}</div>
+                    </label>
+                </div>
+            </div>
+        `).join("");
+    }
+
+    function renderFlowkitProgressPanel() {
+        const active = (state.flowkitLastJobs || []).find((job) => ["queued", "processing"].includes(String(job.status || "").toLowerCase()));
+        if (!active) {
+            return `<div class="hud-card p-5 text-hud-muted text-sm" style="border-color: rgba(0, 240, 255, 0.2);"><span class="c-tl"></span><span class="c-br"></span>Chưa có job đang chạy.</div>`;
+        }
+        return renderFlowkitJob(active);
+    }
+
+    function renderFlowkitProjectsTab() {
+        const projects = state.flowkitProjects || [];
+        return `
+            <div class="hud-card p-5" style="border-color: rgba(0, 240, 255, 0.25);">
+                <span class="c-tl"></span><span class="c-br"></span>
+                <div class="flex items-center gap-3 mb-5">
+                    <div class="font-display font-black text-white uppercase-widest text-sm"><i class="fa-solid fa-folder-tree text-hud-cyan"></i> Projects</div>
+                    <span class="badge cyan ml-auto">${formatNumber(projects.length)} PROJECTS</span>
+                </div>
+                <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    ${projects.map((project) => {
+                        const id = project.id || project.project_id || "";
+                        const name = project.title || project.name || id;
+                        return `
+                            <button class="flowkit-use-project text-left border border-hud-cyan/20 bg-black/25 p-4 hover:border-hud-cyan/60 transition-colors" data-project-id="${escapeHtml(id)}">
+                                <div class="text-white font-black text-sm truncate">${escapeHtml(name)}</div>
+                                <div class="text-hud-muted text-[10px] mt-2 break-all">${escapeHtml(id)}</div>
+                                <div class="mt-3 flex flex-wrap gap-2">
+                                    <span class="badge cyan">${escapeHtml(project.status || "PROJECT")}</span>
+                                    <span class="text-hud-muted text-[10px]">${escapeHtml(formatDate(project.updated_at || project.created_at || ""))}</span>
+                                </div>
+                            </button>
+                        `;
+                    }).join("") || `<div class="text-hud-muted text-sm">Chưa có project từ FlowKit.</div>`}
+                </div>
+            </div>
+        `;
+    }
+
+    function renderFlowkitResultsTab() {
+        const jobs = state.flowkitLastJobs || [];
+        return `
+            <div class="space-y-5">
+                <div class="hud-card p-4 flex items-center gap-3" style="border-color: rgba(0, 240, 255, 0.25);">
+                    <span class="c-tl"></span><span class="c-br"></span>
+                    <div class="font-display text-white font-black text-xs uppercase-widest"><i class="fa-solid fa-photo-film text-hud-cyan"></i> KẾT QUẢ VIDEO</div>
+                    <span class="badge cyan ml-auto">${formatNumber(jobs.length)} JOBS</span>
+                </div>
+                ${renderFlowkitResultsGrid(jobs)}
+                <div id="flowkit-job-list" class="space-y-4">${jobs.map((job) => renderFlowkitJob(job, true)).join("")}</div>
+            </div>
+        `;
+    }
+
+    function flowkitCollectDraft(section) {
+        state.flowkitSelectedProjectId = String(section.querySelector("#flowkit-project")?.value || "");
+        state.flowkitDraft = {
+            title: String(section.querySelector("#flowkit-title")?.value || ""),
+            story: String(section.querySelector("#flowkit-story")?.value || ""),
+            material: String(section.querySelector("#flowkit-material")?.value || "realistic"),
+            orientation: String(section.querySelector("#flowkit-orientation")?.value || "VERTICAL"),
+            video_gen_mode: String(section.querySelector("#flowkit-mode")?.value || "i2v"),
+            upscale: Boolean(section.querySelector("#flowkit-upscale")?.checked),
+            music: Boolean(section.querySelector("#flowkit-music")?.checked),
+            voice: Boolean(section.querySelector("#flowkit-voice")?.checked),
+        };
+        state.flowkitCharacters = Array.from(section.querySelectorAll("[data-character-index]")).map((node) => ({
+            name: String(node.querySelector(".flowkit-character-name")?.value || "").trim(),
+            entity_type: String(node.querySelector(".flowkit-character-type")?.value || "character"),
+            description: String(node.querySelector(".flowkit-character-description")?.value || "").trim(),
+            voice_description: String(node.querySelector(".flowkit-character-voice")?.value || "").trim(),
+        })).filter((item) => item.name);
+        state.flowkitScenes = Array.from(section.querySelectorAll("[data-scene-index]")).map((node) => {
+            const index = Number(node.dataset.sceneIndex || 0);
+            const previous = state.flowkitScenes[index] || {};
+            return {
+                prompt: String(node.querySelector(".flowkit-scene-prompt")?.value || "").trim(),
+                video_prompt: String(node.querySelector(".flowkit-scene-video-prompt")?.value || "").trim(),
+                chain_type: String(node.querySelector(".flowkit-scene-chain")?.value || "ROOT"),
+                character_names_text: String(node.querySelector(".flowkit-scene-characters")?.value || "").trim(),
+                upload_image_media_id: previous.upload_image_media_id || "",
+                upload_image_name: previous.upload_image_name || "",
+            };
+        });
+    }
+
+    async function flowkitUploadSceneImage(index, file) {
+        const form = new FormData();
+        form.append("file", file);
+        if (state.flowkitSelectedProjectId) form.append("project_id", state.flowkitSelectedProjectId);
+        const result = await fetchJSON("/flowkit/upload-image", { method: "POST", body: form });
+        state.flowkitScenes[index] = {
+            ...(state.flowkitScenes[index] || {}),
+            upload_image_media_id: result.media_id || "",
+            upload_image_name: result.filename || file.name,
+        };
+        return result;
+    }
+
+    function bindFlowkitCreate(section) {
+        section.querySelector("#flowkit-add-character")?.addEventListener("click", () => {
+            flowkitCollectDraft(section);
+            state.flowkitCharacters.push({ name: "", description: "", entity_type: "character", voice_description: "" });
+            renderFlowkitPage(false);
+        });
+        section.querySelectorAll(".flowkit-remove-character").forEach((button) => {
+            button.addEventListener("click", () => {
+                flowkitCollectDraft(section);
+                state.flowkitCharacters.splice(Number(button.closest("[data-character-index]")?.dataset.characterIndex || 0), 1);
+                renderFlowkitPage(false);
+            });
+        });
+        section.querySelector("#flowkit-add-scene")?.addEventListener("click", () => {
+            flowkitCollectDraft(section);
+            state.flowkitScenes.push({ prompt: "", video_prompt: "", chain_type: "ROOT", character_names_text: "" });
+            renderFlowkitPage(false);
+        });
+        section.querySelectorAll(".flowkit-remove-scene").forEach((button) => {
+            button.addEventListener("click", () => {
+                flowkitCollectDraft(section);
+                state.flowkitScenes.splice(Number(button.closest("[data-scene-index]")?.dataset.sceneIndex || 0), 1);
+                renderFlowkitPage(false);
+            });
+        });
+        section.querySelectorAll(".flowkit-scene-file").forEach((input) => {
+            input.addEventListener("change", async () => {
+                const file = input.files?.[0];
+                if (!file) return;
+                const node = input.closest("[data-scene-index]");
+                const index = Number(node?.dataset.sceneIndex || 0);
+                flowkitCollectDraft(section);
+                flowkitFeedback("loading", `Đang upload ảnh scene ${index + 1}...`);
+                try {
+                    await flowkitUploadSceneImage(index, file);
+                    await renderFlowkitPage(false);
+                    flowkitFeedback("success", `Đã upload ảnh scene ${index + 1}.`);
+                } catch (error) {
+                    flowkitFeedback("error", `Upload image failed: ${error.message}`);
+                }
+            });
+        });
+        section.querySelectorAll(".flowkit-scene-drop").forEach((drop) => {
+            drop.addEventListener("dragover", (event) => {
+                event.preventDefault();
+                drop.classList.add("border-hud-cyan");
+            });
+            drop.addEventListener("dragleave", () => drop.classList.remove("border-hud-cyan"));
+            drop.addEventListener("drop", async (event) => {
+                event.preventDefault();
+                drop.classList.remove("border-hud-cyan");
+                const file = event.dataTransfer?.files?.[0];
+                if (!file) return;
+                const node = drop.closest("[data-scene-index]");
+                const index = Number(node?.dataset.sceneIndex || 0);
+                flowkitCollectDraft(section);
+                flowkitFeedback("loading", `Đang upload ảnh scene ${index + 1}...`);
+                try {
+                    await flowkitUploadSceneImage(index, file);
+                    await renderFlowkitPage(false);
+                    flowkitFeedback("success", `Đã upload ảnh scene ${index + 1}.`);
+                } catch (error) {
+                    flowkitFeedback("error", `Upload image failed: ${error.message}`);
+                }
+            });
+        });
         section.querySelector("#flowkit-generate")?.addEventListener("click", async () => {
+            flowkitCollectDraft(section);
             const title = String(section.querySelector("#flowkit-title")?.value || "").trim();
-            const scenes = flowkitScenesFromTextarea();
-            if (!title) {
-                flowkitFeedback("error", "Cần nhập tiêu đề video.");
-                return;
-            }
-            if (!scenes.length) {
-                flowkitFeedback("error", "Cần nhập ít nhất một scene.");
-                return;
-            }
+            const scenes = state.flowkitScenes.map((scene) => ({
+                prompt: scene.prompt,
+                video_prompt: scene.video_prompt,
+                chain_type: scene.chain_type || "ROOT",
+                character_names: String(scene.character_names_text || "").split(",").map((item) => item.trim()).filter(Boolean),
+                upload_image_media_id: scene.upload_image_media_id || null,
+            })).filter((scene) => scene.prompt);
+            if (!title) return flowkitFeedback("error", "Cần nhập tiêu đề video.");
+            if (!scenes.length) return flowkitFeedback("error", "Cần nhập ít nhất một scene.");
             const button = section.querySelector("#flowkit-generate");
             if (button) {
                 button.disabled = true;
@@ -4325,15 +4623,21 @@
                     method: "POST",
                     body: JSON.stringify({
                         title,
+                        project_id: state.flowkitSelectedProjectId || null,
                         scenes,
-                        material: section.querySelector("#flowkit-material")?.value || "realistic",
-                        orientation: section.querySelector("#flowkit-orientation")?.value || "VERTICAL",
-                        video_gen_mode: section.querySelector("#flowkit-mode")?.value || "i2v",
-                        upscale_4k: Boolean(section.querySelector("#flowkit-upscale")?.checked),
+                        characters: state.flowkitCharacters,
+                        story: String(state.flowkitDraft.story || "").trim(),
+                        material: state.flowkitDraft.material || "realistic",
+                        orientation: state.flowkitDraft.orientation || "VERTICAL",
+                        video_gen_mode: state.flowkitDraft.video_gen_mode || "i2v",
+                        upscale_4k: Boolean(state.flowkitDraft.upscale),
+                        allow_music: Boolean(state.flowkitDraft.music),
+                        allow_voice: Boolean(state.flowkitDraft.voice),
                     }),
                 });
                 flowkitFeedback("success", `Đã tạo FlowKit job ${result.job_id}.`);
-                await renderFlowkitJobs();
+                await flowkitLoadJobs();
+                await renderFlowkitPage(false);
             } catch (error) {
                 flowkitFeedback("error", `Generate failed: ${error.message}`);
             } finally {
@@ -4343,6 +4647,79 @@
                 }
             }
         });
+    }
+
+    async function renderFlowkitPage(loadRemote = true) {
+        const section = document.getElementById("page-flowkit");
+        if (!section) return;
+        if (state.flowkitJobsRefreshTimer) {
+            clearTimeout(state.flowkitJobsRefreshTimer);
+            state.flowkitJobsRefreshTimer = null;
+        }
+        flowkitEnsureDraft();
+        if (loadRemote) {
+            try {
+                const [health, materials, projects, jobs] = await Promise.all([
+                    fetchJSON("/flowkit/health"),
+                    fetchJSON("/flowkit/materials").catch(() => []),
+                    fetchJSON("/flowkit/projects").catch(() => []),
+                    flowkitLoadJobs().catch(() => []),
+                ]);
+                state.flowkitHealth = health;
+                state.flowkitMaterials = materials;
+                state.flowkitProjects = projects;
+                state.flowkitLastJobs = jobs;
+            } catch (error) {
+                state.flowkitHealth = { connected: false, error: error.message };
+            }
+        }
+        const body = state.flowkitTab === "projects"
+            ? renderFlowkitProjectsTab()
+            : state.flowkitTab === "results"
+                ? renderFlowkitResultsTab()
+                : renderFlowkitCreateTab();
+        section.innerHTML = `<div class="max-w-[1600px] mx-auto space-y-6">${renderFlowkitHeader()}${renderFlowkitTabs()}${state.flowkitHealth?.error ? `<div class="border border-hud-red/30 bg-hud-red/10 text-hud-red text-[11px] p-3">${escapeHtml(state.flowkitHealth.error)}</div>` : ""}${body}</div>`;
+        section.querySelector("#flowkit-refresh")?.addEventListener("click", () => renderFlowkitPage(true));
+        section.querySelectorAll(".flowkit-tab").forEach((button) => {
+            button.addEventListener("click", () => {
+                state.flowkitTab = button.dataset.tab || "create";
+                renderFlowkitPage(false);
+            });
+        });
+        section.querySelectorAll(".flowkit-use-project").forEach((button) => {
+            button.addEventListener("click", () => {
+                state.flowkitSelectedProjectId = button.dataset.projectId || "";
+                state.flowkitTab = "create";
+                renderFlowkitPage(false);
+            });
+        });
+        section.querySelectorAll(".flowkit-regenerate").forEach((button) => {
+            button.addEventListener("click", () => {
+                const job = (state.flowkitLastJobs || []).find((item) => item.job_id === button.dataset.jobId);
+                if (job?.request) {
+                    state.flowkitTab = "create";
+                    state.flowkitSelectedProjectId = job.request.project_id || "";
+                    state.flowkitDraft = {
+                        title: job.request.title || "",
+                        story: job.request.story || "",
+                        material: job.request.material || "realistic",
+                        orientation: job.request.orientation || "VERTICAL",
+                        video_gen_mode: job.request.video_gen_mode || "i2v",
+                        upscale: Boolean(job.request.upscale_4k),
+                        music: Boolean(job.request.allow_music),
+                        voice: Boolean(job.request.allow_voice),
+                    };
+                    state.flowkitCharacters = job.request.characters || [];
+                    state.flowkitScenes = (job.request.scenes || []).map((scene) => ({
+                        ...scene,
+                        character_names_text: (scene.character_names || []).join(", "),
+                    }));
+                    renderFlowkitPage(false);
+                }
+            });
+        });
+        if (state.flowkitTab === "create") bindFlowkitCreate(section);
+        flowkitScheduleJobsRefresh();
     }
 
     function facebookReelFeedback(kind, message) {

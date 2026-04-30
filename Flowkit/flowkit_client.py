@@ -117,6 +117,7 @@ class SceneInput:
     transition_prompt: Optional[str] = None   # for i2v_fl CONTINUATION
     narrator_text: Optional[str] = None
     upload_image_path: Optional[str] = None   # local image file to use as scene image
+    upload_image_media_id: Optional[str] = None
     upload_image_base64: Optional[str] = None # base64 image data
 
 @dataclass
@@ -741,7 +742,20 @@ class FlowKitClient:
             _notify("images", "Generating scene images...")
             image_requests = []
             for i, (scene_input, scene_obj) in enumerate(zip(scenes, scene_objects)):
-                # Upload custom image if provided
+                # Use a pre-uploaded custom image if provided by the UI.
+                if scene_input.upload_image_media_id:
+                    media_id = scene_input.upload_image_media_id
+                    orient_prefix = "horizontal" if orientation == "HORIZONTAL" else "vertical"
+                    await self.update_scene(scene_obj["id"], **{
+                        f"{orient_prefix}_image_media_id": media_id,
+                        f"{orient_prefix}_image_status": "COMPLETED",
+                    })
+                    result.scenes[i].image_media_id = media_id
+                    result.scenes[i].status = "IMAGE_READY"
+                    _notify("images", f"  ✓ Scene {i} image selected: {media_id[:8]}")
+                    continue
+
+                # Upload custom image from a local path if provided by scripts.
                 if scene_input.upload_image_path:
                     _notify("images", f"  → Uploading image for scene {i}")
                     upload_result = await self.flow_upload_image(

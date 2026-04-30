@@ -38,6 +38,7 @@ class FlowKitSceneRequest(BaseModel):
     transition_prompt: Optional[str] = None
     narrator_text: Optional[str] = None
     upload_image_path: Optional[str] = None
+    upload_image_media_id: Optional[str] = None
 
 
 class FlowKitGenerateRequest(BaseModel):
@@ -204,6 +205,7 @@ def _scene_inputs(scenes: list[FlowKitSceneRequest]) -> list[SceneInput]:
             transition_prompt=scene.transition_prompt,
             narrator_text=scene.narrator_text,
             upload_image_path=scene.upload_image_path,
+            upload_image_media_id=scene.upload_image_media_id,
         )
         for scene in scenes
     ]
@@ -347,4 +349,3 @@ async def upload_image(file: UploadFile = File(...), project_id: str = Form(""))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
         temp_path.unlink(missing_ok=True)
-

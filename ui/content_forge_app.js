@@ -4247,7 +4247,7 @@
             const progress = job.progress || [];
             const last = progress[progress.length - 1] || {};
             return `
-                <article class="hud-card p-4 overflow-hidden" style="border-color: rgba(0, 240, 255, 0.25);">
+                <article class="flowkit-result-card hud-card p-4 overflow-hidden" data-flowkit-card="active-${escapeHtml(job.job_id || "")}" style="border-color: rgba(0, 240, 255, 0.25);">
                     <span class="c-tl"></span><span class="c-br"></span>
                     <div class="${request.orientation === "VERTICAL" ? "aspect-[9/16] max-h-[520px]" : "aspect-video"} border border-hud-cyan/20 bg-black/50 relative grid place-items-center overflow-hidden">
                         <div class="absolute inset-0 opacity-30 animate-pulse" style="background: linear-gradient(90deg, transparent, rgba(0,240,255,.18), transparent);"></div>
@@ -4266,7 +4266,7 @@
         }).join("");
         const resultCards = completed.map(({ job, request, videoUrl, index }) => {
             return `
-                <article class="hud-card p-4" style="border-color: rgba(0, 240, 255, 0.25);">
+                <article class="flowkit-result-card hud-card p-4" data-flowkit-card="result-${escapeHtml(job.job_id || "")}-${index}" style="border-color: rgba(0, 240, 255, 0.25);">
                     <span class="c-tl"></span><span class="c-br"></span>
                     <video src="${escapeHtml(videoUrl)}" controls class="w-full ${request.orientation === "VERTICAL" ? "aspect-[9/16] max-h-[520px]" : "aspect-video"} bg-black border border-hud-cyan/20 object-contain"></video>
                     <div class="mt-3 text-white font-black text-sm truncate">${escapeHtml(request.title || job.job_id)}${index ? ` #${index + 1}` : ""}</div>
@@ -4277,7 +4277,7 @@
                 </article>
             `;
         }).join("");
-        return `<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">${skeletons}${resultCards}</div>`;
+        return `<div class="flowkit-results-cards grid gap-5 md:grid-cols-2 xl:grid-cols-3">${skeletons}${resultCards}</div>`;
     }
 
     async function flowkitLoadJobs() {
@@ -4304,8 +4304,35 @@
         const progressPanel = document.getElementById("flowkit-progress-panel");
         if (progressPanel) progressPanel.innerHTML = renderFlowkitProgressPanel();
         const resultsGrid = document.getElementById("flowkit-results-grid");
-        if (resultsGrid) resultsGrid.innerHTML = renderFlowkitResultsGrid(state.flowkitLastJobs || []);
+        if (resultsGrid) flowkitPatchResultsGrid(resultsGrid);
         bindFlowkitRegenerateButtons(document.getElementById("page-flowkit"));
+    }
+
+    function flowkitPatchResultsGrid(container) {
+        const template = document.createElement("div");
+        template.innerHTML = renderFlowkitResultsGrid(state.flowkitLastJobs || []);
+        const nextCards = Array.from(template.querySelectorAll("[data-flowkit-card]"));
+        const currentCards = new Map(Array.from(container.querySelectorAll("[data-flowkit-card]")).map((node) => [node.dataset.flowkitCard, node]));
+        const nextKeys = new Set(nextCards.map((node) => node.dataset.flowkitCard));
+        const currentGrid = container.querySelector(".flowkit-results-cards");
+        if (!currentGrid || !nextCards.length) {
+            container.innerHTML = template.innerHTML;
+            return;
+        }
+        nextCards.forEach((nextCard) => {
+            const key = nextCard.dataset.flowkitCard;
+            const current = currentCards.get(key);
+            if (!current) {
+                currentGrid.appendChild(nextCard);
+                return;
+            }
+            if (key.startsWith("active-") && current.outerHTML !== nextCard.outerHTML) {
+                current.replaceWith(nextCard);
+            }
+        });
+        currentCards.forEach((node, key) => {
+            if (!nextKeys.has(key)) node.remove();
+        });
     }
 
     function renderFlowkitHeader() {

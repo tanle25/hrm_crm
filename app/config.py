@@ -89,6 +89,12 @@ class Settings:
     facebook_app_secret: Optional[str]
     facebook_graph_version: str
     facebook_webhook_verify_token: Optional[str]
+    flowkit_base_url: str
+    flowkit_api_key: str
+    flowkit_poll_interval_sec: int
+    flowkit_image_timeout_sec: int
+    flowkit_video_timeout_sec: int
+    flowkit_upscale_timeout_sec: int
 
 
 @lru_cache(maxsize=1)
@@ -151,4 +157,10 @@ def get_settings() -> Settings:
         facebook_app_secret=os.getenv("FACEBOOK_APP_SECRET"),
         facebook_graph_version=os.getenv("FACEBOOK_GRAPH_VERSION", "v24.0"),
         facebook_webhook_verify_token=os.getenv("FACEBOOK_WEBHOOK_VERIFY_TOKEN"),
+        flowkit_base_url=os.getenv("FLOWKIT_BASE_URL", "https://flow.tanflux.tech"),
+        flowkit_api_key=os.getenv("FLOWKIT_API_KEY", "tanflux-flowkit-2026"),
+        flowkit_poll_interval_sec=_env_int("FLOWKIT_POLL_INTERVAL_SEC", 10),
+        flowkit_image_timeout_sec=_env_int("FLOWKIT_IMAGE_TIMEOUT_SEC", 120),
+        flowkit_video_timeout_sec=_env_int("FLOWKIT_VIDEO_TIMEOUT_SEC", 300),
+        flowkit_upscale_timeout_sec=_env_int("FLOWKIT_UPSCALE_TIMEOUT_SEC", 600),
     )

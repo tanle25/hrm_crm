@@ -42,6 +42,7 @@ from app.facebook_pages import (
 )
 from app.facebook_reels import router as facebook_reels_router
 from app.facebook_slash_commands import delete_facebook_slash_command, list_facebook_slash_commands, upsert_facebook_slash_command
+from app.flowkit import router as flowkit_router
 from app.graph import retry_from_dlq, run_pipeline_async
 from app.job_store import delete_dlq_entry, get_dlq_entry, get_job, get_jobs_version, list_dlq, list_jobs, stats_snapshot, wait_for_jobs_version
 from app.logging import get_logger
@@ -114,6 +115,7 @@ UI_DIR = Path("ui")
 FACEBOOK_MESSAGE_MEDIA_DIR = Path("data/facebook_message_media")
 app.include_router(facebook_content_router)
 app.include_router(facebook_reels_router)
+app.include_router(flowkit_router)
 app.include_router(public_chat_router)
 
 if UI_DIR.exists():

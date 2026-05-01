@@ -676,6 +676,7 @@ class FlowKitClient:
             material_instruction = material_info.get("scene_prefix") or material_info.get("style_instruction") or ""
         except Exception:
             material_instruction = ""
+        char_dicts = None
         # ── 1. Project ──
         if project_id:
             _notify("project", f"Using existing project: {project_id}")
@@ -694,10 +695,21 @@ class FlowKitClient:
                 _notify("project", f"Project settings update skipped: {exc}")
         else:
             _notify("project", f"Creating project: {title}")
+            if characters:
+                char_dicts = [
+                    {
+                        "name": c.name,
+                        "description": c.description,
+                        "entity_type": _flowkit_entity_type(c.entity_type),
+                        **({"voice_description": c.voice_description} if c.voice_description else {}),
+                    }
+                    for c in characters
+                ]
             project = await self.create_project(
                 name=title, description=description, story=story,
                 material=material, language=language,
                 allow_music=allow_music, allow_voice=allow_voice,
+                characters=char_dicts,
             )
             project_id = project["id"]
             _notify("project", f"Project created: {project_id}")
@@ -706,7 +718,7 @@ class FlowKitClient:
 
         try:
             # ── 2. Character reference images ──
-            if characters and generate_refs:
+            if characters and generate_refs and not char_dicts:
                 existing_chars = []
                 try:
                     existing_chars = await self.get_project_characters(project_id)
@@ -868,14 +880,12 @@ class FlowKitClient:
                 req_type = "GENERATE_VIDEO"
 
             for i, scene_obj in enumerate(scene_objects):
-                source_media_id = result.scenes[i].image_media_id if req_type == "GENERATE_VIDEO" else None
                 req = await self.submit_request(
                     req_type=req_type,
                     scene_id=scene_obj["id"],
                     video_id=video_id,
                     project_id=project_id,
                     orientation=orientation,
-                    source_media_id=source_media_id,
                 )
                 video_requests.append((i, req["id"]))
                 _notify("videos", f"  → Queued video for scene {i}")

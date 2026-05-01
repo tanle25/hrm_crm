@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -57,6 +58,7 @@ class FlowKitGenerateRequest(BaseModel):
     characters: Optional[list[FlowKitCharacterRequest]] = None
     generate_refs: bool = True
     output_count: int = Field(default=1, ge=1, le=4)
+    model: str = "default"
 
 
 class FlowKitQuickGenerateRequest(BaseModel):
@@ -278,6 +280,14 @@ async def _run_generate_job(job_id: str, request: FlowKitGenerateRequest) -> Non
         log.error("flowkit_job_failed", job_id=job_id, error=str(exc))
 
 
+async def _run_simple_generate_job(job_id: str, request: FlowKitGenerateRequest, upload_path: str = "") -> None:
+    try:
+        await _run_generate_job(job_id, request)
+    finally:
+        if upload_path:
+            Path(upload_path).unlink(missing_ok=True)
+
+
 @router.get("/health")
 async def health() -> dict[str, Any]:
     try:
@@ -329,6 +339,69 @@ async def generate(request: FlowKitGenerateRequest, background_tasks: Background
     }
     await asyncio.to_thread(_upsert_job, job)
     background_tasks.add_task(_run_generate_job, job_id, request)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@router.post("/generate/simple")
+async def generate_simple(
+    background_tasks: BackgroundTasks,
+    prompt: str = Form(...),
+    title: str = Form(""),
+    material: str = Form("realistic"),
+    model: str = Form("default"),
+    mode: str = Form("i2v"),
+    output_count: int = Form(1),
+    orientation: str = Form("VERTICAL"),
+    image: UploadFile | None = File(None),
+) -> dict[str, Any]:
+    cleaned_prompt = prompt.strip()
+    if not cleaned_prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required.")
+    safe_title = title.strip() or cleaned_prompt[:80]
+    safe_orientation = "VERTICAL" if str(orientation or "").upper() in {"VERTICAL", "PORTRAIT", "9:16"} else "HORIZONTAL"
+    upload_path = ""
+    upload_name = ""
+    if image and image.filename:
+        suffix = Path(str(image.filename)).suffix or ".png"
+        upload_dir = Path("data/flowkit_uploads")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_path = str(upload_dir / f"{uuid.uuid4().hex}{suffix}")
+        upload_name = str(image.filename)
+        with Path(upload_path).open("wb") as handle:
+            shutil.copyfileobj(image.file, handle)
+    scene = FlowKitSceneRequest(
+        prompt=cleaned_prompt,
+        video_prompt=cleaned_prompt,
+        chain_type="ROOT",
+        upload_image_path=upload_path or None,
+    )
+    request = FlowKitGenerateRequest(
+        title=safe_title,
+        scenes=[scene],
+        material=material or "realistic",
+        orientation=safe_orientation,
+        video_gen_mode=mode or "i2v",
+        output_count=max(1, min(int(output_count or 1), 4)),
+        model=model or "default",
+        generate_refs=False,
+    )
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "created_at": _now(),
+        "updated_at": _now(),
+        "request": {
+            **request.model_dump(),
+            "simple": True,
+            "upload_image_name": upload_name,
+        },
+        "progress": [],
+        "result": None,
+        "error": None,
+    }
+    await asyncio.to_thread(_upsert_job, job)
+    background_tasks.add_task(_run_simple_generate_job, job_id, request, upload_path)
     return {"job_id": job_id, "status": "queued"}
 
 

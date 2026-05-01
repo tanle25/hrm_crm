@@ -155,6 +155,24 @@ def _flowkit_entity_type(value: Optional[str]) -> str:
     return normalized if normalized in allowed else "character"
 
 
+def _orientation_prefix(orientation: str) -> str:
+    return "vertical" if str(orientation or "").upper() == "VERTICAL" else "horizontal"
+
+
+def _scene_media(scene: dict, orientation: str, media_type: str) -> tuple[Optional[str], Optional[str]]:
+    prefix = _orientation_prefix(orientation)
+    media_id = (
+        scene.get(f"{prefix}_{media_type}_media_id")
+    )
+    url = (
+        scene.get(f"{prefix}_{media_type}_url")
+    )
+    if prefix == "horizontal":
+        media_id = media_id or scene.get(f"{media_type}_media_id") or scene.get("media_id")
+        url = url or scene.get(f"{media_type}_url") or scene.get("output_url") or scene.get("url")
+    return media_id, url
+
+
 # ─── Client ─────────────────────────────────────────────────
 
 class FlowKitClient:
@@ -828,8 +846,17 @@ class FlowKitClient:
                     f"Image scene {i}",
                     on_progress=lambda detail: _notify("images", detail),
                 )
-                result.scenes[i].image_url = img_result.get("output_url")
-                result.scenes[i].image_media_id = img_result.get("media_id")
+                scene_state = await self.get_scene(scene_objects[i]["id"])
+                media_id, image_url = _scene_media(scene_state, orientation, "image")
+                if not media_id and orientation == "HORIZONTAL":
+                    media_id = img_result.get("media_id")
+                    image_url = image_url or img_result.get("output_url")
+                elif not image_url and orientation == "HORIZONTAL":
+                    image_url = img_result.get("output_url")
+                result.scenes[i].image_url = image_url
+                result.scenes[i].image_media_id = media_id
+                if orientation == "VERTICAL" and not scene_state.get("vertical_image_media_id"):
+                    _notify("images", f"  ⚠ Scene {i} has no vertical image media; not using horizontal fallback")
 
             # ── 5. Videos ──
             _notify("videos", f"Generating Veo 3 videos (mode: {video_gen_mode})...")
@@ -860,9 +887,23 @@ class FlowKitClient:
                     f"Video scene {i}",
                     on_progress=lambda detail: _notify("videos", detail),
                 )
-                result.scenes[i].video_url = vid_result.get("output_url")
-                result.scenes[i].video_media_id = vid_result.get("media_id")
+                scene_state = await self.get_scene(scene_objects[i]["id"])
+                media_id, video_url = _scene_media(scene_state, orientation, "video")
+                if not media_id and orientation == "HORIZONTAL":
+                    media_id = vid_result.get("media_id")
+                    video_url = video_url or vid_result.get("output_url")
+                elif not video_url and orientation == "HORIZONTAL":
+                    video_url = vid_result.get("output_url")
+                result.scenes[i].video_url = video_url
+                result.scenes[i].video_media_id = media_id
                 result.scenes[i].status = "VIDEO_READY"
+                if orientation == "VERTICAL" and not scene_state.get("vertical_video_media_id"):
+                    result.scenes[i].status = "VIDEO_MISSING_VERTICAL_MEDIA"
+                    result.scenes[i].error = "FlowKit did not expose vertical video media for this scene."
+                    _notify("videos", f"  ⚠ Scene {i} has no vertical video media; not using horizontal fallback")
+
+            if orientation == "VERTICAL" and any(not scene.video_url for scene in result.scenes):
+                raise RuntimeError("FlowKit returned horizontal/fallback media but no vertical video media for at least one scene.")
 
             # ── 6. Upscale 4K ──
             if upscale_4k:

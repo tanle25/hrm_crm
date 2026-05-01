@@ -78,6 +78,7 @@
         flowkitJobsRefreshTimer: null,
         flowkitMaterials: [],
         flowkitHealth: null,
+        flowkitProjects: [],
         flowkitDraft: {},
         flowkitLastJobs: [],
     };
@@ -4124,6 +4125,7 @@
             prompt: "",
             material: "realistic",
             model: "default",
+            project_id: "",
             video_gen_mode: "i2v",
             output_count: 1,
             orientation: "VERTICAL",
@@ -4156,9 +4158,19 @@
         return Math.min(92, Math.max(8, Math.round(((index + 1) / stages.length) * 100)));
     }
 
+    function flowkitProxyMediaUrl(url) {
+        const value = String(url || "");
+        if (!value) return "";
+        if (value.startsWith("/api/flowkit/media")) return value;
+        if (value.startsWith("/flowkit/media")) return `${API_BASE}${value}`;
+        if (value.startsWith("/")) return value;
+        return `${API_BASE}/flowkit/media?url=${encodeURIComponent(value)}`;
+    }
+
     function flowkitResultVideoUrl(result) {
         const scenes = result.scenes || [];
-        return result.concat_url || scenes.find((scene) => scene.upscale_url)?.upscale_url || scenes.find((scene) => scene.video_url)?.video_url || "";
+        const url = result.concat_url_proxied || result.concat_url || scenes.find((scene) => scene.upscale_url_proxied)?.upscale_url_proxied || scenes.find((scene) => scene.upscale_url)?.upscale_url || scenes.find((scene) => scene.video_url_proxied)?.video_url_proxied || scenes.find((scene) => scene.video_url)?.video_url || "";
+        return flowkitProxyMediaUrl(url);
     }
 
     function flowkitVideoUrl(job) {
@@ -4365,6 +4377,18 @@
         </div>`;
     }
 
+    function flowkitProjectOptions() {
+        const projects = Array.isArray(state.flowkitProjects) ? state.flowkitProjects : [];
+        return `
+            <option value="" ${!state.flowkitDraft.project_id ? "selected" : ""}>Tạo project mới</option>
+            ${projects.map((project) => {
+                const id = String(project.id || project.project_id || "");
+                const name = project.title || project.name || id;
+                return `<option value="${escapeHtml(id)}" ${state.flowkitDraft.project_id === id ? "selected" : ""}>${escapeHtml(name)}</option>`;
+            }).join("")}
+        `;
+    }
+
     function renderFlowkitCreateTab() {
         flowkitEnsureDraft();
         return `
@@ -4403,6 +4427,12 @@
                                 <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">TITLE</label>
                                 <input id="flowkit-title" class="hud-input w-full px-4 py-3 text-sm" value="${escapeHtml(state.flowkitDraft.title || "")}" placeholder="Tự lấy từ prompt nếu bỏ trống"/>
                             </div>
+                            <div>
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">PROJECT</label>
+                                <select id="flowkit-project" class="hud-select w-full px-4 py-3 text-sm">${flowkitProjectOptions()}</select>
+                            </div>
+                        </div>
+                        <div class="grid gap-4 md:grid-cols-2">
                             <div>
                                 <label class="text-[10px] font-bold uppercase-widest mb-2 block text-hud-cyan">MATERIAL</label>
                                 <select id="flowkit-material" class="hud-select w-full px-4 py-3 text-sm">
@@ -4488,6 +4518,7 @@
             prompt: String(section.querySelector("#flowkit-prompt")?.value || ""),
             material: String(section.querySelector("#flowkit-material")?.value || "realistic"),
             model: String(section.querySelector("#flowkit-model")?.value || "default"),
+            project_id: String(section.querySelector("#flowkit-project")?.value || ""),
             orientation: String(section.querySelector("#flowkit-orientation")?.value || "VERTICAL"),
             video_gen_mode: String(section.querySelector("#flowkit-mode")?.value || "i2v"),
             output_count: Number.parseInt(section.querySelector("#flowkit-output-count")?.value || "1", 10),
@@ -4532,6 +4563,7 @@
                 const form = new FormData();
                 form.append("prompt", prompt);
                 form.append("title", title);
+                form.append("project_id", state.flowkitDraft.project_id || "");
                 form.append("material", state.flowkitDraft.material || "realistic");
                 form.append("model", state.flowkitDraft.model || "default");
                 form.append("mode", state.flowkitDraft.video_gen_mode || "i2v");
@@ -4568,6 +4600,7 @@
                         prompt: job.request.prompt || firstScene.prompt || "",
                         material: job.request.material || "realistic",
                         model: job.request.model || "default",
+                        project_id: job.request.project_id || "",
                         orientation: job.request.orientation || "VERTICAL",
                         video_gen_mode: job.request.video_gen_mode || "i2v",
                         output_count: Number(job.request.output_count || 1),
@@ -4588,13 +4621,15 @@
         flowkitEnsureDraft();
         if (loadRemote) {
             try {
-                const [health, materials, jobs] = await Promise.all([
+                const [health, materials, projects, jobs] = await Promise.all([
                     fetchJSON("/flowkit/health"),
                     fetchJSON("/flowkit/materials").catch(() => []),
+                    fetchJSON("/flowkit/projects").catch(() => []),
                     flowkitLoadJobs().catch(() => []),
                 ]);
                 state.flowkitHealth = health;
                 state.flowkitMaterials = materials;
+                state.flowkitProjects = projects;
                 state.flowkitLastJobs = jobs;
             } catch (error) {
                 state.flowkitHealth = { connected: false, error: error.message };

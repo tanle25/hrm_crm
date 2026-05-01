@@ -7,8 +7,11 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote, urlparse
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, Form
+import httpx
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, Form, Request
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
@@ -168,6 +171,12 @@ def _result_payload(result: VideoResult) -> dict[str, Any]:
     }
 
 
+def _proxied_media_url(url: str) -> str:
+    if not url:
+        return ""
+    return f"{settings.api_prefix}/flowkit/media?url={quote(url, safe='')}"
+
+
 def _update_progress(job_id: str, stage: str, detail: str) -> None:
     job = _get_job(job_id)
     if not job:
@@ -183,7 +192,7 @@ def _finish_job(job_id: str, result: VideoResult) -> None:
         return
     job["status"] = "completed"
     job["completed_at"] = _now()
-    job["result"] = _result_payload(result)
+    job["result"] = _with_proxied_media(_result_payload(result))
     _upsert_job(job)
 
 
@@ -192,6 +201,7 @@ def _finish_multi_output_job(job_id: str, results: list[VideoResult]) -> None:
     if not job:
         return
     payloads = [_result_payload(result) for result in results]
+    payloads = [_with_proxied_media(payload) for payload in payloads]
     job["status"] = "completed"
     job["completed_at"] = _now()
     job["result"] = payloads[0] if payloads else None
@@ -207,6 +217,17 @@ def _fail_job(job_id: str, error: str) -> None:
     job["error"] = error
     job["failed_at"] = _now()
     _upsert_job(job)
+
+
+def _with_proxied_media(payload: dict[str, Any]) -> dict[str, Any]:
+    for scene in payload.get("scenes") or []:
+        for key in ["image_url", "video_url", "upscale_url"]:
+            url = str(scene.get(key) or "")
+            if url:
+                scene[f"{key}_proxied"] = _proxied_media_url(url)
+    if payload.get("concat_url"):
+        payload["concat_url_proxied"] = _proxied_media_url(str(payload["concat_url"]))
+    return payload
 
 
 def _scene_inputs(scenes: list[FlowKitSceneRequest]) -> list[SceneInput]:
@@ -347,6 +368,7 @@ async def generate_simple(
     background_tasks: BackgroundTasks,
     prompt: str = Form(...),
     title: str = Form(""),
+    project_id: str = Form(""),
     material: str = Form("realistic"),
     model: str = Form("default"),
     mode: str = Form("i2v"),
@@ -378,6 +400,7 @@ async def generate_simple(
     request = FlowKitGenerateRequest(
         title=safe_title,
         scenes=[scene],
+        project_id=project_id.strip() or None,
         material=material or "realistic",
         orientation=safe_orientation,
         video_gen_mode=mode or "i2v",
@@ -403,6 +426,44 @@ async def generate_simple(
     await asyncio.to_thread(_upsert_job, job)
     background_tasks.add_task(_run_simple_generate_job, job_id, request, upload_path)
     return {"job_id": job_id, "status": "queued"}
+
+
+@router.get("/media")
+async def media_proxy(request: Request, url: str) -> Response:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Invalid media URL.")
+    headers: dict[str, str] = {}
+    range_header = request.headers.get("range")
+    if range_header:
+        headers["Range"] = range_header
+    try:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0), follow_redirects=True)
+        upstream = await client.stream("GET", url, headers=headers).__aenter__()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to fetch FlowKit media: {exc}") from exc
+
+    async def stream_body():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    response_headers = {
+        "Accept-Ranges": upstream.headers.get("accept-ranges", "bytes"),
+        "Cache-Control": "private, max-age=300",
+    }
+    for header in ["content-length", "content-range", "content-type"]:
+        if upstream.headers.get(header):
+            response_headers[header.title()] = upstream.headers[header]
+    return StreamingResponse(
+        stream_body(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/octet-stream"),
+        headers=response_headers,
+    )
 
 
 @router.post("/generate/quick")

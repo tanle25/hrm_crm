@@ -4239,11 +4239,12 @@
 
     function renderFlowkitResultsGrid(jobs) {
         const active = jobs.filter((job) => ["queued", "processing"].includes(String(job.status || "").toLowerCase()));
+        const failed = jobs.filter((job) => String(job.status || "").toLowerCase() === "failed");
         const completed = jobs.flatMap((job) => {
             const request = job.request || {};
             return flowkitOutputItems(job).map((item) => ({ ...item, job, request }));
         });
-        if (!completed.length && !active.length) {
+        if (!completed.length && !active.length && !failed.length) {
             return `<div class="hud-card p-8 text-center text-hud-muted text-sm">Chưa có video hoàn tất.</div>`;
         }
         const skeletons = active.map((job) => {
@@ -4269,6 +4270,29 @@
                 </article>
             `;
         }).join("");
+        const failedCards = failed.map((job) => {
+            const request = job.request || {};
+            const progress = job.progress || [];
+            const last = progress[progress.length - 1] || {};
+            const message = job.error || last.detail || "FlowKit job failed.";
+            return `
+                <article class="flowkit-result-card hud-card p-4 overflow-hidden" data-flowkit-card="failed-${escapeHtml(job.job_id || "")}" style="border-color: rgba(255, 61, 113, 0.35);">
+                    <span class="c-tl"></span><span class="c-br"></span>
+                    <div class="${request.orientation === "VERTICAL" ? "aspect-[9/16] max-h-[520px]" : "aspect-video"} border border-hud-red/25 bg-hud-red/10 relative grid place-items-center overflow-hidden">
+                        <div class="text-center px-5">
+                            <div class="text-hud-red text-4xl"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                            <div class="mt-3 text-white font-black text-sm uppercase-wide">Generate failed</div>
+                            <div class="mt-2 text-[11px] text-hud-muted max-w-md">${escapeHtml(message)}</div>
+                        </div>
+                    </div>
+                    <div class="mt-3 text-white font-black text-sm truncate">${escapeHtml(request.title || job.job_id || "FlowKit Video")}</div>
+                    <div class="mt-1 text-[10px] text-hud-muted truncate">JOB ${escapeHtml(String(job.job_id || "").slice(0, 8))} · ${escapeHtml(last.stage || "failed")}</div>
+                    <div class="mt-3 flex gap-2">
+                        <button class="flowkit-regenerate btn-ghost flex-1 px-3 py-2 text-[10px] uppercase-wide font-bold" data-job-id="${escapeHtml(job.job_id)}"><i class="fa-solid fa-rotate-right"></i> Tạo lại</button>
+                    </div>
+                </article>
+            `;
+        }).join("");
         const resultCards = completed.map(({ job, request, videoUrl, index }) => {
             return `
                 <article class="flowkit-result-card hud-card p-4" data-flowkit-card="result-${escapeHtml(job.job_id || "")}-${index}" style="border-color: rgba(0, 240, 255, 0.25);">
@@ -4282,7 +4306,7 @@
                 </article>
             `;
         }).join("");
-        return `<div class="flowkit-results-cards grid gap-5 md:grid-cols-2 xl:grid-cols-3">${skeletons}${resultCards}</div>`;
+        return `<div class="flowkit-results-cards grid gap-5 md:grid-cols-2 xl:grid-cols-3">${skeletons}${failedCards}${resultCards}</div>`;
     }
 
     async function flowkitLoadJobs() {

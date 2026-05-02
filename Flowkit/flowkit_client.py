@@ -28,6 +28,7 @@ import json
 import logging
 import time
 import os
+import mimetypes
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -171,6 +172,22 @@ def _scene_media(scene: dict, orientation: str, media_type: str) -> tuple[Option
         media_id = media_id or scene.get(f"{media_type}_media_id") or scene.get("media_id")
         url = url or scene.get(f"{media_type}_url") or scene.get("output_url") or scene.get("url")
     return media_id, url
+
+
+def _extract_id(payload: dict, *keys: str) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    for key in keys:
+        value = payload.get(key)
+        if value:
+            return str(value)
+    for nested_key in ("data", "project", "video", "scene", "result"):
+        nested = payload.get(nested_key)
+        if isinstance(nested, dict):
+            value = _extract_id(nested, *keys)
+            if value:
+                return value
+    return None
 
 
 # ─── Client ─────────────────────────────────────────────────
@@ -516,6 +533,45 @@ class FlowKitClient:
             "file_path": file_path, "project_id": project_id, "file_name": file_name
         })
 
+    async def upload_image_file(self, file_path: str, project_id: str = "", file_name: str = "image.png") -> dict:
+        """Upload an image file through a FlowKit wrapper when available.
+
+        Direct FlowKit agents can only read local paths on their own machine. The wrapper
+        endpoint accepts multipart files, which is required when Content Forge and FlowKit
+        run in different containers or hosts. If the wrapper endpoint is not present, fall
+        back to the legacy path-based API.
+        """
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Upload image does not exist: {file_path}")
+        safe_name = file_name or path.name or "image.png"
+        content_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+        multipart_error: Exception | None = None
+        if HTTP_LIB == "httpx":
+            try:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    with path.open("rb") as handle:
+                        response = await client.post(
+                            f"{self.base_url}/upload-image",
+                            headers={"X-API-Key": self.api_key},
+                            data={"project_id": project_id or ""},
+                            files={"file": (safe_name, handle, content_type)},
+                        )
+                    if response.status_code not in {404, 405}:
+                        if response.status_code >= 400:
+                            raise Exception(f"HTTP {response.status_code}: {response.text}")
+                        return response.json() if response.text else {}
+                    multipart_error = Exception(f"HTTP {response.status_code}: {response.text}")
+            except Exception as exc:
+                multipart_error = exc
+
+        try:
+            return await self.flow_upload_image(str(path), project_id, safe_name)
+        except Exception as exc:
+            if multipart_error:
+                raise Exception(f"Image upload failed via multipart ({multipart_error}) and local path fallback ({exc})")
+            raise
+
     async def flow_check_status(self, operations: list[dict]) -> dict:
         return await self._post("/api/flow/check-status", {"operations": operations})
 
@@ -711,7 +767,9 @@ class FlowKitClient:
                 allow_music=allow_music, allow_voice=allow_voice,
                 characters=char_dicts,
             )
-            project_id = project["id"]
+            project_id = _extract_id(project, "id", "project_id")
+            if not project_id:
+                raise RuntimeError(f"FlowKit create_project returned no project id: {project}")
             _notify("project", f"Project created: {project_id}")
 
         result = VideoResult(project_id=project_id, video_id="")
@@ -825,10 +883,10 @@ class FlowKitClient:
                 # Upload custom image from a local path if provided by scripts.
                 if scene_input.upload_image_path:
                     _notify("images", f"  → Uploading image for scene {i}")
-                    upload_result = await self.flow_upload_image(
+                    upload_result = await self.upload_image_file(
                         scene_input.upload_image_path, project_id
                     )
-                    media_id = upload_result.get("media_id")
+                    media_id = _extract_id(upload_result, "media_id", "id")
                     if media_id:
                         orient_prefix = "horizontal" if orientation == "HORIZONTAL" else "vertical"
                         await self.update_scene(scene_obj["id"], **{

@@ -501,7 +501,7 @@ async def upload_image(file: UploadFile = File(...), project_id: str = Form(""))
         with temp_path.open("wb") as handle:
             while chunk := await file.read(1024 * 1024):
                 handle.write(chunk)
-        result = await _client().flow_upload_image(str(temp_path), project_id, str(file.filename or "image.png"))
+        result = await _client().upload_image_file(str(temp_path), project_id, str(file.filename or "image.png"))
         return {"media_id": result.get("media_id"), "filename": file.filename, "raw": result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

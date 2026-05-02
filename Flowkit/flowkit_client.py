@@ -883,20 +883,24 @@ class FlowKitClient:
                 # Upload custom image from a local path if provided by scripts.
                 if scene_input.upload_image_path:
                     _notify("images", f"  → Uploading image for scene {i}")
-                    upload_result = await self.upload_image_file(
-                        scene_input.upload_image_path, project_id
-                    )
-                    media_id = _extract_id(upload_result, "media_id", "id")
-                    if media_id:
-                        orient_prefix = "horizontal" if orientation == "HORIZONTAL" else "vertical"
-                        await self.update_scene(scene_obj["id"], **{
-                            f"{orient_prefix}_image_media_id": media_id,
-                            f"{orient_prefix}_image_status": "COMPLETED",
-                        })
-                        result.scenes[i].image_media_id = media_id
-                        result.scenes[i].status = "IMAGE_READY"
-                        _notify("images", f"  ✓ Scene {i} image uploaded: {media_id[:8]}")
-                        continue
+                    try:
+                        upload_result = await self.upload_image_file(
+                            scene_input.upload_image_path, project_id
+                        )
+                        media_id = _extract_id(upload_result, "media_id", "id")
+                        if media_id:
+                            orient_prefix = "horizontal" if orientation == "HORIZONTAL" else "vertical"
+                            await self.update_scene(scene_obj["id"], **{
+                                f"{orient_prefix}_image_media_id": media_id,
+                                f"{orient_prefix}_image_status": "COMPLETED",
+                            })
+                            result.scenes[i].image_media_id = media_id
+                            result.scenes[i].status = "IMAGE_READY"
+                            _notify("images", f"  ✓ Scene {i} image uploaded: {media_id[:8]}")
+                            continue
+                        _notify("images", f"  ⚠ Scene {i} image upload returned no media_id; generating image from prompt")
+                    except Exception as exc:
+                        _notify("images", f"  ⚠ Scene {i} image upload unavailable; generating image from prompt instead: {exc}")
 
                 # Generate image via queue
                 req = await self.submit_request(

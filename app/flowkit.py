@@ -26,6 +26,22 @@ log = get_logger("content_forge.flowkit")
 LOCAL_JOB_DIR = Path("data/flowkit_jobs")
 
 
+def _normalize_flowkit_material(value: str) -> str:
+    normalized = str(value or "realistic").strip().lower()
+    aliases = {
+        "cinematic": "realistic",
+        "product_ad": "realistic",
+        "product-ad": "realistic",
+        "watercolor": "oil_painting",
+        "water_color": "oil_painting",
+        "pixar": "3d_pixar",
+        "3d": "3d_pixar",
+    }
+    allowed = {"realistic", "3d_pixar", "anime", "stop_motion", "minecraft", "oil_painting"}
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in allowed else "realistic"
+
+
 class FlowKitCharacterRequest(BaseModel):
     name: str
     description: str = ""
@@ -401,7 +417,7 @@ async def generate_simple(
         title=safe_title,
         scenes=[scene],
         project_id=project_id.strip() or None,
-        material=material or "realistic",
+        material=_normalize_flowkit_material(material),
         orientation=safe_orientation,
         video_gen_mode=mode or "i2v",
         output_count=max(1, min(int(output_count or 1), 4)),

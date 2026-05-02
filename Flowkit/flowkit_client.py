@@ -211,6 +211,22 @@ def _flowkit_visible_path(file_path: str) -> str:
     return str(resolved)
 
 
+def _normalize_material(value: Optional[str]) -> str:
+    normalized = str(value or "realistic").strip().lower()
+    aliases = {
+        "cinematic": "realistic",
+        "product_ad": "realistic",
+        "product-ad": "realistic",
+        "watercolor": "oil_painting",
+        "water_color": "oil_painting",
+        "pixar": "3d_pixar",
+        "3d": "3d_pixar",
+    }
+    allowed = {"realistic", "3d_pixar", "anime", "stop_motion", "minecraft", "oil_painting"}
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in allowed else "realistic"
+
+
 # ─── Client ─────────────────────────────────────────────────
 
 class FlowKitClient:
@@ -346,6 +362,7 @@ class FlowKitClient:
         characters: list[dict] = None,
     ) -> dict:
         """Create a new project on Google Flow + local DB."""
+        material = _normalize_material(material)
         data = {
             "name": name,
             "description": description,
@@ -830,6 +847,7 @@ class FlowKitClient:
             if orientation == "VERTICAL"
             else "Create a true horizontal 16:9 landscape composition. Fill the entire widescreen frame."
         )
+        material = _normalize_material(material)
         material_instruction = ""
         try:
             material_info = await self.get_material(material)

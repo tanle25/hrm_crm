@@ -4108,14 +4108,16 @@
     function flowkitDefaultMaterials() {
         const fallback = [
             { id: "realistic", name: "Người thật / Realistic" },
-            { id: "cinematic", name: "Cinematic" },
-            { id: "product_ad", name: "Product Ad" },
             { id: "anime", name: "Anime" },
             { id: "3d_pixar", name: "3D Pixar" },
-            { id: "watercolor", name: "Watercolor" },
+            { id: "stop_motion", name: "Stop Motion" },
+            { id: "minecraft", name: "Minecraft" },
+            { id: "oil_painting", name: "Oil Painting" },
         ];
         const remote = Array.isArray(state.flowkitMaterials) ? state.flowkitMaterials : [];
-        const byId = new Map([...fallback, ...remote].map((item) => [item.id, item]));
+        const allowed = new Set(fallback.map((item) => item.id));
+        const validRemote = remote.filter((item) => allowed.has(String(item?.id || "")));
+        const byId = new Map([...fallback, ...validRemote].map((item) => [item.id, item]));
         return Array.from(byId.values()).slice(0, 12);
     }
 

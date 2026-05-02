@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Any
+from urllib.parse import parse_qs, urlparse
 
 try:
     import httpx
@@ -188,6 +189,26 @@ def _extract_id(payload: dict, *keys: str) -> Optional[str]:
             if value:
                 return value
     return None
+
+
+def _query_value(url: str, key: str) -> Optional[str]:
+    if not url:
+        return None
+    values = parse_qs(urlparse(url).query).get(key)
+    return values[0] if values else None
+
+
+def _flowkit_visible_path(file_path: str) -> str:
+    resolved = Path(file_path).resolve()
+    container_dir = os.getenv("FLOWKIT_UPLOAD_CONTAINER_DIR", "").strip()
+    host_dir = os.getenv("FLOWKIT_UPLOAD_HOST_DIR", "").strip()
+    if container_dir and host_dir:
+        try:
+            relative = resolved.relative_to(Path(container_dir).resolve())
+            return str(Path(host_dir).expanduser().resolve() / relative)
+        except ValueError:
+            pass
+    return str(resolved)
 
 
 # ─── Client ─────────────────────────────────────────────────
@@ -533,6 +554,27 @@ class FlowKitClient:
             "file_path": file_path, "project_id": project_id, "file_name": file_name
         })
 
+    async def flow_upload_image_to_video(
+        self,
+        file_path: str,
+        project_id: str,
+        title: str,
+        prompt: str,
+        orientation: str = "VERTICAL",
+        normalize_to_vertical: bool = True,
+        queue_video: bool = True,
+    ) -> dict:
+        """Ask FlowKit server to upload an image and queue image-to-video generation."""
+        return await self._post("/api/flow/upload-image-to-video", {
+            "project_id": project_id,
+            "file_path": _flowkit_visible_path(file_path),
+            "title": title,
+            "prompt": prompt,
+            "orientation": orientation,
+            "normalize_to_vertical": bool(normalize_to_vertical),
+            "queue_video": bool(queue_video),
+        })
+
     async def upload_image_file(self, file_path: str, project_id: str = "", file_name: str = "image.png") -> dict:
         """Upload an image file through a FlowKit wrapper when available.
 
@@ -650,6 +692,68 @@ class FlowKitClient:
                 raise TimeoutError(f"Batch timeout after {timeout}s")
             logger.info(f"  ⏳ Batch: {status.get('completed',0)}/{status.get('total',0)} done ({int(elapsed)}s)")
             await asyncio.sleep(self.poll_interval)
+
+    async def _uploaded_image_video_result(
+        self,
+        response: dict,
+        project_id: str,
+        title: str,
+        prompt: str,
+        orientation: str,
+        on_progress: callable = None,
+    ) -> VideoResult:
+        def _notify(stage: str, detail: str = ""):
+            logger.info(f"[{stage}] {detail}")
+            if on_progress:
+                try:
+                    on_progress(stage, detail)
+                except Exception:
+                    pass
+
+        video_id = _extract_id(response, "video_id")
+        scene_id = _extract_id(response, "scene_id")
+        request_id = _extract_id(response, "request_id", "id")
+        batch_status_url = str(response.get("batch_status_url") or response.get("status_url") or "")
+        video_id = video_id or _query_value(batch_status_url, "video_id")
+
+        if request_id:
+            await self.poll_request(
+                request_id,
+                self.video_timeout,
+                "Uploaded image video",
+                on_progress=lambda detail: _notify("videos", detail),
+            )
+        elif video_id:
+            await self.poll_batch(video_id, req_type="GENERATE_VIDEO", timeout=self.video_timeout)
+        else:
+            raise RuntimeError(f"FlowKit upload-image-to-video returned no request/video id: {response}")
+
+        if not scene_id and video_id:
+            scenes = await self.list_scenes(video_id)
+            if scenes:
+                scene_id = str(scenes[0].get("id") or "")
+        if not scene_id:
+            raise RuntimeError(f"FlowKit upload-image-to-video returned no scene id: {response}")
+
+        scene_state = await self.get_scene(scene_id)
+        image_media_id, image_url = _scene_media(scene_state, orientation, "image")
+        video_media_id, video_url = _scene_media(scene_state, orientation, "video")
+        result = VideoResult(project_id=project_id, video_id=video_id or str(scene_state.get("video_id") or ""))
+        result.scenes.append(SceneResult(
+            id=scene_id,
+            prompt=prompt,
+            image_url=image_url,
+            image_media_id=image_media_id,
+            video_url=video_url,
+            video_media_id=video_media_id,
+            status="VIDEO_READY" if video_url else "VIDEO_MISSING_MEDIA",
+            error=None if video_url else "FlowKit completed but no video URL was exposed for this scene.",
+        ))
+        if not result.scenes[0].video_url:
+            raise RuntimeError(result.scenes[0].error)
+        result.status = "COMPLETED"
+        _notify("done", f"✅ Uploaded image video complete: {title}")
+        return result
 
     # ═══════════════════════════════════════════════════════════
     # AUTOMATED PIPELINES
@@ -775,6 +879,36 @@ class FlowKitClient:
         result = VideoResult(project_id=project_id, video_id="")
 
         try:
+            if (
+                len(scenes) == 1
+                and scenes[0].upload_image_path
+                and str(video_gen_mode or "").lower() != "r2v"
+                and not characters
+                and not upscale_4k
+            ):
+                scene = scenes[0]
+                try:
+                    _notify("images", "Uploading image and queuing image-to-video via FlowKit server...")
+                    upload_video = await self.flow_upload_image_to_video(
+                        file_path=scene.upload_image_path,
+                        project_id=project_id,
+                        title=title,
+                        prompt=_join_prompt_parts(orientation_instruction, scene.video_prompt or scene.prompt),
+                        orientation=orientation,
+                        normalize_to_vertical=orientation == "VERTICAL",
+                        queue_video=True,
+                    )
+                    return await self._uploaded_image_video_result(
+                        upload_video,
+                        project_id=project_id,
+                        title=title,
+                        prompt=scene.prompt,
+                        orientation=orientation,
+                        on_progress=on_progress,
+                    )
+                except Exception as exc:
+                    _notify("images", f"  ⚠ upload-image-to-video unavailable; falling back to prompt image generation: {exc}")
+
             # ── 2. Character reference images ──
             if characters and generate_refs and not char_dicts:
                 existing_chars = []

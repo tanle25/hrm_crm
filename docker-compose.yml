@@ -31,16 +31,20 @@ services:
   fastapi:
     build: .
     ports:
-      - "8000:8000"
+      - "8002:8000"
     environment:
       - POSTGRES_URL=postgresql://content_forge:content_forge@postgres:5432/content_forge
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PATH=/data/chroma
       - QUEUE_MODE=rq
+      - ROUTER_BASE=http://host.docker.internal:8317/v1
+      - FLOWKIT_UPLOAD_CONTAINER_DIR=/app/data/flowkit_uploads
+      - FLOWKIT_UPLOAD_HOST_DIR=${FLOWKIT_UPLOAD_HOST_DIR:-${PWD}/data/flowkit_uploads}
     env_file:
       - .env
     volumes:
       - chroma_data:/data/chroma
+      - ${FLOWKIT_UPLOAD_HOST_DIR:-${PWD}/data/flowkit_uploads}:/app/data/flowkit_uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,10 +59,14 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PATH=/data/chroma
       - QUEUE_MODE=rq
+      - ROUTER_BASE=http://host.docker.internal:8317/v1
+      - FLOWKIT_UPLOAD_CONTAINER_DIR=/app/data/flowkit_uploads
+      - FLOWKIT_UPLOAD_HOST_DIR=${FLOWKIT_UPLOAD_HOST_DIR:-${PWD}/data/flowkit_uploads}
     env_file:
       - .env
     volumes:
       - chroma_data:/data/chroma
+      - ${FLOWKIT_UPLOAD_HOST_DIR:-${PWD}/data/flowkit_uploads}:/app/data/flowkit_uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,6 +80,7 @@ services:
       - POSTGRES_URL=postgresql://content_forge:content_forge@postgres:5432/content_forge
       - REDIS_URL=redis://redis:6379/0
       - QUEUE_MODE=rq
+      - ROUTER_BASE=http://host.docker.internal:8317/v1
     env_file:
       - .env
     depends_on:

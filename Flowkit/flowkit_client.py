@@ -620,7 +620,7 @@ class FlowKitClient:
         queue_video: bool = True,
     ) -> dict:
         """Ask FlowKit server to upload an image and queue image-to-video generation."""
-        path = Path(file_path)
+        path = Path(file_path).resolve()
         return await self._post("/api/flow/upload-image-to-video", {
             "project_id": project_id,
             "file_path": _flowkit_visible_path(file_path),
@@ -666,7 +666,7 @@ class FlowKitClient:
                 multipart_error = exc
 
         try:
-            return await self.flow_upload_image(str(path), project_id, safe_name)
+            return await self.flow_upload_image(_flowkit_visible_path(str(path)), project_id, safe_name)
         except Exception as exc:
             if multipart_error:
                 raise Exception(f"Image upload failed via multipart ({multipart_error}) and local path fallback ({exc})")

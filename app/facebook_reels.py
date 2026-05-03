@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import subprocess
 import uuid
@@ -272,28 +273,45 @@ def _publish_reel_single_page(
     finish_data: dict[str, Any] = {
         "upload_phase": "finish",
         "video_id": reel_video_id,
+        "video_state": "SCHEDULED" if scheduled_ts else "PUBLISHED",
         "description": caption,
     }
     if title:
         finish_data["title"] = title[:255]
     if scheduled_ts:
-        finish_data["published"] = "false"
         finish_data["scheduled_publish_time"] = str(scheduled_ts)
     finish = client.post(
         f"{base_url}/{page_id}/video_reels",
-        params={"access_token": token},
-        data=finish_data,
+        params={"access_token": token, **finish_data},
+        headers={"User-Agent": "Postman/FacebookCollection"},
     )
-    finish.raise_for_status()
+    try:
+        finish.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        body = error.response.text[:1000] if error.response is not None else ""
+        raise RuntimeError(f"Facebook Reel publish finish failed: HTTP {finish.status_code}: {body}") from error
     finish_payload = finish.json()
-    post_id = str(finish_payload.get("post_id") or finish_payload.get("id") or reel_video_id)
+    reel_info: dict[str, Any] = {}
+    with contextlib.suppress(Exception):
+        reel_info_response = client.get(
+            f"{base_url}/{reel_video_id}",
+            params={
+                "fields": "id,permalink_url,status",
+                "access_token": token,
+            },
+        )
+        reel_info_response.raise_for_status()
+        reel_info = reel_info_response.json()
+    post_id = str(finish_payload.get("post_id") or finish_payload.get("id") or reel_info.get("id") or reel_video_id)
+    permalink = str(reel_info.get("permalink_url") or "")
     return {
         "page_id": page_id,
         "page_name": page.get("name") or "",
         "status": "scheduled" if scheduled_ts else "published",
         "facebook_reel_id": reel_video_id,
         "facebook_post_id": post_id,
-        "permalink": f"https://www.facebook.com/reel/{reel_video_id}" if reel_video_id else "",
+        "permalink": permalink or (f"https://www.facebook.com/reel/{reel_video_id}" if reel_video_id else ""),
+        "reel_status": reel_info.get("status") or {},
         "published_at": "" if scheduled_ts else _now(),
         "scheduled_at": scheduled_at if scheduled_ts else "",
     }

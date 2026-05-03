@@ -81,6 +81,7 @@
         flowkitProjects: [],
         flowkitDraft: {},
         flowkitLastJobs: [],
+        flowkitPinnedJobId: "",
     };
 
     function escapeHtml(value) {
@@ -4241,9 +4242,18 @@
     }
 
     function renderFlowkitResultsGrid(jobs) {
-        const active = jobs.filter((job) => ["queued", "processing"].includes(String(job.status || "").toLowerCase()));
-        const failed = jobs.filter((job) => String(job.status || "").toLowerCase() === "failed");
-        const completed = jobs.flatMap((job) => {
+        const orderedJobs = [...(jobs || [])].sort((left, right) => {
+            if (state.flowkitPinnedJobId) {
+                if (left.job_id === state.flowkitPinnedJobId) return -1;
+                if (right.job_id === state.flowkitPinnedJobId) return 1;
+            }
+            const leftTime = String(left.updated_at || left.created_at || "");
+            const rightTime = String(right.updated_at || right.created_at || "");
+            return rightTime.localeCompare(leftTime);
+        });
+        const active = orderedJobs.filter((job) => ["queued", "processing"].includes(String(job.status || "").toLowerCase()));
+        const failed = orderedJobs.filter((job) => String(job.status || "").toLowerCase() === "failed").slice(0, 6);
+        const completed = orderedJobs.flatMap((job) => {
             const request = job.request || {};
             return flowkitOutputItems(job).map((item) => ({ ...item, job, request }));
         });
@@ -4309,12 +4319,16 @@
                 </article>
             `;
         }).join("");
-        return `<div class="flowkit-results-cards grid gap-5 md:grid-cols-2 xl:grid-cols-3">${skeletons}${failedCards}${resultCards}</div>`;
+        return `<div class="flowkit-results-cards grid gap-5 md:grid-cols-2 xl:grid-cols-3">${skeletons}${resultCards}${failedCards}</div>`;
     }
 
     async function flowkitLoadJobs() {
         const payload = await fetchJSON("/flowkit/jobs?limit=80");
         state.flowkitLastJobs = [...(payload.jobs || [])].sort((left, right) => {
+            if (state.flowkitPinnedJobId) {
+                if (left.job_id === state.flowkitPinnedJobId) return -1;
+                if (right.job_id === state.flowkitPinnedJobId) return 1;
+            }
             const leftTime = String(left.updated_at || left.created_at || "");
             const rightTime = String(right.updated_at || right.created_at || "");
             return rightTime.localeCompare(leftTime);
@@ -4355,6 +4369,12 @@
         const nextKeys = new Set(nextCards.map((node) => node.dataset.flowkitCard));
         const currentGrid = container.querySelector(".flowkit-results-cards");
         if (!currentGrid || !nextCards.length) {
+            container.innerHTML = template.innerHTML;
+            return;
+        }
+        const currentOrder = Array.from(currentGrid.querySelectorAll("[data-flowkit-card]")).map((node) => node.dataset.flowkitCard).join("|");
+        const nextOrder = nextCards.map((node) => node.dataset.flowkitCard).join("|");
+        if (currentOrder !== nextOrder) {
             container.innerHTML = template.innerHTML;
             return;
         }
@@ -4603,6 +4623,24 @@
                 const file = fileInput?.files?.[0];
                 if (file) form.append("image", file);
                 const result = await fetchJSON("/flowkit/generate/simple", { method: "POST", body: form });
+                const optimisticJob = {
+                    job_id: result.job_id,
+                    status: "queued",
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                    request: {
+                        title: title || prompt.slice(0, 80),
+                        scenes: [{ prompt }],
+                        orientation: state.flowkitDraft.orientation || "VERTICAL",
+                        material: state.flowkitDraft.material || "realistic",
+                        simple: true,
+                    },
+                    progress: [{ stage: "queued", detail: "Job vừa được tạo, đang chờ worker xử lý." }],
+                    result: null,
+                    error: null,
+                };
+                state.flowkitPinnedJobId = result.job_id;
+                state.flowkitLastJobs = [optimisticJob, ...(state.flowkitLastJobs || []).filter((job) => job.job_id !== result.job_id)];
                 flowkitFeedback("success", `Đã tạo FlowKit job ${result.job_id}.`);
                 await flowkitLoadJobs();
                 if (window.switchPage) window.switchPage("flowkit-results");

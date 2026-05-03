@@ -211,6 +211,17 @@ def _flowkit_visible_path(file_path: str) -> str:
     return str(resolved)
 
 
+def _upload_path_error_hint(file_path: str) -> str:
+    visible_path = _flowkit_visible_path(file_path)
+    if visible_path != str(Path(file_path).resolve()):
+        return f" FlowKit-visible path: {visible_path}."
+    return (
+        " FlowKit server must be able to read this absolute file path. "
+        "If Content Forge runs in Docker and FlowKit runs on the host, configure "
+        "FLOWKIT_UPLOAD_CONTAINER_DIR and FLOWKIT_UPLOAD_HOST_DIR."
+    )
+
+
 def _normalize_material(value: Optional[str]) -> str:
     normalized = str(value or "realistic").strip().lower()
     aliases = {
@@ -944,7 +955,11 @@ class FlowKitClient:
                         on_progress=on_progress,
                     )
                 except Exception as exc:
-                    _notify("images", f"  ⚠ upload-image-to-video unavailable; falling back to prompt image generation: {exc}")
+                    raise RuntimeError(
+                        "Uploaded image could not be sent to FlowKit, so video generation was stopped instead "
+                        f"of generating a wrong prompt-based first frame. Error: {exc}."
+                        f"{_upload_path_error_hint(scene.upload_image_path)}"
+                    ) from exc
 
             # ── 2. Character reference images ──
             if characters and generate_refs and not char_dicts:
@@ -1069,9 +1084,13 @@ class FlowKitClient:
                             result.scenes[i].status = "IMAGE_READY"
                             _notify("images", f"  ✓ Scene {i} image uploaded: {media_id[:8]}")
                             continue
-                        _notify("images", f"  ⚠ Scene {i} image upload returned no media_id; generating image from prompt")
+                        raise RuntimeError(f"Scene {i} image upload returned no media_id: {upload_result}")
                     except Exception as exc:
-                        _notify("images", f"  ⚠ Scene {i} image upload unavailable; generating image from prompt instead: {exc}")
+                        raise RuntimeError(
+                            f"Scene {i} has an uploaded image, but FlowKit image upload failed. "
+                            "Stopped instead of generating a wrong prompt-based frame. "
+                            f"Error: {exc}.{_upload_path_error_hint(scene_input.upload_image_path)}"
+                        ) from exc
 
                 # Generate image via queue
                 req = await self.submit_request(

@@ -223,6 +223,51 @@ def _cleanup_video(video_id: str) -> None:
         path.unlink(missing_ok=True)
 
 
+def prepare_reel_video_for_upload(source: Path, prepared: Path) -> Path:
+    """Return a Facebook-friendly MP4 path, transcoding when ffprobe/codec checks require it."""
+    metadata = _probe_video(source)
+    width = int(metadata.get("width") or 0)
+    height = int(metadata.get("height") or 0)
+    duration = float(metadata.get("duration_sec") or 0)
+    if (
+        source.suffix.lower() == ".mp4"
+        and width >= 540
+        and height >= 960
+        and height > width
+        and 3 <= duration <= 90
+    ):
+        return source
+    prepared.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(source),
+        "-vf",
+        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-pix_fmt",
+        "yuv420p",
+        "-r",
+        "30",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        str(prepared),
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=600)
+    except (FileNotFoundError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("Cannot prepare FlowKit video for Facebook Reels. ffmpeg is required on the server.") from exc
+    return prepared
+
+
 def _publish_reel_single_page(
     client: httpx.Client,
     page: dict[str, Any],

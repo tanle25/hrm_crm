@@ -20,6 +20,7 @@ from app.facebook_reels import (
     _scheduled_timestamp,
     _select_pages,
     _upsert_job,
+    prepare_reel_video_for_upload,
 )
 from app.flowkit import _client, _crop_coordinates, _normalize_flowkit_material, _scene_media, _simple_image_prompt
 from app.llm import call_json
@@ -326,13 +327,16 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
                 if not video_url:
                     raise RuntimeError(f"Scene {scene['scene_id']} completed but returned no video URL.")
                 local_video = FLOWKIT_REEL_DOWNLOAD_DIR / f"{job_id}-{index}.mp4"
+                prepared_video = FLOWKIT_REEL_DOWNLOAD_DIR / f"{job_id}-{index}-facebook.mp4"
                 temp_videos.append(local_video)
+                temp_videos.append(prepared_video)
                 await _download_video(video_url, local_video)
+                upload_video = prepare_reel_video_for_upload(local_video, prepared_video)
                 try:
                     result = _publish_reel_single_page(
                         fb_client,
                         pages_by_id.get(str(scene.get("page_id"))) or {},
-                        local_video,
+                        upload_video,
                         str(scene.get("caption") or request.get("caption") or ""),
                         str(scene.get("title") or request.get("title") or ""),
                         str(request.get("scheduled_at") or ""),

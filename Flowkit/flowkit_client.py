@@ -222,6 +222,32 @@ def _upload_path_error_hint(file_path: str) -> str:
     )
 
 
+def _image_crop_coordinates(file_path: str, orientation: str) -> Optional[dict[str, float]]:
+    """Compute center crop metadata for FlowKit image-to-video start frames."""
+    if str(orientation or "").upper() != "VERTICAL":
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(file_path) as img:
+            width, height = img.size
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    target_aspect = 9 / 16
+    aspect = width / height
+    if aspect > target_aspect:
+        crop_width = height * target_aspect
+        left = (width - crop_width) / 2 / width
+        return {"top": 0, "left": round(left, 6), "bottom": 1, "right": round(1 - left, 6)}
+    if aspect < target_aspect:
+        crop_height = width / target_aspect
+        top = (height - crop_height) / 2 / height
+        return {"top": round(top, 6), "left": 0, "bottom": round(1 - top, 6), "right": 1}
+    return {"top": 0, "left": 0, "bottom": 1, "right": 1}
+
+
 def _normalize_material(value: Optional[str]) -> str:
     normalized = str(value or "realistic").strip().lower()
     aliases = {
@@ -955,11 +981,11 @@ class FlowKitClient:
                         on_progress=on_progress,
                     )
                 except Exception as exc:
-                    raise RuntimeError(
-                        "Uploaded image could not be sent to FlowKit, so video generation was stopped instead "
-                        f"of generating a wrong prompt-based first frame. Error: {exc}."
-                        f"{_upload_path_error_hint(scene.upload_image_path)}"
-                    ) from exc
+                    _notify(
+                        "images",
+                        "  ⚠ upload-image-to-video could not read the local path; trying multipart image upload path "
+                        f"instead: {exc}",
+                    )
 
             # ── 2. Character reference images ──
             if characters and generate_refs and not char_dicts:
@@ -1076,10 +1102,14 @@ class FlowKitClient:
                         media_id = _extract_id(upload_result, "media_id", "id")
                         if media_id:
                             orient_prefix = "horizontal" if orientation == "HORIZONTAL" else "vertical"
-                            await self.update_scene(scene_obj["id"], **{
+                            update_payload = {
                                 f"{orient_prefix}_image_media_id": media_id,
                                 f"{orient_prefix}_image_status": "COMPLETED",
-                            })
+                            }
+                            crop = _image_crop_coordinates(scene_input.upload_image_path, orientation)
+                            if crop:
+                                update_payload[f"{orient_prefix}_image_crop_coordinates"] = json.dumps(crop, separators=(",", ":"))
+                            await self.update_scene(scene_obj["id"], **update_payload)
                             result.scenes[i].image_media_id = media_id
                             result.scenes[i].status = "IMAGE_READY"
                             _notify("images", f"  ✓ Scene {i} image uploaded: {media_id[:8]}")

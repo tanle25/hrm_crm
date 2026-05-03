@@ -26,6 +26,7 @@ from app.facebook_pages import (
     facebook_comments,
     facebook_conversation_detail,
     facebook_conversations,
+    get_facebook_page_asset,
     facebook_posts,
     get_facebook_sync_job,
     latest_facebook_sync_jobs,
@@ -546,6 +547,24 @@ async def settings_delete_token(token_id: str) -> dict:
 async def get_facebook_pages() -> FacebookPageListResponse:
     pages = await asyncio.to_thread(list_facebook_pages)
     return FacebookPageListResponse(total=len(pages), pages=pages)
+
+
+@app.get(f"{settings.api_prefix}/facebook/pages/{{page_id}}/{{asset}}")
+async def get_facebook_page_asset_endpoint(page_id: str, asset: str) -> Response:
+    try:
+        content, media_type = await asyncio.to_thread(get_facebook_page_asset, page_id, asset)
+    except httpx.HTTPStatusError as error:
+        status = error.response.status_code if error.response is not None else 502
+        raise HTTPException(status_code=502 if status >= 500 else status, detail="Facebook page image could not be fetched.") from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
 
 
 @app.post(f"{settings.api_prefix}/facebook/pages/connect", response_model=FacebookConnectResponse)

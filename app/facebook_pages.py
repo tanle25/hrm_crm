@@ -157,13 +157,22 @@ def _mask_token(value: str) -> str:
     return f"{value[:6]}...{value[-4:]}"
 
 
+def _page_asset_url(page_id: str, asset: str) -> str:
+    page_id = str(page_id or "").strip()
+    if not page_id:
+        return ""
+    prefix = get_settings().api_prefix.rstrip("/")
+    return f"{prefix}/facebook/pages/{page_id}/{asset}"
+
+
 def _public_page(item: dict[str, Any]) -> dict[str, Any]:
+    page_id = item.get("page_id", "")
     return {
-        "page_id": item.get("page_id", ""),
+        "page_id": page_id,
         "name": item.get("name", ""),
         "category": item.get("category", ""),
-        "picture_url": item.get("picture_url", ""),
-        "cover_url": item.get("cover_url", ""),
+        "picture_url": _page_asset_url(str(page_id), "picture"),
+        "cover_url": _page_asset_url(str(page_id), "cover") if item.get("cover_url") else "",
         "group": item.get("group", ""),
         "tasks": item.get("tasks") or [],
         "status": item.get("status", "connected"),
@@ -179,6 +188,50 @@ def _public_page(item: dict[str, Any]) -> dict[str, Any]:
 
 def list_facebook_pages() -> list[dict[str, Any]]:
     return [_public_page(item) for item in _list_facebook_page_records()]
+
+
+def get_facebook_page_asset(page_id: str, asset: str) -> tuple[bytes, str]:
+    page_id = str(page_id or "").strip()
+    asset = str(asset or "").strip().lower()
+    if asset not in {"picture", "cover"}:
+        raise RuntimeError("Unsupported Facebook page asset.")
+    page = next((item for item in _list_facebook_page_records() if str(item.get("page_id") or "") == page_id), None)
+    if not page:
+        raise RuntimeError("Facebook page not found.")
+    page_token = str(page.get("page_access_token") or "").strip()
+    if not page_token:
+        raise RuntimeError("Facebook page token is missing.")
+
+    settings = get_settings()
+    base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
+    with httpx.Client(timeout=30, follow_redirects=True) as client:
+        if asset == "picture":
+            response = client.get(
+                f"{base_url}/{page_id}/picture",
+                params={
+                    "type": "large",
+                    "width": 256,
+                    "height": 256,
+                    "access_token": page_token,
+                },
+            )
+            response.raise_for_status()
+            return response.content, response.headers.get("content-type", "image/jpeg").split(";", 1)[0]
+
+        cover_response = client.get(
+            f"{base_url}/{page_id}",
+            params={
+                "fields": "cover{source}",
+                "access_token": page_token,
+            },
+        )
+        cover_response.raise_for_status()
+        cover_url = ((cover_response.json().get("cover") or {}).get("source") or "").strip()
+        if not cover_url:
+            raise RuntimeError("Facebook page cover is not available.")
+        response = client.get(cover_url)
+        response.raise_for_status()
+        return response.content, response.headers.get("content-type", "image/jpeg").split(";", 1)[0]
 
 
 def list_facebook_page_groups() -> list[dict[str, Any]]:

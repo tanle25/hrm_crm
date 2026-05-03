@@ -4163,6 +4163,7 @@
     function flowkitProxyMediaUrl(url) {
         const value = String(url || "");
         if (!value) return "";
+        if (value.includes("flow-content.google/")) return value;
         if (value.startsWith("/api/flowkit/media")) return value;
         if (value.startsWith("/flowkit/media")) return `${API_BASE}${value}`;
         if (value.startsWith("/")) return value;
@@ -4171,7 +4172,7 @@
 
     function flowkitResultVideoUrl(result) {
         const scenes = result.scenes || [];
-        const url = result.concat_url_proxied || result.concat_url || scenes.find((scene) => scene.upscale_url_proxied)?.upscale_url_proxied || scenes.find((scene) => scene.upscale_url)?.upscale_url || scenes.find((scene) => scene.video_url_proxied)?.video_url_proxied || scenes.find((scene) => scene.video_url)?.video_url || "";
+        const url = result.concat_url || scenes.find((scene) => scene.upscale_url)?.upscale_url || scenes.find((scene) => scene.video_url)?.video_url || result.concat_url_proxied || scenes.find((scene) => scene.upscale_url_proxied)?.upscale_url_proxied || scenes.find((scene) => scene.video_url_proxied)?.video_url_proxied || "";
         return flowkitProxyMediaUrl(url);
     }
 

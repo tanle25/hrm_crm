@@ -237,12 +237,10 @@ def _fail_job(job_id: str, error: str) -> None:
 
 def _with_proxied_media(payload: dict[str, Any]) -> dict[str, Any]:
     for scene in payload.get("scenes") or []:
-        for key in ["image_url", "video_url", "upscale_url"]:
+        for key in ["image_url"]:
             url = str(scene.get(key) or "")
             if url:
                 scene[f"{key}_proxied"] = _proxied_media_url(url)
-    if payload.get("concat_url"):
-        payload["concat_url_proxied"] = _proxied_media_url(str(payload["concat_url"]))
     return payload
 
 
@@ -471,7 +469,7 @@ async def media_proxy(request: Request, url: str) -> Response:
         "Accept-Ranges": upstream.headers.get("accept-ranges", "bytes"),
         "Cache-Control": "private, max-age=300",
     }
-    for header in ["content-length", "content-range", "content-type"]:
+    for header in ["content-range", "content-type"]:
         if upstream.headers.get(header):
             response_headers[header.title()] = upstream.headers[header]
     return StreamingResponse(

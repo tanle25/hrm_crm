@@ -65,6 +65,7 @@
         facebookConversationDetails: {},
         facebookConversationDetailPending: {},
         facebookMessageDraftMedia: [],
+        facebookMessageDraftText: {},
         facebookSlashCommands: null,
         facebookSlashCommandsLoaded: false,
         facebookSlashEditingCommand: "",
@@ -2985,12 +2986,66 @@
         menu.innerHTML = renderFacebookSlashMenuContent(matches);
     }
 
+    function facebookDraftText(conversationId = "") {
+        return state.facebookMessageDraftText?.[conversationId] || "";
+    }
+
+    function setFacebookDraftText(conversationId = "", value = "") {
+        if (!conversationId) return;
+        state.facebookMessageDraftText = state.facebookMessageDraftText || {};
+        if (value) {
+            state.facebookMessageDraftText[conversationId] = value;
+        } else {
+            delete state.facebookMessageDraftText[conversationId];
+        }
+    }
+
+    function facebookDraftMedia(conversationId = "") {
+        return (state.facebookMessageDraftMedia || []).filter((item) => item.conversation_id === conversationId);
+    }
+
+    function renderFacebookDraftMediaPreview(conversationId = "") {
+        const draftMedia = facebookDraftMedia(conversationId);
+        return draftMedia.map((item) => {
+            const mediaId = item.media_id || item.draft_id || "";
+            const type = String(item.type || "").toLowerCase();
+            const mime = String(item.mime_type || "").toLowerCase();
+            const isImage = type === "image" || mime.startsWith("image/");
+            const previewUrl = item.preview_url || item.url || "";
+            return `
+                <div class="relative group border border-hud-fb/25 bg-black/45 p-2 flex gap-3 items-center" data-media-id="${escapeHtml(mediaId)}">
+                    <div class="h-14 w-14 border border-hud-cyan/20 bg-hud-panel/70 flex items-center justify-center overflow-hidden flex-shrink-0">
+                        ${isImage && previewUrl
+                            ? `<img src="${escapeHtml(previewUrl)}" alt="${escapeHtml(item.name || "Ảnh đính kèm")}" class="h-full w-full object-cover">`
+                            : `<i class="fa-solid ${type === "video" ? "fa-video" : type === "audio" ? "fa-microphone" : "fa-paperclip"} text-hud-fb"></i>`}
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="text-[11px] text-white font-bold truncate">${escapeHtml(item.name || "Media")}</div>
+                        <div class="text-[9px] text-hud-muted uppercase-wide mt-0.5">${escapeHtml(type || "file")} · ${formatNumber(item.size || 0)} bytes</div>
+                        <div class="text-[9px] text-hud-fb uppercase-wide mt-1">Sẵn sàng gửi</div>
+                    </div>
+                    <button class="fb-message-media-remove h-7 w-7 border border-hud-red/35 bg-hud-red/10 text-hud-red hover:border-hud-red hover:bg-hud-red/20 text-[10px] flex items-center justify-center" data-media-id="${escapeHtml(mediaId)}" title="Bỏ media" type="button"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            `;
+        }).join("");
+    }
+
+    function updateFacebookDraftMediaPreview(section) {
+        const preview = section?.querySelector("#fb-message-media-preview");
+        if (!preview) return;
+        const conversationId = state.selectedFacebookConversationId;
+        const draftMedia = facebookDraftMedia(conversationId);
+        preview.classList.toggle("hidden", !draftMedia.length);
+        preview.innerHTML = renderFacebookDraftMediaPreview(conversationId);
+    }
+
     function applyFacebookSlashCommand(section, command) {
         const item = facebookSlashCommands().find((entry) => entry.command === command);
         const input = section?.querySelector("#fb-message-input");
         if (!item || !input) return;
         input.value = String(input.value || "").replace(/(?:^|\s)\/[\p{L}\p{N}_-]*$/u, "");
         input.value = `${input.value.trim() ? `${input.value.trim()} ` : ""}${item.text}`;
+        setFacebookDraftText(state.selectedFacebookConversationId, input.value);
         input.focus();
         updateFacebookSlashMenu(section);
     }
@@ -3083,7 +3138,8 @@
             return `<div class="p-10 text-center text-hud-muted">Chọn một hội thoại để xem tin nhắn.</div>`;
         }
         const messages = selected.messages || [];
-        const draftMedia = (state.facebookMessageDraftMedia || []).filter((item) => item.conversation_id === selected.conversation_id);
+        const draftMedia = facebookDraftMedia(selected.conversation_id);
+        const draftText = facebookDraftText(selected.conversation_id);
         return `
             <div class="header-strip px-4 py-3 flex items-center gap-3" style="background: linear-gradient(90deg, rgba(74, 158, 255, 0.15) 0%, rgba(74, 158, 255, 0.02) 50%, rgba(74, 158, 255, 0.15) 100%); border-bottom-color: rgba(74, 158, 255, 0.4);">
                 <div class="w-8 h-8 rounded-full bg-hud-fb/20 border border-hud-fb flex items-center justify-center flex-shrink-0">
@@ -3105,21 +3161,12 @@
             </div>
             <div class="border-t border-hud-fb/20 p-3 space-y-2">
                 <div id="fb-message-feedback" class="hidden text-[11px] border p-2"></div>
-                ${renderFacebookSlashMenu("")}
-                <div id="fb-message-media-preview" class="${draftMedia.length ? "" : "hidden"} border border-hud-fb/30 bg-hud-fb/10 px-3 py-2 text-[11px] text-white/90 space-y-2">
-                    ${draftMedia.map((item) => `
-                        <div class="flex items-center gap-3" data-media-id="${escapeHtml(item.media_id || "")}">
-                            <i class="fa-solid ${item.type === "image" ? "fa-image" : item.type === "video" ? "fa-video" : item.type === "audio" ? "fa-microphone" : "fa-paperclip"} text-hud-fb"></i>
-                            <span class="min-w-0 flex-1">
-                                <span class="block font-bold truncate">${escapeHtml(item.name || "Media")}</span>
-                                <span class="block text-[9px] text-hud-muted uppercase-wide">${escapeHtml(item.type || "")} · ${formatNumber(item.size || 0)} bytes</span>
-                            </span>
-                            <button class="fb-message-media-remove btn-ghost px-2 py-1 text-[10px]" data-media-id="${escapeHtml(item.media_id || "")}" title="Bỏ media"><i class="fa-solid fa-xmark"></i></button>
-                        </div>
-                    `).join("")}
+                ${renderFacebookSlashMenu(draftText)}
+                <div id="fb-message-media-preview" class="${draftMedia.length ? "" : "hidden"} grid grid-cols-1 sm:grid-cols-2 gap-2 border border-hud-fb/30 bg-hud-fb/10 px-3 py-2 text-[11px] text-white/90">
+                    ${renderFacebookDraftMediaPreview(selected.conversation_id)}
                 </div>
                 <div class="flex gap-2">
-                    <input id="fb-message-input" type="text" placeholder="Gõ phản hồi của bạn..." class="hud-input flex-1 px-3 py-2 text-xs"/>
+                    <input id="fb-message-input" type="text" value="${escapeHtml(draftText)}" placeholder="Gõ phản hồi của bạn..." class="hud-input flex-1 px-3 py-2 text-xs"/>
                     <input id="fb-message-media-input" type="file" class="hidden" accept="image/*,video/mp4,audio/*,application/pdf" multiple/>
                     <button id="fb-message-media-button" class="btn-ghost px-3 py-2 text-[10px]" title="Đính kèm"><i class="fa-solid fa-paperclip"></i></button>
                     <button class="btn-ghost px-3 py-2 text-[10px] uppercase-wide font-bold" style="background: rgba(0, 240, 255, 0.15); color: #00f0ff;"><i class="fa-solid fa-robot"></i> AI</button>
@@ -3303,6 +3350,23 @@
         );
     }
 
+    function facebookConversationHasSelection(conversationId = "") {
+        if (conversationId && state.selectedFacebookConversationId !== conversationId) return false;
+        const panel = document.querySelector("#fb-conversation-panel");
+        const selection = window.getSelection?.();
+        if (!panel || !selection || selection.isCollapsed || selection.rangeCount <= 0) return false;
+        const nodeInsidePanel = (node) => {
+            if (!node) return false;
+            const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+            return Boolean(element && panel.contains(element));
+        };
+        return nodeInsidePanel(selection.anchorNode) || nodeInsidePanel(selection.focusNode);
+    }
+
+    function facebookConversationIsInteracting(conversationId = "") {
+        return facebookComposerIsFocused(conversationId) || facebookConversationHasSelection(conversationId);
+    }
+
     function markFacebookConversationReadLocal(conversationId, persist = true) {
         const conversation = state.facebookConversations.find((item) => item.conversation_id === conversationId);
         if (!conversation) return;
@@ -3315,7 +3379,7 @@
         }
         updateRealtimeFacebookConversationList(conversationId);
         const panel = document.querySelector("#fb-conversation-panel");
-        if (panel && state.selectedFacebookConversationId === conversationId && !facebookComposerIsFocused(conversationId)) {
+        if (panel && state.selectedFacebookConversationId === conversationId && !facebookConversationIsInteracting(conversationId)) {
             const selected = detail || conversation;
             panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(selected, false)}`;
             scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
@@ -3357,6 +3421,39 @@
         return { ...result, conversation_id: conversationId };
     }
 
+    async function addFacebookMessageDraftFiles(section, files, conversationId, label = "media") {
+        const selectedFiles = Array.from(files || []).filter(Boolean).slice(0, 10);
+        if (!section || !conversationId || !selectedFiles.length) return;
+        const feedback = section.querySelector("#fb-message-feedback");
+        const input = section.querySelector("#fb-message-input");
+        if (input) setFacebookDraftText(conversationId, input.value || "");
+        try {
+            if (feedback) {
+                feedback.className = "text-[11px] border p-2 text-hud-fb border-hud-fb/30 bg-hud-fb/10";
+                feedback.textContent = `Đang tải ${formatNumber(selectedFiles.length)} ${label} lên server...`;
+                feedback.classList.remove("hidden");
+            }
+            const uploaded = [];
+            for (const file of selectedFiles) {
+                uploaded.push(await uploadFacebookMessageMedia(file, conversationId));
+            }
+            state.facebookMessageDraftMedia = [
+                ...(state.facebookMessageDraftMedia || []),
+                ...uploaded,
+            ];
+            updateFacebookDraftMediaPreview(section);
+            if (feedback) feedback.classList.add("hidden");
+        } catch (error) {
+            if (feedback) {
+                feedback.className = "text-[11px] border p-2 text-hud-red border-hud-red/30 bg-hud-red/10";
+                feedback.textContent = `Upload media failed: ${error.message}`;
+                feedback.classList.remove("hidden");
+            }
+        } finally {
+            input?.focus();
+        }
+    }
+
     function updateRealtimeFacebookConversationList(conversationId) {
         const conversation = state.facebookConversations.find((item) => item.conversation_id === conversationId);
         const list = document.getElementById("fb-conversation-list");
@@ -3394,7 +3491,7 @@
             panel
             && state.selectedFacebookConversationId === conversation.conversation_id
             && !state.facebookConversationDetails[conversation.conversation_id]
-            && !facebookComposerIsFocused(conversation.conversation_id)
+            && !facebookConversationIsInteracting(conversation.conversation_id)
         ) {
             panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(conversation, false)}`;
             scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
@@ -3467,7 +3564,7 @@
             const loadedDetail = await fetchJSON(`/facebook/conversations/${encodeURIComponent(conversationId)}?message_limit=100`);
             state.facebookConversationDetails[conversationId] = loadedDetail;
             const panel = document.querySelector("#fb-conversation-panel");
-            if (state.selectedFacebookConversationId === conversationId && panel && !facebookComposerIsFocused(conversationId)) {
+            if (state.selectedFacebookConversationId === conversationId && panel && !facebookConversationIsInteracting(conversationId)) {
                 panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(loadedDetail, false)}`;
                 scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
             }
@@ -3533,7 +3630,7 @@
                         state.facebookConversationDetails[conversationId] = loadedDetail;
                         if (state.selectedFacebookConversationId === conversationId) {
                             const currentPanel = section.querySelector("#fb-conversation-panel");
-                            if (currentPanel && !facebookComposerIsFocused(conversationId)) {
+                            if (currentPanel && !facebookConversationIsInteracting(conversationId)) {
                                 currentPanel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(loadedDetail, false)}`;
                                 scrollFacebookMessagesToBottom(section);
                             }
@@ -3719,7 +3816,7 @@
                         state.facebookConversationDetails[conversationId] = detail;
                         if (state.selectedFacebookConversationId === conversationId) {
                             const panel = section.querySelector("#fb-conversation-panel");
-                            if (panel && !facebookComposerIsFocused(conversationId)) {
+                            if (panel && !facebookConversationIsInteracting(conversationId)) {
                                 panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(detail, false)}`;
                                 scrollFacebookMessagesToBottom(section);
                             }
@@ -3735,12 +3832,13 @@
                 const feedback = section.querySelector("#fb-message-feedback");
                 const message = String(input?.value || "").trim();
                 const selectedConversationId = state.selectedFacebookConversationId;
-                const draftMedia = (state.facebookMessageDraftMedia || []).filter((item) => item.conversation_id === selectedConversationId);
+                const draftMedia = facebookDraftMedia(selectedConversationId);
                 if (!selectedConversationId || (!message && !draftMedia.length)) return;
                 const optimisticMessage = createOptimisticFacebookMessage(selectedConversationId, message, draftMedia);
                 if (input) input.value = "";
+                setFacebookDraftText(selectedConversationId, "");
                 state.facebookMessageDraftMedia = (state.facebookMessageDraftMedia || []).filter((item) => item.conversation_id !== selectedConversationId);
-                section.querySelector("#fb-message-media-preview")?.classList.add("hidden");
+                updateFacebookDraftMediaPreview(section);
                 if (feedback) feedback.classList.add("hidden");
                 appendOptimisticFacebookMessage(optimisticMessage);
                 try {
@@ -3821,54 +3919,37 @@
                     const removeMediaButton = event.target.closest(".fb-message-media-remove");
                     if (removeMediaButton) {
                         const mediaId = removeMediaButton.dataset.mediaId || "";
-                        state.facebookMessageDraftMedia = (state.facebookMessageDraftMedia || []).filter((item) => item.media_id !== mediaId);
-                        const panel = section.querySelector("#fb-conversation-panel");
                         const selectedConversationId = state.selectedFacebookConversationId;
-                        const selected = state.facebookConversationDetails[selectedConversationId]
-                            || state.facebookConversations.find((item) => item.conversation_id === selectedConversationId);
-                        if (panel) {
-                            panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(selected, false)}`;
-                            scrollFacebookMessagesToBottom(section);
-                        }
+                        state.facebookMessageDraftMedia = (state.facebookMessageDraftMedia || []).filter((item) => {
+                            const itemId = item.media_id || item.draft_id || "";
+                            return item.conversation_id !== selectedConversationId || itemId !== mediaId;
+                        });
+                        updateFacebookDraftMediaPreview(section);
+                        section.querySelector("#fb-message-input")?.focus();
                     }
                 });
                 section.addEventListener("change", async (event) => {
                     if (event.target?.id !== "fb-message-media-input") return;
                     const files = Array.from(event.target.files || []).slice(0, 10);
                     const selectedConversationId = state.selectedFacebookConversationId;
-                    if (!files.length || !selectedConversationId) return;
-                    const feedback = section.querySelector("#fb-message-feedback");
-                    try {
-                        if (feedback) {
-                            feedback.className = "text-[11px] border p-2 text-hud-fb border-hud-fb/30 bg-hud-fb/10";
-                            feedback.textContent = `Đang tải ${formatNumber(files.length)} media lên server...`;
-                            feedback.classList.remove("hidden");
-                        }
-                        const uploaded = [];
-                        for (const file of files) {
-                            uploaded.push(await uploadFacebookMessageMedia(file, selectedConversationId));
-                        }
-                        state.facebookMessageDraftMedia = [
-                            ...(state.facebookMessageDraftMedia || []).filter((item) => item.conversation_id !== selectedConversationId),
-                            ...uploaded,
-                        ];
-                        if (feedback) feedback.classList.add("hidden");
-                        const panel = section.querySelector("#fb-conversation-panel");
-                        const selected = state.facebookConversationDetails[selectedConversationId]
-                            || state.facebookConversations.find((item) => item.conversation_id === selectedConversationId);
-                        if (panel) {
-                            panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(selected, false)}`;
-                            scrollFacebookMessagesToBottom(section);
-                        }
-                    } catch (error) {
-                        if (feedback) {
-                            feedback.className = "text-[11px] border p-2 text-hud-red border-hud-red/30 bg-hud-red/10";
-                            feedback.textContent = `Upload media failed: ${error.message}`;
-                            feedback.classList.remove("hidden");
-                        }
-                    } finally {
-                        event.target.value = "";
-                    }
+                    if (files.length && selectedConversationId) await addFacebookMessageDraftFiles(section, files, selectedConversationId, "media");
+                    event.target.value = "";
+                });
+                section.addEventListener("paste", async (event) => {
+                    if (event.target?.id !== "fb-message-input") return;
+                    const items = Array.from(event.clipboardData?.items || []);
+                    const imageFiles = items
+                        .filter((item) => item.kind === "file" && String(item.type || "").startsWith("image/"))
+                        .map((item, index) => {
+                            const file = item.getAsFile();
+                            if (!file) return null;
+                            const ext = String(file.type || "image/png").split("/")[1] || "png";
+                            return new File([file], file.name || `clipboard-image-${Date.now()}-${index + 1}.${ext}`, { type: file.type || "image/png" });
+                        })
+                        .filter(Boolean);
+                    if (!imageFiles.length) return;
+                    event.preventDefault();
+                    await addFacebookMessageDraftFiles(section, imageFiles, state.selectedFacebookConversationId, "ảnh clipboard");
                 });
                 section.addEventListener("keydown", (event) => {
                     if (event.target?.id === "fb-message-input" && event.key === "Enter" && !event.shiftKey) {
@@ -3878,6 +3959,7 @@
                 });
                 section.addEventListener("input", (event) => {
                     if (event.target?.id === "fb-message-input") {
+                        setFacebookDraftText(state.selectedFacebookConversationId, event.target.value || "");
                         updateFacebookSlashMenu(section);
                     }
                 });

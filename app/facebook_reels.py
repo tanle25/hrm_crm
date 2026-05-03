@@ -249,13 +249,25 @@ def _publish_reel_single_page(
     if not reel_video_id or not upload_url:
         raise RuntimeError(f"Facebook did not return Reel upload session: {start_payload}")
 
+    file_size = video_path.stat().st_size
     with video_path.open("rb") as handle:
         upload = client.post(
             upload_url,
-            headers={"Authorization": f"OAuth {token}", "file_offset": "0"},
+            headers={
+                "Authorization": f"OAuth {token}",
+                "offset": "0",
+                "file_size": str(file_size),
+                "Content-Length": str(file_size),
+                "Content-Type": "application/octet-stream",
+                "User-Agent": "Postman/FacebookCollection",
+            },
             content=handle,
         )
-    upload.raise_for_status()
+    try:
+        upload.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        body = error.response.text[:1000] if error.response is not None else ""
+        raise RuntimeError(f"Facebook Reel binary upload failed: HTTP {upload.status_code}: {body}") from error
 
     finish_data: dict[str, Any] = {
         "upload_phase": "finish",

@@ -4314,7 +4314,11 @@
 
     async function flowkitLoadJobs() {
         const payload = await fetchJSON("/flowkit/jobs?limit=80");
-        state.flowkitLastJobs = payload.jobs || [];
+        state.flowkitLastJobs = [...(payload.jobs || [])].sort((left, right) => {
+            const leftTime = String(left.updated_at || left.created_at || "");
+            const rightTime = String(right.updated_at || right.created_at || "");
+            return rightTime.localeCompare(leftTime);
+        });
         return state.flowkitLastJobs;
     }
 

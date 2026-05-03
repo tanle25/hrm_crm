@@ -275,6 +275,32 @@ def _character_inputs(characters: Optional[list[FlowKitCharacterRequest]]) -> li
     ]
 
 
+def _simple_image_prompt(prompt: str, material: str, orientation: str) -> str:
+    style = _normalize_flowkit_material(material).replace("_", " ")
+    frame = "vertical 9:16 portrait frame" if orientation == "VERTICAL" else "horizontal 16:9 cinematic frame"
+    return (
+        f"{prompt}\n\n"
+        f"Create the exact first frame for a video. Style/material: {style}. "
+        f"Composition: {frame}, edge-to-edge, no black bars, no text, no watermark. "
+        "The image must follow the subject, setting, action, mood, and visual details from the user prompt."
+    )
+
+
+def _simple_video_prompt(prompt: str, orientation: str) -> str:
+    frame_guard = (
+        "True vertical 9:16 mobile video, fill the entire portrait frame edge to edge. "
+        if orientation == "VERTICAL"
+        else "True horizontal 16:9 video, fill the frame edge to edge. "
+    )
+    return (
+        f"{frame_guard}"
+        "Use the generated first frame as the exact starting frame. "
+        f"0-3s: Begin from the prompt scene with subtle natural motion. "
+        f"3-6s: Add cinematic camera movement and environmental motion while preserving the subject. "
+        f"6-8s: Settle into a polished final shot. User prompt: {prompt}"
+    )
+
+
 async def _run_generate_job(job_id: str, request: FlowKitGenerateRequest) -> None:
     job = _get_job(job_id)
     if job:
@@ -407,7 +433,8 @@ async def generate_simple(
             shutil.copyfileobj(image.file, handle)
     scene = FlowKitSceneRequest(
         prompt=cleaned_prompt,
-        video_prompt=cleaned_prompt,
+        video_prompt=_simple_video_prompt(cleaned_prompt, safe_orientation),
+        image_prompt=_simple_image_prompt(cleaned_prompt, material, safe_orientation),
         chain_type="ROOT",
         upload_image_path=upload_path or None,
     )

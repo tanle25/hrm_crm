@@ -1150,7 +1150,10 @@ class FlowKitClient:
                 result.scenes[i].image_url = image_url
                 result.scenes[i].image_media_id = media_id
                 if orientation == "VERTICAL" and not scene_state.get("vertical_image_media_id"):
-                    _notify("images", f"  ⚠ Scene {i} has no vertical image media; not using horizontal fallback")
+                    raise RuntimeError(
+                        f"Scene {i} image generation did not expose vertical image media. "
+                        "Stopped before video generation to avoid using a wrong horizontal/fallback frame."
+                    )
 
             # ── 5. Videos ──
             _notify("videos", f"Generating Veo 3 videos (mode: {video_gen_mode})...")

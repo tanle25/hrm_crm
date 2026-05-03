@@ -4858,8 +4858,9 @@
         const key = String(status || "").toLowerCase();
         if (["completed", "published"].includes(key)) return ["green", "PUBLISHED", "fa-check"];
         if (key === "scheduled") return ["amber", "SCHEDULED", "fa-clock"];
+        if (key === "ready" || key === "ready_for_review") return ["amber", "REVIEW", "fa-eye"];
         if (["queued", "pending"].includes(key)) return ["cyan", "QUEUED", "fa-hourglass-half"];
-        if (["uploading", "processing", "running", "publishing"].includes(key)) return ["cyan", key === "publishing" ? "PUBLISHING" : "PROCESSING", "fa-spinner fa-spin"];
+        if (["uploading", "processing", "running", "publishing", "regenerating"].includes(key)) return ["cyan", key === "publishing" ? "PUBLISHING" : (key === "regenerating" ? "REGENERATING" : "PROCESSING"), "fa-spinner fa-spin"];
         if (["failed", "error"].includes(key)) return ["red", "FAILED", "fa-triangle-exclamation"];
         return ["", String(status || "DRAFT").toUpperCase(), "fa-circle"];
     }
@@ -4938,7 +4939,7 @@
             ? "VD: Inbox page hoặc Zalo 0838.99.36.36 để được tư vấn. Giao hàng toàn quốc, nhận hàng thanh toán..."
             : "Hook 1-2 dòng đầu, mô tả ngắn, CTA, hotline/Zalo, hashtag...";
         if (button) button.innerHTML = mode === "flowkit"
-            ? `<i class="fa-solid fa-wand-magic-sparkles"></i> GENERATE & ENQUEUE REELS`
+            ? `<i class="fa-solid fa-wand-magic-sparkles"></i> GENERATE VIDEO ĐỂ DUYỆT`
             : `<i class="fa-solid fa-paper-plane"></i> ENQUEUE REELS JOB`;
     }
 
@@ -5029,20 +5030,66 @@
         }
     }
 
+    function facebookReelReviewItems(job) {
+        return Array.isArray(job.review_items) ? job.review_items : [];
+    }
+
     function facebookReelJobCounts(job) {
-        return (job.results || []).reduce((acc, result) => {
+        const reviewItems = facebookReelReviewItems(job);
+        const items = reviewItems.length ? reviewItems : (job.results || []);
+        return items.reduce((acc, result) => {
             const status = String(result.status || "").toLowerCase();
             if (status === "scheduled") acc.scheduled += 1;
             else if (["published", "completed"].includes(status)) acc.published += 1;
             else if (status === "failed") acc.failed += 1;
+            else if (status === "ready") acc.pending += 1;
             else acc.pending += 1;
             return acc;
         }, { published: 0, scheduled: 0, failed: 0, pending: 0 });
     }
 
+    function renderFacebookReelReviewItem(job, item) {
+        const [tone, label, icon] = facebookReelBadge(item.status);
+        const index = Number(item.index || 0);
+        const videoUrl = flowkitProxyMediaUrl(item.flowkit_video_url || "");
+        const canPublish = String(item.status || "") === "ready" && videoUrl;
+        const isBusy = ["publishing", "regenerating"].includes(String(item.status || ""));
+        return `
+            <div class="border border-hud-fb/20 bg-black/25 p-3">
+                <div class="flex items-start gap-3">
+                    <div class="w-28 shrink-0">
+                        ${videoUrl ? `<video src="${escapeHtml(videoUrl)}" class="w-full aspect-[9/16] bg-black object-cover border border-hud-cyan/20" controls preload="metadata"></video>` : `<div class="w-full aspect-[9/16] bg-black/50 border border-hud-red/20 flex items-center justify-center text-hud-red"><i class="fa-solid fa-video-slash"></i></div>`}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-start gap-2">
+                            <div class="flex-1 min-w-0">
+                                <div class="text-white text-[12px] font-black truncate">${escapeHtml(item.page_name || item.page_id || "Facebook Page")}</div>
+                                <div class="text-[10px] text-hud-muted mt-1">Video #${index + 1} · duyệt trước khi đăng</div>
+                            </div>
+                            <span class="badge ${tone} shrink-0"><i class="fa-solid ${icon} text-[9px]"></i>${label}</span>
+                        </div>
+                        <div class="mt-2 text-[11px] text-hud-muted line-clamp-3 whitespace-pre-line">${escapeHtml(item.caption || "")}</div>
+                        ${item.permalink ? `<a class="inline-flex items-center gap-2 mt-2 text-[10px] text-hud-fb hover:text-white uppercase-wide" href="${escapeHtml(item.permalink)}" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-arrow-up-right-from-square"></i> MỞ FACEBOOK</a>` : ""}
+                        ${item.error ? `<div class="mt-2 text-[10px] text-hud-red border border-hud-red/25 bg-hud-red/10 p-2">${escapeHtml(redactSensitiveText(item.error))}</div>` : ""}
+                        <div class="mt-3 flex flex-wrap gap-2">
+                            <button type="button" class="fb-reels-flowkit-publish btn-primary px-3 py-1.5 text-[10px] uppercase-wide font-bold disabled:opacity-40" data-job-id="${escapeHtml(job.job_id || "")}" data-index="${index}" ${canPublish ? "" : "disabled"}>
+                                <i class="fa-solid fa-paper-plane"></i> ĐĂNG VIDEO NÀY
+                            </button>
+                            <button type="button" class="fb-reels-flowkit-regenerate btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold disabled:opacity-40" data-job-id="${escapeHtml(job.job_id || "")}" data-index="${index}" ${isBusy ? "disabled" : ""}>
+                                <i class="fa-solid fa-rotate"></i> TẠO LẠI
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     function renderFacebookReelJob(job) {
         const [tone, label, icon] = facebookReelBadge(job.status);
         const counts = facebookReelJobCounts(job);
+        const reviewItems = facebookReelReviewItems(job);
+        const hasReadyReviewItems = reviewItems.some((item) => String(item.status || "") === "ready");
         return `
             <article class="hud-card p-4" style="border-color: rgba(74, 158, 255, 0.25);">
                 <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
@@ -5063,7 +5110,7 @@
                             <span class="text-hud-muted"><i class="fa-solid fa-users"></i> ${formatNumber((job.targets || []).length)} page</span>
                             <span class="text-hud-muted"><i class="fa-solid fa-trash"></i> video local xóa sau xử lý</span>
                         </div>
-                        ${job.source === "flowkit" && ["queued", "processing", "publishing"].includes(String(job.status || "").toLowerCase()) ? `
+                        ${job.source === "flowkit" && ["queued", "processing", "publishing", "regenerating"].includes(String(job.status || "").toLowerCase()) ? `
                             <div class="mt-3">
                                 <div class="h-2 bg-black/40 border border-hud-cyan/20 overflow-hidden">
                                     <div class="h-full bg-hud-cyan" style="width:${Math.max(4, Math.min(100, Number(job.progress_percent || 0)))}%"></div>
@@ -5078,6 +5125,19 @@
                             <div class="border border-hud-cyan/20 bg-hud-cyan/5 px-2 py-2"><div class="metric-num text-lg text-hud-cyan">${formatNumber(counts.pending)}</div><div class="text-[8px] uppercase-widest text-hud-muted">PENDING</div></div>
                             <div class="border border-hud-red/20 bg-hud-red/5 px-2 py-2"><div class="metric-num text-lg text-hud-red">${formatNumber(counts.failed)}</div><div class="text-[8px] uppercase-widest text-hud-muted">FAILED</div></div>
                         </div>
+                        ${reviewItems.length ? `
+                            <div class="mt-4 border border-hud-amber/20 bg-hud-amber/5 p-3">
+                                <div class="flex items-center gap-3 mb-3">
+                                    <div class="font-display text-white text-xs font-black uppercase-widest"><i class="fa-solid fa-eye text-hud-amber"></i> DUYỆT VIDEO TRƯỚC KHI ĐĂNG</div>
+                                    <button type="button" class="fb-reels-flowkit-publish-all btn-primary ml-auto px-3 py-1.5 text-[10px] uppercase-wide font-bold disabled:opacity-40" data-job-id="${escapeHtml(job.job_id || "")}" ${hasReadyReviewItems ? "" : "disabled"}>
+                                        <i class="fa-solid fa-paper-plane"></i> ĐĂNG TẤT CẢ VIDEO READY
+                                    </button>
+                                </div>
+                                <div class="grid gap-3 md:grid-cols-2">
+                                    ${reviewItems.map((item) => renderFacebookReelReviewItem(job, item)).join("")}
+                                </div>
+                            </div>
+                        ` : ""}
                         <div class="mt-3 grid gap-2">
                             ${(job.results || []).map((result) => {
                                 const [resultTone, resultLabel, resultIcon] = facebookReelBadge(result.status);
@@ -5180,7 +5240,7 @@
                                     </div>
                                     <div>
                                         <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">OUTPUT</label>
-                                        <div class="border border-hud-cyan/20 bg-black/25 px-4 py-3 text-[11px] text-hud-muted">Mặc định 9:16 · đăng Reel sau khi tạo xong</div>
+                                        <div class="border border-hud-cyan/20 bg-black/25 px-4 py-3 text-[11px] text-hud-muted">Mặc định 9:16 · tạo xong sẽ chờ duyệt trước khi đăng</div>
                                     </div>
                                 </div>
                             </div>
@@ -5317,7 +5377,7 @@
                     const imageInput = section.querySelector("#fb-reels-flowkit-images");
                     if (imageInput) imageInput.value = "";
                     renderFacebookReelImagePreview();
-                    facebookReelFeedback("success", `Đã enqueue FlowKit Reel job ${result.job_id}. Hệ thống sẽ tạo video rồi đăng tự động.`);
+                    facebookReelFeedback("success", `Đã enqueue FlowKit Reel job ${result.job_id}. Video sẽ hiện ở danh sách duyệt trước khi đăng.`);
                 } else {
                     result = await fetchJSON("/facebook/reels/jobs", {
                         method: "POST",
@@ -5356,7 +5416,7 @@
         try {
             const payload = await fetchJSON("/facebook/reels/jobs?limit=50");
             const jobs = payload.jobs || [];
-            const active = jobs.some((job) => ["queued", "uploading", "processing", "running", "publishing"].includes(String(job.status || "").toLowerCase()));
+            const active = jobs.some((job) => ["queued", "uploading", "processing", "running", "publishing", "regenerating"].includes(String(job.status || "").toLowerCase()));
             slot.innerHTML = `
                 <div class="hud-card p-3 flex items-center gap-3" style="border-color: rgba(74, 158, 255, 0.25);">
                     <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>
@@ -5367,6 +5427,62 @@
                 ${jobs.map(renderFacebookReelJob).join("") || `<div class="hud-card p-8 text-center text-hud-muted text-sm" style="border-color: rgba(74, 158, 255, 0.25);">Chưa có job Reels.</div>`}
             `;
             slot.querySelector("#fb-reels-jobs-refresh")?.addEventListener("click", renderFacebookReelJobs);
+            slot.querySelectorAll(".fb-reels-flowkit-publish").forEach((button) => {
+                button.addEventListener("click", async () => {
+                    const jobId = button.dataset.jobId || "";
+                    const index = Number.parseInt(button.dataset.index || "-1", 10);
+                    if (!jobId || index < 0) return;
+                    button.disabled = true;
+                    button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ĐANG ĐĂNG`;
+                    try {
+                        await fetchJSON(`/facebook/reels/flowkit/jobs/${encodeURIComponent(jobId)}/publish`, {
+                            method: "POST",
+                            body: JSON.stringify({ indexes: [index] }),
+                        });
+                        await renderFacebookReelJobs();
+                    } catch (error) {
+                        facebookReelFeedback("error", `Publish FlowKit Reel failed: ${error.message}`);
+                        await renderFacebookReelJobs();
+                    }
+                });
+            });
+            slot.querySelectorAll(".fb-reels-flowkit-publish-all").forEach((button) => {
+                button.addEventListener("click", async () => {
+                    const jobId = button.dataset.jobId || "";
+                    if (!jobId) return;
+                    button.disabled = true;
+                    button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ĐANG ĐĂNG`;
+                    try {
+                        await fetchJSON(`/facebook/reels/flowkit/jobs/${encodeURIComponent(jobId)}/publish`, {
+                            method: "POST",
+                            body: JSON.stringify({ indexes: [] }),
+                        });
+                        await renderFacebookReelJobs();
+                    } catch (error) {
+                        facebookReelFeedback("error", `Publish all FlowKit Reels failed: ${error.message}`);
+                        await renderFacebookReelJobs();
+                    }
+                });
+            });
+            slot.querySelectorAll(".fb-reels-flowkit-regenerate").forEach((button) => {
+                button.addEventListener("click", async () => {
+                    const jobId = button.dataset.jobId || "";
+                    const index = Number.parseInt(button.dataset.index || "-1", 10);
+                    if (!jobId || index < 0) return;
+                    button.disabled = true;
+                    button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ĐANG TẠO`;
+                    try {
+                        await fetchJSON(`/facebook/reels/flowkit/jobs/${encodeURIComponent(jobId)}/regenerate`, {
+                            method: "POST",
+                            body: JSON.stringify({ index }),
+                        });
+                        await renderFacebookReelJobs();
+                    } catch (error) {
+                        facebookReelFeedback("error", `Regenerate FlowKit Reel failed: ${error.message}`);
+                        await renderFacebookReelJobs();
+                    }
+                });
+            });
             if (state.facebookReelJobsRefreshTimer) clearTimeout(state.facebookReelJobsRefreshTimer);
             if (active && document.getElementById("page-fb-reels")?.classList.contains("active")) {
                 state.facebookReelJobsRefreshTimer = setTimeout(renderFacebookReelJobs, 5000);

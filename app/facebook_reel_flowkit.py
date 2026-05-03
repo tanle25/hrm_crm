@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.facebook_reels import (
+    _get_job,
     _list_jobs,
     _now,
     _page_token_map,
@@ -40,6 +41,14 @@ class FacebookReelFlowKitJobCreateResponse(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class FacebookReelFlowKitPublishRequest(BaseModel):
+    indexes: list[int] = Field(default_factory=list)
+
+
+class FacebookReelFlowKitRegenerateRequest(BaseModel):
+    index: int = Field(..., ge=0)
+
+
 def _safe_text(value: Any, max_len: int = 5000) -> str:
     return " ".join(str(value or "").strip().split())[:max_len]
 
@@ -64,6 +73,7 @@ def _video_prompt_for_page(brief: str, page: dict[str, Any], variant: int, title
     return (
         "True vertical 9:16 mobile Reel, fill the entire frame edge to edge, no black bars. "
         "Use the assigned image as the exact first frame and preserve its subject identity. "
+        "No voiceover, no spoken dialogue, no narration; background music only. "
         f"Brand/page context: {page_name}. Topic: {brief or title}. "
         f"{variants[variant % len(variants)]}"
     )
@@ -124,7 +134,7 @@ def _build_reel_plan(
             (
                 "Tạo kế hoạch Reels cho từng fanpage. Mỗi item phải có: page_id, page_name, variant, title, "
                 "caption tiếng Việt có hook + lợi ích + CTA, image_index nếu có ảnh upload, image_prompt tiếng Anh, "
-                "video_prompt tiếng Anh mô tả chuyển động 8 giây 9:16. Không thêm giải thích ngoài JSON.\n"
+                "video_prompt tiếng Anh mô tả chuyển động 8 giây 9:16, không voiceover/không lời thoại/chỉ nhạc nền. Không thêm giải thích ngoài JSON.\n"
                 f"Brief: {brief}\nTitle: {title}\nCTA: {cta}\nImage count: {image_count}\nVideos per page: {videos_per_page}\nPages: {json.dumps(page_context, ensure_ascii=False)}"
             ),
             fallback=fallback,
@@ -183,14 +193,22 @@ async def _download_video(url: str, target: Path) -> int:
     return size
 
 
+def _flowkit_reel_job(job_id: str) -> dict[str, Any] | None:
+    return _get_job(job_id) or next((item for item in _list_jobs(200) if item.get("job_id") == job_id), None)
+
+
+def _replace_result(results: list[dict[str, Any]], index: int, result: dict[str, Any]) -> list[dict[str, Any]]:
+    kept = [item for item in results if int(item.get("index", -1)) != index]
+    kept.append(result)
+    return sorted(kept, key=lambda item: int(item.get("index", 0)))
+
+
 async def _run_flowkit_reel_job(job_id: str) -> None:
-    jobs = [item for item in _list_jobs(200) if item.get("job_id") == job_id]
-    if not jobs:
+    job = _flowkit_reel_job(job_id)
+    if not job:
         return
-    job = jobs[0]
     request = job.get("request") or {}
     upload_paths = [Path(path) for path in job.get("upload_paths") or []]
-    temp_videos: list[Path] = []
     try:
         job["status"] = "processing"
         _job_progress(job, "plan", "Creating per-page Reel plan...", 5)
@@ -218,7 +236,7 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
             description=str(request.get("brief") or ""),
             material=material,
             language="vi",
-            allow_music=False,
+            allow_music=True,
             allow_voice=False,
         )
         project_id = str(project.get("id") or project.get("project_id") or "")
@@ -316,50 +334,33 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
             await asyncio.sleep(client.poll_interval)
 
         scene_states = {str(scene.get("id") or ""): scene for scene in await client.list_scenes(flowkit_video_id)}
-        pages_by_id = _page_token_map()
-        results: list[dict[str, Any]] = []
-        job["status"] = "publishing"
-        _job_progress(job, "publish", "Publishing generated videos as Facebook Reels...", 88)
-        with httpx.Client(timeout=httpx.Timeout(300.0, connect=20.0)) as fb_client:
-            for index, scene in enumerate(scenes):
-                state = scene_states.get(scene["scene_id"]) or await client.get_scene(scene["scene_id"])
-                _, video_url = _scene_media(state, "VERTICAL", "video")
-                if not video_url:
-                    raise RuntimeError(f"Scene {scene['scene_id']} completed but returned no video URL.")
-                local_video = FLOWKIT_REEL_DOWNLOAD_DIR / f"{job_id}-{index}.mp4"
-                prepared_video = FLOWKIT_REEL_DOWNLOAD_DIR / f"{job_id}-{index}-facebook.mp4"
-                temp_videos.append(local_video)
-                temp_videos.append(prepared_video)
-                await _download_video(video_url, local_video)
-                upload_video = prepare_reel_video_for_upload(local_video, prepared_video)
-                try:
-                    result = _publish_reel_single_page(
-                        fb_client,
-                        pages_by_id.get(str(scene.get("page_id"))) or {},
-                        upload_video,
-                        str(scene.get("caption") or request.get("caption") or ""),
-                        str(scene.get("title") or request.get("title") or ""),
-                        str(request.get("scheduled_at") or ""),
-                    )
-                except Exception as exc:
-                    result = {
-                        "page_id": scene.get("page_id"),
-                        "page_name": scene.get("page_name") or "",
-                        "status": "failed",
-                        "error": str(exc),
-                        "failed_at": _now(),
-                    }
-                result["flowkit_scene_id"] = scene["scene_id"]
-                result["flowkit_video_url"] = video_url
-                result["caption"] = scene.get("caption") or ""
-                results.append(result)
-                job["results"] = results
-                _job_progress(job, "publish", f"Published {len(results)}/{len(scenes)} Reel targets", 88 + round((len(results) / max(1, len(scenes))) * 10))
-
-        failures = [item for item in results if item.get("status") == "failed"]
-        job["status"] = "failed" if failures and len(failures) == len(results) else ("scheduled" if request.get("publish_status") == "scheduled" else "completed")
+        review_items: list[dict[str, Any]] = []
+        for index, scene in enumerate(scenes):
+            state = scene_states.get(scene["scene_id"]) or await client.get_scene(scene["scene_id"])
+            _, video_url = _scene_media(state, "VERTICAL", "video")
+            if not video_url:
+                raise RuntimeError(f"Scene {scene['scene_id']} completed but returned no video URL.")
+            review_items.append(
+                {
+                    "index": index,
+                    "status": "ready",
+                    "page_id": scene.get("page_id"),
+                    "page_name": scene.get("page_name") or "",
+                    "title": scene.get("title") or request.get("title") or "",
+                    "caption": scene.get("caption") or "",
+                    "flowkit_scene_id": scene["scene_id"],
+                    "flowkit_video_url": video_url,
+                    "image_prompt": scene.get("image_prompt") or "",
+                    "video_prompt": scene.get("video_prompt") or "",
+                    "created_at": _now(),
+                }
+            )
+        job["review_items"] = review_items
+        job["results"] = []
+        job["status"] = "ready_for_review"
         job["completed_at"] = _now()
         job["progress_percent"] = 100
+        _job_progress(job, "review", "FlowKit videos are ready for review before publishing.", 100)
         _upsert_job(job)
     except Exception as exc:
         job["status"] = "failed"
@@ -367,8 +368,129 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
         job["failed_at"] = _now()
         _upsert_job(job)
     finally:
-        for path in [*upload_paths, *temp_videos]:
+        for path in upload_paths:
             Path(path).unlink(missing_ok=True)
+
+
+async def _publish_flowkit_reel_job(job_id: str, indexes: list[int]) -> None:
+    job = _flowkit_reel_job(job_id)
+    if not job:
+        return
+    request = job.get("request") or {}
+    review_items = job.get("review_items") or []
+    if not isinstance(review_items, list) or not review_items:
+        job["status"] = "failed"
+        job["error"] = "No generated FlowKit videos are ready for review."
+        _upsert_job(job)
+        return
+    selected = set(indexes or [int(item.get("index", idx)) for idx, item in enumerate(review_items) if item.get("status") == "ready"])
+    temp_videos: list[Path] = []
+    results = list(job.get("results") or [])
+    pages_by_id = _page_token_map()
+    job["status"] = "publishing"
+    _job_progress(job, "publish", f"Publishing {len(selected)} approved Reels...", 90)
+    try:
+        with httpx.Client(timeout=httpx.Timeout(300.0, connect=20.0)) as fb_client:
+            for item in review_items:
+                index = int(item.get("index", -1))
+                if index not in selected:
+                    continue
+                video_url = str(item.get("flowkit_video_url") or "")
+                if not video_url:
+                    result = {**item, "status": "failed", "error": "Generated video URL is missing.", "failed_at": _now()}
+                else:
+                    item["status"] = "publishing"
+                    _upsert_job(job)
+                    local_video = FLOWKIT_REEL_DOWNLOAD_DIR / f"{job_id}-{index}.mp4"
+                    prepared_video = FLOWKIT_REEL_DOWNLOAD_DIR / f"{job_id}-{index}-facebook.mp4"
+                    temp_videos.extend([local_video, prepared_video])
+                    try:
+                        await _download_video(video_url, local_video)
+                        upload_video = prepare_reel_video_for_upload(local_video, prepared_video)
+                        result = _publish_reel_single_page(
+                            fb_client,
+                            pages_by_id.get(str(item.get("page_id"))) or {},
+                            upload_video,
+                            str(item.get("caption") or request.get("caption") or ""),
+                            str(item.get("title") or request.get("title") or ""),
+                            str(request.get("scheduled_at") or ""),
+                        )
+                    except Exception as exc:
+                        result = {
+                            "page_id": item.get("page_id"),
+                            "page_name": item.get("page_name") or "",
+                            "status": "failed",
+                            "error": str(exc),
+                            "failed_at": _now(),
+                        }
+                result.update(
+                    {
+                        "index": index,
+                        "flowkit_scene_id": item.get("flowkit_scene_id") or "",
+                        "flowkit_video_url": video_url,
+                        "caption": item.get("caption") or "",
+                        "title": item.get("title") or "",
+                    }
+                )
+                item.update(result)
+                results = _replace_result(results, index, result)
+                job["results"] = results
+                _upsert_job(job)
+        statuses = [str(item.get("status") or "") for item in review_items]
+        if any(status == "ready" for status in statuses):
+            job["status"] = "ready_for_review"
+        elif statuses and all(status == "failed" for status in statuses):
+            job["status"] = "failed"
+        elif request.get("publish_status") == "scheduled":
+            job["status"] = "scheduled"
+        else:
+            job["status"] = "completed"
+        job["completed_at"] = _now()
+        _upsert_job(job)
+    finally:
+        for path in temp_videos:
+            path.unlink(missing_ok=True)
+
+
+async def _regenerate_flowkit_reel_item(job_id: str, index: int) -> None:
+    job = _flowkit_reel_job(job_id)
+    if not job:
+        return
+    review_items = job.get("review_items") or []
+    item = next((entry for entry in review_items if int(entry.get("index", -1)) == index), None)
+    flowkit = job.get("flowkit") or {}
+    if not item or not flowkit.get("project_id") or not flowkit.get("video_id") or not item.get("flowkit_scene_id"):
+        return
+    try:
+        item["status"] = "regenerating"
+        item["error"] = ""
+        job["status"] = "processing"
+        _job_progress(job, "videos", f"Regenerating video #{index + 1}...", 70)
+        client = _client()
+        request = await client.submit_request(
+            "REGENERATE_VIDEO",
+            project_id=str(flowkit["project_id"]),
+            scene_id=str(item["flowkit_scene_id"]),
+            video_id=str(flowkit["video_id"]),
+            orientation="VERTICAL",
+        )
+        request_id = str(request.get("id") or request.get("request_id") or "")
+        if request_id:
+            await client.poll_request(request_id, client.video_timeout, f"FlowKit regenerate scene {item['flowkit_scene_id']}")
+        state = await client.get_scene(str(item["flowkit_scene_id"]))
+        _, video_url = _scene_media(state, "VERTICAL", "video")
+        if not video_url:
+            raise RuntimeError("FlowKit regenerate completed but returned no video URL.")
+        item["flowkit_video_url"] = video_url
+        item["status"] = "ready"
+        item["regenerated_at"] = _now()
+        job["status"] = "ready_for_review"
+        _upsert_job(job)
+    except Exception as exc:
+        item["status"] = "failed"
+        item["error"] = str(exc)
+        job["status"] = "ready_for_review"
+        _upsert_job(job)
 
 
 @router.post("/jobs", response_model=FacebookReelFlowKitJobCreateResponse)
@@ -446,3 +568,44 @@ async def create_facebook_reel_flowkit_job(
     await asyncio.to_thread(_upsert_job, job)
     background_tasks.add_task(_run_flowkit_reel_job, job_id)
     return FacebookReelFlowKitJobCreateResponse(job_id=job_id, status="queued", created_at=now, updated_at=now, data=job)
+
+
+@router.post("/jobs/{job_id}/publish")
+async def publish_facebook_reel_flowkit_job(
+    job_id: str,
+    request: FacebookReelFlowKitPublishRequest,
+    background_tasks: BackgroundTasks,
+) -> dict[str, Any]:
+    job = await asyncio.to_thread(_flowkit_reel_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="FlowKit Reel job not found.")
+    review_items = job.get("review_items") or []
+    if not review_items:
+        raise HTTPException(status_code=400, detail="No generated videos are ready for review.")
+    if request.indexes:
+        valid_indexes = {int(item.get("index", -1)) for item in review_items}
+        missing = [index for index in request.indexes if index not in valid_indexes]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Unknown review item indexes: {missing}")
+    job["status"] = "publishing"
+    await asyncio.to_thread(_upsert_job, job)
+    background_tasks.add_task(_publish_flowkit_reel_job, job_id, request.indexes)
+    return {"job_id": job_id, "status": "publishing", "indexes": request.indexes}
+
+
+@router.post("/jobs/{job_id}/regenerate")
+async def regenerate_facebook_reel_flowkit_item(
+    job_id: str,
+    request: FacebookReelFlowKitRegenerateRequest,
+    background_tasks: BackgroundTasks,
+) -> dict[str, Any]:
+    job = await asyncio.to_thread(_flowkit_reel_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="FlowKit Reel job not found.")
+    review_items = job.get("review_items") or []
+    if not any(int(item.get("index", -1)) == request.index for item in review_items):
+        raise HTTPException(status_code=400, detail=f"Unknown review item index: {request.index}")
+    job["status"] = "regenerating"
+    await asyncio.to_thread(_upsert_job, job)
+    background_tasks.add_task(_regenerate_flowkit_reel_item, job_id, request.index)
+    return {"job_id": job_id, "status": "regenerating", "index": request.index}

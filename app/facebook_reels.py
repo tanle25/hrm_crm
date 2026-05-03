@@ -337,25 +337,32 @@ def _publish_reel_single_page(
         raise RuntimeError(f"Facebook Reel publish finish failed: HTTP {finish.status_code}: {body}") from error
     finish_payload = finish.json()
     reel_info: dict[str, Any] = {}
-    with contextlib.suppress(Exception):
-        reel_info_response = client.get(
-            f"{base_url}/{reel_video_id}",
-            params={
-                "fields": "id,permalink_url,status",
-                "access_token": token,
-            },
-        )
-        reel_info_response.raise_for_status()
-        reel_info = reel_info_response.json()
-    post_id = str(finish_payload.get("post_id") or finish_payload.get("id") or reel_info.get("id") or reel_video_id)
+    post_id = str(finish_payload.get("post_id") or finish_payload.get("id") or "")
+    for object_id in [post_id, reel_video_id]:
+        if not object_id:
+            continue
+        with contextlib.suppress(Exception):
+            reel_info_response = client.get(
+                f"{base_url}/{object_id}",
+                params={
+                    "fields": "id,permalink_url,status",
+                    "access_token": token,
+                },
+            )
+            reel_info_response.raise_for_status()
+            reel_info = reel_info_response.json()
+            if reel_info.get("permalink_url"):
+                break
+    post_id = str(post_id or reel_info.get("id") or reel_video_id)
     permalink = str(reel_info.get("permalink_url") or "")
+    fallback_permalink = f"https://www.facebook.com/{post_id}" if post_id and "_" in post_id else f"https://www.facebook.com/reel/{reel_video_id}"
     return {
         "page_id": page_id,
         "page_name": page.get("name") or "",
         "status": "scheduled" if scheduled_ts else "published",
         "facebook_reel_id": reel_video_id,
         "facebook_post_id": post_id,
-        "permalink": permalink or (f"https://www.facebook.com/reel/{reel_video_id}" if reel_video_id else ""),
+        "permalink": permalink or fallback_permalink,
         "reel_status": reel_info.get("status") or {},
         "published_at": "" if scheduled_ts else _now(),
         "scheduled_at": scheduled_at if scheduled_ts else "",

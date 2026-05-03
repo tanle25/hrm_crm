@@ -42,6 +42,7 @@ from app.facebook_pages import (
     verify_facebook_webhook_signature,
 )
 from app.facebook_reels import router as facebook_reels_router
+from app.facebook_reel_flowkit import router as facebook_reel_flowkit_router
 from app.facebook_slash_commands import delete_facebook_slash_command, list_facebook_slash_commands, upsert_facebook_slash_command
 from app.flowkit import router as flowkit_router
 from app.graph import retry_from_dlq, run_pipeline_async
@@ -116,6 +117,7 @@ UI_DIR = Path("ui")
 FACEBOOK_MESSAGE_MEDIA_DIR = Path("data/facebook_message_media")
 app.include_router(facebook_content_router)
 app.include_router(facebook_reels_router)
+app.include_router(facebook_reel_flowkit_router)
 app.include_router(flowkit_router)
 app.include_router(public_chat_router)
 

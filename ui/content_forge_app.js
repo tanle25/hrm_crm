@@ -75,6 +75,8 @@
         selectedFacebookReelPageIds: JSON.parse(localStorage.getItem("content_forge_fb_reel_page_ids") || "[]"),
         selectedFacebookReelGroups: JSON.parse(localStorage.getItem("content_forge_fb_reel_groups") || "[]"),
         facebookReelVideo: null,
+        facebookReelMode: "upload",
+        facebookReelImages: [],
         facebookReelJobsRefreshTimer: null,
         flowkitJobsRefreshTimer: null,
         flowkitMaterials: [],
@@ -4857,7 +4859,7 @@
         if (["completed", "published"].includes(key)) return ["green", "PUBLISHED", "fa-check"];
         if (key === "scheduled") return ["amber", "SCHEDULED", "fa-clock"];
         if (["queued", "pending"].includes(key)) return ["cyan", "QUEUED", "fa-hourglass-half"];
-        if (["uploading", "processing", "running"].includes(key)) return ["cyan", "UPLOADING", "fa-spinner fa-spin"];
+        if (["uploading", "processing", "running", "publishing"].includes(key)) return ["cyan", key === "publishing" ? "PUBLISHING" : "PROCESSING", "fa-spinner fa-spin"];
         if (["failed", "error"].includes(key)) return ["red", "FAILED", "fa-triangle-exclamation"];
         return ["", String(status || "DRAFT").toUpperCase(), "fa-circle"];
     }
@@ -4899,6 +4901,45 @@
             if (input) input.value = "";
             renderFacebookReelVideoPreview();
         });
+    }
+
+    function renderFacebookReelImagePreview() {
+        const slot = document.getElementById("fb-reels-flowkit-image-preview");
+        if (!slot) return;
+        const images = state.facebookReelImages || [];
+        slot.classList.toggle("hidden", !images.length);
+        slot.innerHTML = images.length ? `
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                ${images.map((file, index) => {
+                    const url = URL.createObjectURL(file);
+                    setTimeout(() => URL.revokeObjectURL(url), 15000);
+                    return `
+                        <div class="relative border border-hud-fb/20 bg-black/30 p-2">
+                            <img src="${escapeHtml(url)}" alt="${escapeHtml(file.name || "source image")}" class="w-full aspect-[9/16] object-cover bg-black">
+                            <div class="mt-2 text-[9px] text-hud-muted truncate">${escapeHtml(file.name || `Ảnh ${index + 1}`)}</div>
+                            <button class="fb-reels-image-remove absolute top-2 right-2 h-7 w-7 border border-hud-red/40 bg-black/70 text-hud-red hover:bg-hud-red/20" data-index="${index}" type="button"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                    `;
+                }).join("")}
+            </div>
+        ` : "";
+    }
+
+    function updateFacebookReelMode(section) {
+        const mode = String(section.querySelector("#fb-reels-source-mode")?.value || "upload");
+        state.facebookReelMode = mode;
+        section.querySelector("#fb-reels-upload-wrap")?.classList.toggle("hidden", mode !== "upload");
+        section.querySelector("#fb-reels-flowkit-wrap")?.classList.toggle("hidden", mode !== "flowkit");
+        const captionLabel = section.querySelector("#fb-reels-caption-label");
+        const caption = section.querySelector("#fb-reels-caption");
+        const button = section.querySelector("#fb-reels-enqueue");
+        if (captionLabel) captionLabel.textContent = mode === "flowkit" ? "CTA / ghi chú caption" : "CAPTION";
+        if (caption) caption.placeholder = mode === "flowkit"
+            ? "VD: Inbox page hoặc Zalo 0838.99.36.36 để được tư vấn. Giao hàng toàn quốc, nhận hàng thanh toán..."
+            : "Hook 1-2 dòng đầu, mô tả ngắn, CTA, hotline/Zalo, hashtag...";
+        if (button) button.innerHTML = mode === "flowkit"
+            ? `<i class="fa-solid fa-wand-magic-sparkles"></i> GENERATE & ENQUEUE REELS`
+            : `<i class="fa-solid fa-paper-plane"></i> ENQUEUE REELS JOB`;
     }
 
     async function uploadFacebookReelVideo(file) {
@@ -5017,10 +5058,19 @@
                         </div>
                         <div class="mt-3 flex flex-wrap gap-2 text-[10px] uppercase-wide">
                             <span class="badge" style="color:#4a9eff; border-color: rgba(74, 158, 255, 0.45);">REEL ${escapeHtml(String(job.job_id || "").slice(0, 8))}</span>
+                            ${job.source === "flowkit" ? `<span class="badge cyan"><i class="fa-solid fa-wand-magic-sparkles"></i> FLOWKIT AI</span>` : ""}
                             <span class="text-hud-muted"><i class="fa-solid fa-clock"></i> ${escapeHtml(job.scheduled_at ? `Hẹn giờ · ${formatDate(job.scheduled_at)}` : formatDate(job.updated_at || job.created_at))}</span>
                             <span class="text-hud-muted"><i class="fa-solid fa-users"></i> ${formatNumber((job.targets || []).length)} page</span>
                             <span class="text-hud-muted"><i class="fa-solid fa-trash"></i> video local xóa sau xử lý</span>
                         </div>
+                        ${job.source === "flowkit" && ["queued", "processing", "publishing"].includes(String(job.status || "").toLowerCase()) ? `
+                            <div class="mt-3">
+                                <div class="h-2 bg-black/40 border border-hud-cyan/20 overflow-hidden">
+                                    <div class="h-full bg-hud-cyan" style="width:${Math.max(4, Math.min(100, Number(job.progress_percent || 0)))}%"></div>
+                                </div>
+                                <div class="mt-1 text-[9px] text-hud-cyan uppercase-wide">${escapeHtml(((job.progress || []).slice(-1)[0] || {}).detail || "Đang xử lý FlowKit...")}</div>
+                            </div>
+                        ` : ""}
                         ${(job.warnings || []).length ? `<div class="mt-3 text-[10px] text-hud-amber border border-hud-amber/25 bg-hud-amber/10 p-2">${escapeHtml((job.warnings || []).join(" | "))}</div>` : ""}
                         <div class="mt-3 grid grid-cols-4 gap-2 text-center">
                             <div class="border border-hud-green/20 bg-hud-green/5 px-2 py-2"><div class="metric-num text-lg text-hud-green">${formatNumber(counts.published)}</div><div class="text-[8px] uppercase-widest text-hud-muted">PUBLISHED</div></div>
@@ -5068,6 +5118,13 @@
                         </div>
                         <div class="p-7 space-y-5">
                             <div>
+                                <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-diagram-project"></i> NGUỒN VIDEO</label>
+                                <select id="fb-reels-source-mode" class="hud-select w-full px-4 py-3 text-sm">
+                                    <option value="upload" ${state.facebookReelMode !== "flowkit" ? "selected" : ""}>Upload video có sẵn</option>
+                                    <option value="flowkit" ${state.facebookReelMode === "flowkit" ? "selected" : ""}>Tạo bằng FlowKit AI rồi đăng</option>
+                                </select>
+                            </div>
+                            <div id="fb-reels-upload-wrap">
                                 <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-upload"></i> VIDEO REELS</label>
                                 <label class="block rounded-2xl border border-hud-fb/25 bg-[#101923] px-4 py-5 cursor-pointer hover:bg-[#162333] hover:border-hud-fb/60 transition">
                                     <input id="fb-reels-video" type="file" accept="video/*" class="hidden"/>
@@ -5080,8 +5137,53 @@
                                         <i class="fa-solid fa-plus text-hud-fb"></i>
                                     </div>
                                 </label>
+                                <div id="fb-reels-video-preview" class="hidden mt-4"></div>
                             </div>
-                            <div id="fb-reels-video-preview" class="hidden"></div>
+                            <div id="fb-reels-flowkit-wrap" class="hidden space-y-4 border border-hud-fb/20 bg-hud-fb/5 p-4">
+                                <div>
+                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-pen-nib"></i> BRIEF TẠO VIDEO</label>
+                                    <textarea id="fb-reels-flowkit-brief" class="hud-textarea w-full min-h-[150px] px-4 py-3 text-sm" placeholder="Mô tả sản phẩm/chủ đề. Hệ thống sẽ tự sinh prompt riêng cho từng page và gán ảnh xoay vòng."></textarea>
+                                </div>
+                                <div>
+                                    <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-images"></i> ẢNH NGUỒN FLOWKIT</label>
+                                    <label class="block rounded-2xl border border-hud-cyan/25 bg-black/30 px-4 py-5 cursor-pointer hover:border-hud-cyan transition">
+                                        <input id="fb-reels-flowkit-images" type="file" accept="image/*" class="hidden" multiple/>
+                                        <div class="flex items-center gap-3 text-xs">
+                                            <span class="w-12 h-12 rounded-full bg-hud-cyan/10 flex items-center justify-center"><i class="fa-solid fa-image text-hud-cyan"></i></span>
+                                            <div class="flex-1 min-w-0">
+                                                <div class="text-white font-bold">Chọn nhiều ảnh nguồn</div>
+                                                <div class="text-hud-muted text-[10px]">Có thể để trống để FlowKit tự tạo first frame. Nếu có ảnh, mỗi ảnh có thể sinh nhiều video/prompt riêng.</div>
+                                            </div>
+                                            <i class="fa-solid fa-plus text-hud-cyan"></i>
+                                        </div>
+                                    </label>
+                                    <div id="fb-reels-flowkit-image-preview" class="hidden mt-3"></div>
+                                </div>
+                                <div class="grid md:grid-cols-3 gap-4">
+                                    <div>
+                                        <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">MATERIAL</label>
+                                        <select id="fb-reels-flowkit-material" class="hud-select w-full px-4 py-3 text-sm">
+                                            <option value="realistic">Người thật / realistic</option>
+                                            <option value="3d_pixar">3D Pixar</option>
+                                            <option value="anime">Anime</option>
+                                            <option value="stop_motion">Stop motion</option>
+                                            <option value="oil_painting">Oil painting</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">VIDEO / PAGE</label>
+                                        <select id="fb-reels-flowkit-videos-per-page" class="hud-select w-full px-4 py-3 text-sm">
+                                            <option value="1">1 video/page</option>
+                                            <option value="2">2 video/page</option>
+                                            <option value="3">3 video/page</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">OUTPUT</label>
+                                        <div class="border border-hud-cyan/20 bg-black/25 px-4 py-3 text-[11px] text-hud-muted">Mặc định 9:16 · đăng Reel sau khi tạo xong</div>
+                                    </div>
+                                </div>
+                            </div>
                             <div class="grid grid-cols-2 gap-4">
                                 <div>
                                     <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">TIÊU ĐỀ</label>
@@ -5100,7 +5202,7 @@
                                 <input id="fb-reels-scheduled-at" type="datetime-local" class="hud-input w-full px-4 py-3 text-sm"/>
                             </div>
                             <div>
-                                <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">CAPTION</label>
+                                <label id="fb-reels-caption-label" class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">CAPTION</label>
                                 <textarea id="fb-reels-caption" class="hud-textarea w-full min-h-[190px] px-4 py-3 text-sm" placeholder="Hook 1-2 dòng đầu, mô tả ngắn, CTA, hotline/Zalo, hashtag..."></textarea>
                             </div>
                             <div id="fb-reels-feedback" class="hidden text-[11px] border p-3"></div>
@@ -5130,8 +5232,11 @@
             </div>
         `;
         renderFacebookReelVideoPreview();
+        renderFacebookReelImagePreview();
+        updateFacebookReelMode(section);
         await renderFacebookReelTargets();
         await renderFacebookReelJobs();
+        section.querySelector("#fb-reels-source-mode")?.addEventListener("change", () => updateFacebookReelMode(section));
         section.querySelector("#fb-reels-video")?.addEventListener("change", async (event) => {
             const file = Array.from(event.target.files || [])[0];
             if (!file) return;
@@ -5146,21 +5251,38 @@
                 facebookReelFeedback("error", `Upload video failed: ${error.message}`);
             }
         });
+        section.querySelector("#fb-reels-flowkit-images")?.addEventListener("change", (event) => {
+            state.facebookReelImages = Array.from(event.target.files || []).filter((file) => String(file.type || "").startsWith("image/")).slice(0, 12);
+            renderFacebookReelImagePreview();
+        });
+        section.addEventListener("click", (event) => {
+            const remove = event.target.closest(".fb-reels-image-remove");
+            if (!remove) return;
+            const index = Number.parseInt(remove.dataset.index || "-1", 10);
+            state.facebookReelImages = (state.facebookReelImages || []).filter((_, itemIndex) => itemIndex !== index);
+            renderFacebookReelImagePreview();
+        });
         section.querySelector("#fb-reels-publish-status")?.addEventListener("change", (event) => {
             section.querySelector("#fb-reels-schedule-wrap")?.classList.toggle("hidden", event.target.value !== "scheduled");
         });
         section.querySelector("#fb-reels-enqueue")?.addEventListener("click", async () => {
+            const mode = String(section.querySelector("#fb-reels-source-mode")?.value || "upload");
             const video = state.facebookReelVideo;
             const caption = String(section.querySelector("#fb-reels-caption")?.value || "").trim();
             const title = String(section.querySelector("#fb-reels-title")?.value || "").trim();
             const publishStatus = String(section.querySelector("#fb-reels-publish-status")?.value || "publish");
             const scheduledLocal = String(section.querySelector("#fb-reels-scheduled-at")?.value || "");
-            if (!video?.video_id) {
+            if (mode !== "flowkit" && !video?.video_id) {
                 facebookReelFeedback("error", "Cần upload video Reels trước.");
                 return;
             }
-            if (!caption) {
+            if (mode !== "flowkit" && !caption) {
                 facebookReelFeedback("error", "Cần nhập caption cho Reel.");
+                return;
+            }
+            const flowkitBrief = String(section.querySelector("#fb-reels-flowkit-brief")?.value || "").trim();
+            if (mode === "flowkit" && !flowkitBrief) {
+                facebookReelFeedback("error", "Cần nhập brief để FlowKit tạo video.");
                 return;
             }
             if (!state.selectedFacebookReelPageIds.length && !state.selectedFacebookReelGroups.length) {
@@ -5174,34 +5296,55 @@
             const button = section.querySelector("#fb-reels-enqueue");
             if (button) {
                 button.disabled = true;
-                button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ENQUEUEING`;
+                button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${mode === "flowkit" ? "CREATING FLOWKIT JOB" : "ENQUEUEING"}`;
             }
             try {
-                const result = await fetchJSON("/facebook/reels/jobs", {
-                    method: "POST",
-                    body: JSON.stringify({
-                        video_id: video.video_id,
-                        caption,
-                        title,
-                        page_ids: state.selectedFacebookReelPageIds,
-                        groups: state.selectedFacebookReelGroups,
-                        publish_status: publishStatus,
-                        scheduled_at: scheduledLocal ? new Date(scheduledLocal).toISOString() : "",
-                        schedule_mode: publishStatus === "scheduled" ? "manual" : "",
-                    }),
-                });
-                state.facebookReelVideo = null;
-                const input = section.querySelector("#fb-reels-video");
-                if (input) input.value = "";
-                renderFacebookReelVideoPreview();
-                facebookReelFeedback("success", `Đã enqueue Reel job ${result.job_id}. Video local sẽ được xóa sau khi xử lý.`);
+                let result;
+                if (mode === "flowkit") {
+                    const form = new FormData();
+                    form.append("brief", flowkitBrief);
+                    form.append("title", title);
+                    form.append("cta", caption);
+                    form.append("page_ids", JSON.stringify(state.selectedFacebookReelPageIds));
+                    form.append("groups", JSON.stringify(state.selectedFacebookReelGroups));
+                    form.append("publish_status", publishStatus);
+                    form.append("scheduled_at", scheduledLocal ? new Date(scheduledLocal).toISOString() : "");
+                    form.append("videos_per_page", String(section.querySelector("#fb-reels-flowkit-videos-per-page")?.value || "1"));
+                    form.append("material", String(section.querySelector("#fb-reels-flowkit-material")?.value || "realistic"));
+                    (state.facebookReelImages || []).forEach((file) => form.append("images", file));
+                    result = await fetchJSON("/facebook/reels/flowkit/jobs", { method: "POST", body: form });
+                    state.facebookReelImages = [];
+                    const imageInput = section.querySelector("#fb-reels-flowkit-images");
+                    if (imageInput) imageInput.value = "";
+                    renderFacebookReelImagePreview();
+                    facebookReelFeedback("success", `Đã enqueue FlowKit Reel job ${result.job_id}. Hệ thống sẽ tạo video rồi đăng tự động.`);
+                } else {
+                    result = await fetchJSON("/facebook/reels/jobs", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            video_id: video.video_id,
+                            caption,
+                            title,
+                            page_ids: state.selectedFacebookReelPageIds,
+                            groups: state.selectedFacebookReelGroups,
+                            publish_status: publishStatus,
+                            scheduled_at: scheduledLocal ? new Date(scheduledLocal).toISOString() : "",
+                            schedule_mode: publishStatus === "scheduled" ? "manual" : "",
+                        }),
+                    });
+                    state.facebookReelVideo = null;
+                    const input = section.querySelector("#fb-reels-video");
+                    if (input) input.value = "";
+                    renderFacebookReelVideoPreview();
+                    facebookReelFeedback("success", `Đã enqueue Reel job ${result.job_id}. Video local sẽ được xóa sau khi xử lý.`);
+                }
                 await renderFacebookReelJobs();
             } catch (error) {
                 facebookReelFeedback("error", `Enqueue Reel failed: ${error.message}`);
             } finally {
                 if (button) {
                     button.disabled = false;
-                    button.innerHTML = `<i class="fa-solid fa-paper-plane"></i> ENQUEUE REELS JOB`;
+                    updateFacebookReelMode(section);
                 }
             }
         });
@@ -5213,7 +5356,7 @@
         try {
             const payload = await fetchJSON("/facebook/reels/jobs?limit=50");
             const jobs = payload.jobs || [];
-            const active = jobs.some((job) => ["queued", "uploading", "processing", "running"].includes(String(job.status || "").toLowerCase()));
+            const active = jobs.some((job) => ["queued", "uploading", "processing", "running", "publishing"].includes(String(job.status || "").toLowerCase()));
             slot.innerHTML = `
                 <div class="hud-card p-3 flex items-center gap-3" style="border-color: rgba(74, 158, 255, 0.25);">
                     <span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>

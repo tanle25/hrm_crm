@@ -577,17 +577,21 @@ class FlowKitClient:
         project_id: str,
         title: str,
         prompt: str,
+        video_prompt: str = "",
         orientation: str = "VERTICAL",
-        normalize_to_vertical: bool = True,
+        normalize_to_vertical: bool = False,
         queue_video: bool = True,
     ) -> dict:
         """Ask FlowKit server to upload an image and queue image-to-video generation."""
+        path = Path(file_path)
         return await self._post("/api/flow/upload-image-to-video", {
             "project_id": project_id,
             "file_path": _flowkit_visible_path(file_path),
             "title": title,
             "prompt": prompt,
+            "video_prompt": video_prompt or prompt,
             "orientation": orientation,
+            "file_name": path.name or "input.png",
             "normalize_to_vertical": bool(normalize_to_vertical),
             "queue_video": bool(queue_video),
         })
@@ -697,12 +701,20 @@ class FlowKitClient:
                 on_progress(f"{label} {status}... ({int(elapsed)}s)")
             await asyncio.sleep(self.poll_interval)
 
-    async def poll_batch(self, video_id: str, req_type: str = None, timeout: int = 600) -> dict:
+    async def poll_batch(
+        self,
+        video_id: str,
+        req_type: str = None,
+        timeout: int = 600,
+        orientation: str = None,
+    ) -> dict:
         """Poll batch status until all done."""
         start = time.time()
         while True:
-            status = await self.get_batch_status(video_id=video_id, req_type=req_type)
+            status = await self.get_batch_status(video_id=video_id, req_type=req_type, orientation=orientation)
             if status.get("done"):
+                if status.get("failed"):
+                    raise RuntimeError(f"Batch completed with failed requests: {status}")
                 return status
             elapsed = time.time() - start
             if elapsed > timeout:
@@ -729,9 +741,10 @@ class FlowKitClient:
 
         video_id = _extract_id(response, "video_id")
         scene_id = _extract_id(response, "scene_id")
-        request_id = _extract_id(response, "request_id", "id")
+        request_id = _extract_id(response, "queued_video_request_id", "request_id")
         batch_status_url = str(response.get("batch_status_url") or response.get("status_url") or "")
         video_id = video_id or _query_value(batch_status_url, "video_id")
+        orientation = _query_value(batch_status_url, "orientation") or orientation
 
         if request_id:
             await self.poll_request(
@@ -741,7 +754,12 @@ class FlowKitClient:
                 on_progress=lambda detail: _notify("videos", detail),
             )
         elif video_id:
-            await self.poll_batch(video_id, req_type="GENERATE_VIDEO", timeout=self.video_timeout)
+            await self.poll_batch(
+                video_id,
+                req_type="GENERATE_VIDEO",
+                timeout=self.video_timeout,
+                orientation=orientation,
+            )
         else:
             raise RuntimeError(f"FlowKit upload-image-to-video returned no request/video id: {response}")
 
@@ -911,9 +929,10 @@ class FlowKitClient:
                         file_path=scene.upload_image_path,
                         project_id=project_id,
                         title=title,
-                        prompt=_join_prompt_parts(orientation_instruction, scene.video_prompt or scene.prompt),
+                        prompt=scene.prompt,
+                        video_prompt=_join_prompt_parts(orientation_instruction, scene.video_prompt or scene.prompt),
                         orientation=orientation,
-                        normalize_to_vertical=orientation == "VERTICAL",
+                        normalize_to_vertical=False,
                         queue_video=True,
                     )
                     return await self._uploaded_image_video_result(

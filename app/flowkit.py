@@ -301,19 +301,48 @@ def _simple_video_prompt(prompt: str, orientation: str) -> str:
     )
 
 
+async def _ensure_flowkit_project(job_id: str, request: FlowKitGenerateRequest) -> str:
+    if request.project_id:
+        return request.project_id
+    _update_progress(job_id, "project", f"Creating shared project: {request.title}")
+    project = await _client().create_project(
+        name=request.title,
+        description=request.description,
+        story=request.story,
+        material=_normalize_flowkit_material(request.material),
+        language=request.language,
+        allow_music=request.allow_music,
+        allow_voice=request.allow_voice,
+        characters=[
+            {
+                "name": character.name,
+                "description": character.description,
+                "entity_type": character.entity_type,
+                **({"voice_description": character.voice_description} if character.voice_description else {}),
+            }
+            for character in (request.characters or [])
+        ] or None,
+    )
+    project_id = str(project.get("id") or project.get("project_id") or "")
+    if not project_id:
+        raise RuntimeError(f"FlowKit create_project returned no project id: {project}")
+    _update_progress(job_id, "project", f"Shared project created: {project_id}")
+    return project_id
+
+
 async def _run_generate_job(job_id: str, request: FlowKitGenerateRequest) -> None:
     job = _get_job(job_id)
     if job:
         job["status"] = "processing"
         _upsert_job(job)
     try:
-        results: list[VideoResult] = []
         output_count = max(1, min(int(request.output_count or 1), 4))
-        project_id = request.project_id
-        for index in range(output_count):
+        project_id = await _ensure_flowkit_project(job_id, request) if output_count > 1 else request.project_id
+
+        async def run_output(index: int) -> VideoResult:
             title = request.title if output_count == 1 else f"{request.title} - Variant {index + 1}"
-            _update_progress(job_id, "output", f"Generating output {index + 1}/{output_count}")
-            result = await _client().generate_video(
+            _update_progress(job_id, "output", f"Queued output {index + 1}/{output_count}")
+            return await _client().generate_video(
                 title=title,
                 scenes=_scene_inputs(request.scenes),
                 project_id=project_id,
@@ -328,10 +357,18 @@ async def _run_generate_job(job_id: str, request: FlowKitGenerateRequest) -> Non
                 orientation=request.orientation,
                 video_gen_mode=request.video_gen_mode,
                 upscale_4k=request.upscale_4k,
-                on_progress=lambda stage, detail: _update_progress(job_id, stage, detail),
+                on_progress=lambda stage, detail, output_index=index: _update_progress(
+                    job_id,
+                    stage,
+                    f"Output {output_index + 1}/{output_count}: {detail}" if output_count > 1 else detail,
+                ),
             )
-            project_id = project_id or result.project_id
-            results.append(result)
+
+        if output_count == 1:
+            results = [await run_output(0)]
+        else:
+            _update_progress(job_id, "output", f"Generating {output_count} outputs in parallel in project {project_id}")
+            results = await asyncio.gather(*(run_output(index) for index in range(output_count)))
         if output_count == 1:
             _finish_job(job_id, results[0])
         else:

@@ -3150,7 +3150,7 @@
                     <div class="text-[9px] uppercase-wide" style="color:#4a9eff;">${escapeHtml(selected.page_name || "Facebook Page")} · ${escapeHtml(selected.customer_id || "")}</div>
                 </div>
                 <div class="ml-auto flex gap-2 items-center">
-                    <span class="badge ${Number(selected.unread_count || 0) ? "amber" : "cyan"}">${Number(selected.unread_count || 0) ? `${formatNumber(selected.unread_count)} UNREAD` : "OPEN"}</span>
+                    <span id="fb-conversation-status-badge" class="badge ${Number(selected.unread_count || 0) ? "amber" : "cyan"}">${Number(selected.unread_count || 0) ? `${formatNumber(selected.unread_count)} UNREAD` : "OPEN"}</span>
                     <button class="btn-ghost px-2.5 py-1.5 text-[10px]" title="Gắn thẻ"><i class="fa-solid fa-user-tag"></i> TAG</button>
                     <button class="btn-ghost px-2.5 py-1.5 text-[10px]" title="Báo cáo"><i class="fa-solid fa-flag"></i></button>
                 </div>
@@ -3378,11 +3378,13 @@
             detail.status = "open";
         }
         updateRealtimeFacebookConversationList(conversationId);
-        const panel = document.querySelector("#fb-conversation-panel");
-        if (panel && state.selectedFacebookConversationId === conversationId && !facebookConversationIsInteracting(conversationId)) {
-            const selected = detail || conversation;
-            panel.innerHTML = `<span class="c-tl" style="border-color:#4a9eff;"></span><span class="c-br" style="border-color:#4a9eff;"></span>${renderFacebookConversationPanel(selected, false)}`;
-            scrollFacebookMessagesToBottom(document.getElementById("page-fb-messages"));
+        if (state.selectedFacebookConversationId === conversationId) {
+            const badge = document.getElementById("fb-conversation-status-badge");
+            if (badge) {
+                badge.textContent = "OPEN";
+                badge.classList.remove("amber");
+                badge.classList.add("cyan");
+            }
         }
         if (persist) {
             fetchJSON(`/facebook/conversations/${encodeURIComponent(conversationId)}/read`, { method: "POST" })

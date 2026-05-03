@@ -4260,13 +4260,14 @@
         if (!completed.length && !active.length && !failed.length) {
             return `<div class="hud-card p-8 text-center text-hud-muted text-sm">Chưa có video hoàn tất.</div>`;
         }
-        const skeletons = active.map((job) => {
+        const skeletons = active.flatMap((job) => {
             const request = job.request || {};
             const pct = flowkitProgressValue(job);
             const progress = job.progress || [];
             const last = progress[progress.length - 1] || {};
-            return `
-                <article class="flowkit-result-card hud-card p-4 overflow-hidden" data-flowkit-card="active-${escapeHtml(job.job_id || "")}" style="border-color: rgba(0, 240, 255, 0.25);">
+            const count = Math.max(1, Math.min(Number(request.output_count || 1), 4));
+            return Array.from({ length: count }, (_, index) => `
+                <article class="flowkit-result-card hud-card p-4 overflow-hidden" data-flowkit-card="active-${escapeHtml(job.job_id || "")}-${index}" style="border-color: rgba(0, 240, 255, 0.25);">
                     <span class="c-tl"></span><span class="c-br"></span>
                     <div class="${request.orientation === "VERTICAL" ? "aspect-[9/16] max-h-[520px]" : "aspect-video"} border border-hud-cyan/20 bg-black/50 relative grid place-items-center overflow-hidden">
                         <div class="absolute inset-0 opacity-30 animate-pulse" style="background: linear-gradient(90deg, transparent, rgba(0,240,255,.18), transparent);"></div>
@@ -4278,10 +4279,13 @@
                             <div class="mt-3 text-[10px] text-hud-muted uppercase-wide">${escapeHtml(last.stage || "processing")}</div>
                         </div>
                     </div>
-                    <div class="mt-3 text-white font-black text-sm truncate">${escapeHtml(request.title || job.job_id || "FlowKit Video")}</div>
+                    <div class="mt-3 flex items-center gap-2">
+                        <div class="text-white font-black text-sm truncate flex-1">${escapeHtml(request.title || job.job_id || "FlowKit Video")}</div>
+                        ${count > 1 ? `<span class="badge cyan shrink-0">VAR ${index + 1}/${count}</span>` : ""}
+                    </div>
                     <div class="mt-1 text-[10px] text-hud-muted truncate">${escapeHtml(last.detail || "Đang tạo video...")}</div>
                 </article>
-            `;
+            `);
         }).join("");
         const failedCards = failed.map((job) => {
             const request = job.request || {};
@@ -4307,11 +4311,15 @@
             `;
         }).join("");
         const resultCards = completed.map(({ job, request, videoUrl, index }) => {
+            const outputCount = Math.max(Number(request.output_count || 1), Array.isArray(job.outputs) ? job.outputs.length : 1);
             return `
                 <article class="flowkit-result-card hud-card p-4" data-flowkit-card="result-${escapeHtml(job.job_id || "")}-${index}" style="border-color: rgba(0, 240, 255, 0.25);">
                     <span class="c-tl"></span><span class="c-br"></span>
                     <video src="${escapeHtml(videoUrl)}" controls class="w-full ${request.orientation === "VERTICAL" ? "aspect-[9/16] max-h-[520px]" : "aspect-video"} bg-black border border-hud-cyan/20 object-contain"></video>
-                    <div class="mt-3 text-white font-black text-sm truncate">${escapeHtml(request.title || job.job_id)}${index ? ` #${index + 1}` : ""}</div>
+                    <div class="mt-3 flex items-center gap-2">
+                        <div class="text-white font-black text-sm truncate flex-1">${escapeHtml(request.title || job.job_id)}${outputCount > 1 ? ` #${index + 1}` : ""}</div>
+                        ${outputCount > 1 ? `<span class="badge cyan shrink-0">VARIANT ${index + 1}</span>` : ""}
+                    </div>
                     <div class="mt-2 flex gap-2">
                         <a href="${escapeHtml(videoUrl)}" download target="_blank" rel="noopener noreferrer" class="btn-ghost flex-1 px-3 py-2 text-[10px] uppercase-wide font-bold text-center"><i class="fa-solid fa-download"></i> Download</a>
                         <button class="flowkit-regenerate btn-ghost px-3 py-2 text-[10px] uppercase-wide font-bold" data-job-id="${escapeHtml(job.job_id)}"><i class="fa-solid fa-rotate-right"></i> Tạo lại</button>

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.logging import get_logger
 from app.postgres import get_connection, serialize_json
-from Flowkit.flowkit_client import CharacterInput, FlowKitClient, SceneInput, VideoResult
+from Flowkit.flowkit_client import CharacterInput, FlowKitClient, SceneInput, SceneResult, VideoResult
 
 
 settings = get_settings()
@@ -301,6 +301,55 @@ def _simple_video_prompt(prompt: str, orientation: str) -> str:
     )
 
 
+def _variant_video_prompt(base_prompt: str, index: int, total: int, orientation: str) -> str:
+    variants = [
+        "Use a slow cinematic push-in with gentle subject motion.",
+        "Use a subtle side dolly move with natural environmental motion.",
+        "Use a soft handheld commercial shot with a polished final hold.",
+        "Use a close-up reveal, then ease back into a wider final composition.",
+    ]
+    return (
+        f"{_simple_video_prompt(base_prompt, orientation)}\n"
+        f"Variant {index + 1}/{total}: {variants[index % len(variants)]} "
+        "Keep the same first-frame identity and visual continuity; do not change the subject."
+    )
+
+
+def _scene_media(scene: dict[str, Any], orientation: str, media_type: str) -> tuple[str, str]:
+    prefix = "vertical" if orientation == "VERTICAL" else "horizontal"
+    media_id = str(scene.get(f"{prefix}_{media_type}_media_id") or "")
+    url = str(scene.get(f"{prefix}_{media_type}_url") or "")
+    if orientation != "VERTICAL":
+        media_id = media_id or str(scene.get(f"{media_type}_media_id") or scene.get("media_id") or "")
+        url = url or str(scene.get(f"{media_type}_url") or scene.get("output_url") or scene.get("url") or "")
+    return media_id, url
+
+
+def _crop_coordinates(file_path: str, orientation: str) -> dict[str, float] | None:
+    if orientation != "VERTICAL":
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(file_path) as image:
+            width, height = image.size
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    target = 9 / 16
+    aspect = width / height
+    if aspect > target:
+        crop_width = height * target
+        left = (width - crop_width) / 2 / width
+        return {"top": 0, "left": round(left, 6), "bottom": 1, "right": round(1 - left, 6)}
+    if aspect < target:
+        crop_height = width / target
+        top = (height - crop_height) / 2 / height
+        return {"top": round(top, 6), "left": 0, "bottom": round(1 - top, 6), "right": 1}
+    return {"top": 0, "left": 0, "bottom": 1, "right": 1}
+
+
 async def _ensure_flowkit_project(job_id: str, request: FlowKitGenerateRequest) -> str:
     if request.project_id:
         return request.project_id
@@ -330,6 +379,131 @@ async def _ensure_flowkit_project(job_id: str, request: FlowKitGenerateRequest) 
     return project_id
 
 
+async def _run_batch_variant_job(job_id: str, request: FlowKitGenerateRequest, output_count: int) -> list[VideoResult]:
+    if not request.scenes:
+        raise RuntimeError("At least one scene is required.")
+    client = _client()
+    orientation = "VERTICAL" if str(request.orientation or "").upper() in {"VERTICAL", "PORTRAIT", "9:16"} else "HORIZONTAL"
+    project_id = await _ensure_flowkit_project(job_id, request)
+    title = request.title
+    source_scene = request.scenes[0]
+    _update_progress(job_id, "video", f"Creating shared video container in project {project_id}")
+    video = await client.create_video_container(project_id, title, orientation=orientation)
+    video_id = str(video.get("id") or "")
+    if not video_id:
+        raise RuntimeError(f"FlowKit create video returned no id: {video}")
+
+    image_media_id = ""
+    image_url = ""
+    crop = _crop_coordinates(source_scene.upload_image_path, orientation) if source_scene.upload_image_path else None
+
+    if source_scene.upload_image_path:
+        _update_progress(job_id, "images", "Uploading one source image for all variants")
+        upload = await client.upload_image_file(source_scene.upload_image_path, project_id)
+        image_media_id = str(upload.get("media_id") or upload.get("id") or "")
+        image_url = str(upload.get("url") or upload.get("image_url") or "")
+        if not image_media_id:
+            raise RuntimeError(f"FlowKit image upload returned no media id: {upload}")
+    else:
+        _update_progress(job_id, "images", "Generating one source image for all variants")
+        seed_scene = await client.create_scene(
+            video_id=video_id,
+            prompt=source_scene.prompt,
+            image_prompt=source_scene.image_prompt or source_scene.prompt,
+            video_prompt=source_scene.video_prompt,
+            display_order=output_count,
+            chain_type="ROOT",
+            orientation=orientation,
+        )
+        seed_scene_id = str(seed_scene.get("id") or "")
+        image_req = await client.submit_request(
+            req_type="GENERATE_IMAGE",
+            scene_id=seed_scene_id,
+            video_id=video_id,
+            project_id=project_id,
+            orientation=orientation,
+        )
+        await client.poll_request(
+            str(image_req.get("id")),
+            client.image_timeout,
+            "Batch source image",
+            on_progress=lambda detail: _update_progress(job_id, "images", f"Source image: {detail}"),
+        )
+        seed_state = await client.get_scene(seed_scene_id)
+        image_media_id, image_url = _scene_media(seed_state, orientation, "image")
+        if not image_media_id:
+            raise RuntimeError("Source image generation completed but returned no image media id.")
+
+    orient_prefix = "vertical" if orientation == "VERTICAL" else "horizontal"
+    scenes: list[dict[str, Any]] = []
+    scene_results: list[SceneResult] = []
+    _update_progress(job_id, "scenes", f"Creating {output_count} variant scenes using one source image")
+    for index in range(output_count):
+        scene = await client.create_scene(
+            video_id=video_id,
+            prompt=source_scene.prompt,
+            video_prompt=_variant_video_prompt(source_scene.prompt, index, output_count, orientation),
+            image_prompt=source_scene.image_prompt or source_scene.prompt,
+            display_order=index,
+            chain_type="ROOT",
+            orientation=orientation,
+        )
+        scene_id = str(scene.get("id") or "")
+        update_payload: dict[str, Any] = {
+            f"{orient_prefix}_image_media_id": image_media_id,
+            f"{orient_prefix}_image_status": "COMPLETED",
+        }
+        if crop:
+            update_payload[f"{orient_prefix}_image_crop_coordinates"] = json.dumps(crop, separators=(",", ":"))
+        await client.update_scene(scene_id, **update_payload)
+        scenes.append(scene)
+        scene_results.append(SceneResult(id=scene_id, prompt=source_scene.prompt, image_url=image_url, image_media_id=image_media_id, status="IMAGE_READY"))
+
+    _update_progress(job_id, "videos", f"Queueing {output_count} video variants in one batch")
+    batch_requests = [
+        {
+            "type": "GENERATE_VIDEO",
+            "orientation": orientation,
+            "scene_id": str(scene.get("id") or ""),
+            "project_id": project_id,
+            "video_id": video_id,
+        }
+        for scene in scenes
+    ]
+    await client.submit_batch(batch_requests)
+    deadline = asyncio.get_running_loop().time() + client.video_timeout
+    while True:
+        status = await client.get_batch_status(video_id=video_id, req_type="GENERATE_VIDEO", orientation=orientation)
+        total = max(1, int(status.get("total") or output_count))
+        completed = int(status.get("completed") or 0)
+        failed = int(status.get("failed") or 0)
+        processing = int(status.get("processing") or 0)
+        percent = min(99, round(((completed + failed + processing * 0.5) / total) * 100))
+        _update_progress(job_id, "videos", f"Batch video progress {percent}% ({completed}/{total} completed, {processing} processing)")
+        if status.get("done"):
+            if failed:
+                raise RuntimeError(f"Batch video generation completed with failed requests: {status}")
+            break
+        if asyncio.get_running_loop().time() > deadline:
+            raise TimeoutError(f"Batch video generation timeout after {client.video_timeout}s: {status}")
+        await asyncio.sleep(client.poll_interval)
+
+    scene_states = {str(scene.get("id") or ""): scene for scene in await client.list_scenes(video_id)}
+    results: list[VideoResult] = []
+    for index, scene_result in enumerate(scene_results):
+        state = scene_states.get(scene_result.id) or await client.get_scene(scene_result.id)
+        video_media_id, video_url = _scene_media(state, orientation, "video")
+        if not video_url:
+            raise RuntimeError(f"Variant {index + 1} completed but returned no video URL.")
+        scene_result.video_media_id = video_media_id
+        scene_result.video_url = video_url
+        scene_result.status = "VIDEO_READY"
+        result = VideoResult(project_id=project_id, video_id=video_id, status="COMPLETED")
+        result.scenes.append(scene_result)
+        results.append(result)
+    return results
+
+
 async def _run_generate_job(job_id: str, request: FlowKitGenerateRequest) -> None:
     job = _get_job(job_id)
     if job:
@@ -337,6 +511,10 @@ async def _run_generate_job(job_id: str, request: FlowKitGenerateRequest) -> Non
         _upsert_job(job)
     try:
         output_count = max(1, min(int(request.output_count or 1), 4))
+        if output_count > 1 and not request.upscale_4k and not request.characters and str(request.video_gen_mode or "i2v").lower() != "r2v":
+            results = await _run_batch_variant_job(job_id, request, output_count)
+            _finish_multi_output_job(job_id, results)
+            return
         project_id = await _ensure_flowkit_project(job_id, request) if output_count > 1 else request.project_id
 
         async def run_output(index: int) -> VideoResult:

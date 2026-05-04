@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import shutil
 import tempfile
@@ -283,12 +284,22 @@ def _publish_single_page(
     response.raise_for_status()
     payload = response.json()
     post_id = str(payload.get("id") or "")
+    post_info: dict[str, Any] = {}
+    if post_id:
+        with contextlib.suppress(Exception):
+            post_info_response = client.get(
+                f"{base_url}/{post_id}",
+                params={"fields": "id,permalink_url", "access_token": token},
+            )
+            post_info_response.raise_for_status()
+            post_info = post_info_response.json()
+    permalink = str(post_info.get("permalink_url") or "")
     return {
         "page_id": page_id,
         "page_name": variant.get("page_name") or page.get("name") or "",
         "status": "scheduled" if scheduled_ts else "published",
         "facebook_post_id": post_id,
-        "permalink": f"https://www.facebook.com/{post_id}" if post_id else "",
+        "permalink": permalink or (f"https://www.facebook.com/{post_id}" if post_id else ""),
         "published_at": "" if scheduled_ts else _now(),
         "scheduled_at": scheduled_at if scheduled_ts else "",
     }
@@ -336,6 +347,9 @@ def _run_publish_job(job_id: str) -> None:
     job["completed_at"] = _now()
     job["results"] = results
     _upsert_job(job)
+    for image in job.get("images", []):
+        if path := _safe_image_path(str(image.get("image_id") or "")):
+            path.unlink(missing_ok=True)
 
 
 def _select_pages(page_ids: list[str], groups: list[str]) -> tuple[list[dict[str, Any]], list[str]]:

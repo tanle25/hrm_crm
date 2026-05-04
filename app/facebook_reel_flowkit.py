@@ -372,6 +372,10 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
             Path(path).unlink(missing_ok=True)
 
 
+def _run_flowkit_reel_job_sync(job_id: str) -> None:
+    asyncio.run(_run_flowkit_reel_job(job_id))
+
+
 async def _publish_flowkit_reel_job(job_id: str, indexes: list[int]) -> None:
     job = _flowkit_reel_job(job_id)
     if not job:
@@ -452,6 +456,10 @@ async def _publish_flowkit_reel_job(job_id: str, indexes: list[int]) -> None:
             path.unlink(missing_ok=True)
 
 
+def _publish_flowkit_reel_job_sync(job_id: str, indexes: list[int]) -> None:
+    asyncio.run(_publish_flowkit_reel_job(job_id, indexes))
+
+
 async def _regenerate_flowkit_reel_item(job_id: str, index: int) -> None:
     job = _flowkit_reel_job(job_id)
     if not job:
@@ -491,6 +499,10 @@ async def _regenerate_flowkit_reel_item(job_id: str, index: int) -> None:
         item["error"] = str(exc)
         job["status"] = "ready_for_review"
         _upsert_job(job)
+
+
+def _regenerate_flowkit_reel_item_sync(job_id: str, index: int) -> None:
+    asyncio.run(_regenerate_flowkit_reel_item(job_id, index))
 
 
 @router.post("/jobs", response_model=FacebookReelFlowKitJobCreateResponse)
@@ -566,7 +578,7 @@ async def create_facebook_reel_flowkit_job(
         "warnings": warnings,
     }
     await asyncio.to_thread(_upsert_job, job)
-    background_tasks.add_task(_run_flowkit_reel_job, job_id)
+    background_tasks.add_task(_run_flowkit_reel_job_sync, job_id)
     return FacebookReelFlowKitJobCreateResponse(job_id=job_id, status="queued", created_at=now, updated_at=now, data=job)
 
 
@@ -589,7 +601,7 @@ async def publish_facebook_reel_flowkit_job(
             raise HTTPException(status_code=400, detail=f"Unknown review item indexes: {missing}")
     job["status"] = "publishing"
     await asyncio.to_thread(_upsert_job, job)
-    background_tasks.add_task(_publish_flowkit_reel_job, job_id, request.indexes)
+    background_tasks.add_task(_publish_flowkit_reel_job_sync, job_id, request.indexes)
     return {"job_id": job_id, "status": "publishing", "indexes": request.indexes}
 
 
@@ -607,5 +619,5 @@ async def regenerate_facebook_reel_flowkit_item(
         raise HTTPException(status_code=400, detail=f"Unknown review item index: {request.index}")
     job["status"] = "regenerating"
     await asyncio.to_thread(_upsert_job, job)
-    background_tasks.add_task(_regenerate_flowkit_reel_item, job_id, request.index)
+    background_tasks.add_task(_regenerate_flowkit_reel_item_sync, job_id, request.index)
     return {"job_id": job_id, "status": "regenerating", "index": request.index}

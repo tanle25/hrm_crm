@@ -492,7 +492,7 @@
     }
 
     async function readFacebookCreateImages(files) {
-        const selected = Array.from(files || []).filter((file) => file.type.startsWith("image/")).slice(0, 6);
+        const selected = Array.from(files || []).filter((file) => file.type.startsWith("image/")).slice(0, 10);
         const uploadResult = await uploadFacebookCreateImages(selected);
         const uploadedByName = new Map((uploadResult.images || []).map((item) => [item.name, item]));
         if ((uploadResult.warnings || []).length) {
@@ -524,15 +524,18 @@
 
     function facebookCreatePayload() {
         const brief = document.getElementById("fb-create-brief")?.value.trim() || "";
+        const sampleContent = document.getElementById("fb-create-sample-content")?.value.trim() || "";
         const pageIds = Array.from(document.querySelectorAll(".fb-create-page-checkbox:checked")).map((input) => input.value.trim()).filter(Boolean);
         const groups = state.selectedFacebookCreateGroups || [];
         const hashtagCount = Number.parseInt(document.getElementById("fb-create-hashtag-count")?.value || "5", 10);
         const scheduleMode = document.querySelector('input[name="schedule"]:checked')?.value || "now";
         return {
             brief,
+            sample_content: sampleContent,
             page_ids: pageIds,
             groups,
             tone: document.getElementById("fb-create-tone")?.value || "",
+            image_rotation: document.getElementById("fb-create-image-rotation")?.value || "rotate_single",
             hashtag_count: Number.isFinite(hashtagCount) ? Math.max(0, Math.min(12, hashtagCount)) : 5,
             schedule_mode: scheduleMode,
             scheduled_at: state.facebookCreateScheduledAt ? new Date(state.facebookCreateScheduledAt).toISOString() : "",
@@ -678,6 +681,7 @@
                                                     ${escapeHtml(post.group || "Chưa có nhóm")} · core #${Number(post.core_index || 0) + 1}
                                                     ${post.review?.rewritten ? `<span class="text-hud-amber"> · đã rewrite</span>` : ""}
                                                 </div>
+                                                ${(post.assigned_image_names || []).length ? `<div class="text-[10px] text-hud-green truncate mt-1"><i class="fa-solid fa-image"></i> ${escapeHtml((post.assigned_image_names || []).join(", "))}</div>` : ""}
                                             </div>
                                             <button type="button" class="fb-preview-edit btn-ghost px-2 py-1 text-[10px]" data-index="${index}" title="Chỉnh sửa"><i class="fa-solid fa-pen"></i></button>
                                             <button type="button" class="fb-preview-copy btn-ghost px-2 py-1 text-[10px]" data-index="${index}"><i class="fa-solid fa-copy"></i></button>
@@ -6159,8 +6163,10 @@
                     method: "POST",
                     body: JSON.stringify({
                         brief: payload.brief,
+                        sample_content: payload.sample_content,
                         variants: state.facebookCreatePreview.posts,
                         images: payload.images,
+                        image_rotation: payload.image_rotation,
                         publish_status: payload.schedule_mode === "now" ? "publish" : "scheduled",
                         scheduled_at: payload.scheduled_at,
                         schedule_mode: payload.schedule_mode === "best_time" ? "best_time" : (payload.schedule_mode === "scheduled" ? "manual" : ""),

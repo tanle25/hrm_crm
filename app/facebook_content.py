@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import shutil
 import tempfile
@@ -42,9 +43,11 @@ class FacebookContentImageInput(BaseModel):
 
 class FacebookContentVariantRequest(BaseModel):
     brief: str = Field(..., min_length=1, max_length=8000)
+    sample_content: str = Field(default="", max_length=8000)
     page_ids: list[str] = Field(default_factory=list)
     groups: list[str] = Field(default_factory=list)
     images: list[FacebookContentImageInput] = Field(default_factory=list)
+    image_rotation: Literal["rotate_single", "all"] = "rotate_single"
     tone: str = ""
     hashtag_count: int = Field(default=5, ge=0, le=12)
     core_caption_count: int | None = Field(default=None, ge=1, le=40)
@@ -70,6 +73,8 @@ class FacebookPostVariant(BaseModel):
     caption: str = ""
     hashtags: list[str] = Field(default_factory=list)
     core_index: int = 0
+    assigned_image_ids: list[str] = Field(default_factory=list)
+    assigned_image_names: list[str] = Field(default_factory=list)
 
 
 class FacebookContentVariantResponse(BaseModel):
@@ -99,8 +104,10 @@ class FacebookContentImageUploadResponse(BaseModel):
 
 class FacebookContentJobCreateRequest(BaseModel):
     brief: str = Field(..., min_length=1, max_length=8000)
+    sample_content: str = Field(default="", max_length=8000)
     variants: list[FacebookPostVariant] = Field(default_factory=list)
     images: list[FacebookContentImageInput] = Field(default_factory=list)
+    image_rotation: Literal["rotate_single", "all"] = "rotate_single"
     publish_status: Literal["draft", "publish", "scheduled"] = "publish"
     scheduled_at: str = ""
     schedule_mode: Literal["manual", "best_time", ""] = ""
@@ -226,6 +233,35 @@ def _page_token_map() -> dict[str, dict[str, Any]]:
     return {str(page.get("page_id") or ""): page for page in _list_facebook_page_records()}
 
 
+def _assign_images_to_variants(
+    variants: list[dict[str, Any]],
+    images: list[dict[str, Any]],
+    mode: str,
+    seed: str = "",
+) -> list[dict[str, Any]]:
+    if not images:
+        return variants
+    image_items = [item for item in images if str(item.get("image_id") or "").strip()]
+    if not image_items:
+        return variants
+    use_all = mode == "all" or len(image_items) == 1
+    rotation_order = sorted(
+        image_items,
+        key=lambda item: hashlib.sha1(f"{seed}:{item.get('image_id') or item.get('name') or ''}".encode("utf-8")).hexdigest(),
+    )
+    updated: list[dict[str, Any]] = []
+    for index, variant in enumerate(variants):
+        item = dict(variant)
+        if use_all:
+            selected = image_items
+        else:
+            selected = [rotation_order[index % len(rotation_order)]]
+        item["assigned_image_ids"] = [str(image.get("image_id") or "") for image in selected]
+        item["assigned_image_names"] = [str(image.get("name") or image.get("image_id") or "") for image in selected]
+        updated.append(item)
+    return updated
+
+
 def _publish_single_page(
     client: httpx.Client,
     page: dict[str, Any],
@@ -312,11 +348,25 @@ def _run_publish_job(job_id: str) -> None:
     job["status"] = "posting"
     _upsert_job(job)
     pages = _page_token_map()
-    image_paths = [path for image in job.get("images", []) if (path := _safe_image_path(str(image.get("image_id") or "")))]
+    images = job.get("images", []) if isinstance(job.get("images"), list) else []
+    raw_variants = job.get("variants", []) if isinstance(job.get("variants"), list) else []
+    variants = raw_variants if all(variant.get("assigned_image_ids") for variant in raw_variants) else _assign_images_to_variants(
+        raw_variants,
+        images,
+        str(job.get("image_rotation") or "rotate_single"),
+        job_id,
+    )
+    image_paths_by_id = {
+        str(image.get("image_id") or ""): path
+        for image in images
+        if (path := _safe_image_path(str(image.get("image_id") or "")))
+    }
     results = []
     with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
-        for variant in job.get("variants", []):
+        for variant in variants:
             page_id = str(variant.get("page_id") or "")
+            assigned_ids = [str(item) for item in variant.get("assigned_image_ids") or []]
+            image_paths = [image_paths_by_id[item] for item in assigned_ids if item in image_paths_by_id]
             try:
                 result = _publish_single_page(
                     client,
@@ -334,7 +384,11 @@ def _run_publish_job(job_id: str) -> None:
                     "failed_at": _now(),
                 }
             results.append(result)
+            if assigned_ids:
+                results[-1]["assigned_image_ids"] = assigned_ids
+                results[-1]["assigned_image_names"] = variant.get("assigned_image_names") or []
             job["results"] = results
+            job["variants"] = variants
             job["status"] = "posting"
             _upsert_job(job)
     failures = [item for item in results if item.get("status") == "failed"]
@@ -399,9 +453,16 @@ async def preview_facebook_content_variants(request: FacebookContentVariantReque
         pages=pages,
         groups=request.groups,
         tone=request.tone,
+        sample_content=request.sample_content,
         image_count=len(request.images),
         hashtag_count=request.hashtag_count,
         core_count=request.core_caption_count,
+    )
+    result["posts"] = _assign_images_to_variants(
+        result.get("posts") or [],
+        [item.model_dump() for item in request.images],
+        request.image_rotation,
+        request.brief,
     )
     result["warnings"] = [*warnings, *(result.get("warnings") or [])]
     return FacebookContentVariantResponse(**result)
@@ -462,8 +523,10 @@ async def create_facebook_content_job(request: FacebookContentJobCreateRequest, 
         "created_at": now,
         "updated_at": now,
         "brief": request.brief,
+        "sample_content": request.sample_content,
         "variants": [item.model_dump() for item in request.variants],
         "images": [item.model_dump() for item in request.images],
+        "image_rotation": request.image_rotation,
         "publish_status": request.publish_status,
         "scheduled_at": request.scheduled_at,
         "schedule_mode": request.schedule_mode,

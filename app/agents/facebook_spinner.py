@@ -24,6 +24,7 @@ Nguyên tắc:
 - CTA nên định dạng thành block cuối 2-3 dòng có emoji phù hợp, ví dụ: 📩 Inbox/Zalo..., 🚚 Giao hàng toàn quốc, ✅ Nhận hàng kiểm tra rồi thanh toán.
 - Không lặp CTA trong body. Nếu caption đã có CTA thì trường cta chỉ tóm lại CTA đó, không viết thêm câu khác.
 - Nếu có nhiều nhóm page, tạo angle hợp từng nhóm.
+- Nếu có nội dung mẫu, phân tích cấu trúc, nhịp viết, cách xuống dòng, cách CTA và mức emoji để viết theo phong cách đó; không sao chép nguyên văn mẫu.
 - Không nhắc rằng đây là biến thể/spin/AI.
 - Trả về JSON hợp lệ, không thêm giải thích.
 
@@ -430,6 +431,7 @@ def run(
     pages: list[dict[str, Any]],
     groups: list[str] | None = None,
     tone: str = "",
+    sample_content: str = "",
     image_count: int = 0,
     hashtag_count: int = 5,
     core_count: int | None = None,
@@ -442,6 +444,7 @@ def run(
     fallback_cores = _fallback_core_captions(brief, group_names, target_core_count, hashtag_count)
     prompt = (
         f"Brief: {_clean_text(brief, 5000)}\n"
+        f"Nội dung mẫu để học style/format, không copy nguyên văn: {_clean_multiline(sample_content, 4000) or 'Không có'}\n"
         f"Tone ưu tiên: {_clean_text(tone, 160) or 'tự nhiên, bán hàng vừa phải'}\n"
         f"Số page đích: {page_count}\n"
         f"Nhóm page: {group_names}\n"

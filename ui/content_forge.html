@@ -1283,6 +1283,16 @@
                                 </div>
 
                                 <div>
+                                    <label class="text-[10px] font-bold uppercase-widest mb-2 flex items-center gap-2" style="color:#4a9eff;">
+                                        <i class="fa-solid fa-file-lines"></i>
+                                        <span>NỘI DUNG MẪU / STYLE REFERENCE</span>
+                                    </label>
+                                    <div class="input-wrap">
+                                        <textarea id="fb-create-sample-content" rows="5" placeholder="Dán 1-2 bài mẫu tốt. LLM sẽ học cấu trúc, nhịp viết, cách CTA và emoji; không copy nguyên văn." class="hud-textarea w-full min-h-[130px] px-4 py-3 text-sm"></textarea>
+                                    </div>
+                                </div>
+
+                                <div>
                                     <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-image"></i> ẢNH ĐÍNH KÈM</label>
                                     <label class="block rounded-2xl border border-hud-fb/25 bg-[#101923] px-4 py-4 cursor-pointer hover:bg-[#162333] hover:border-hud-fb/60 transition">
                                         <input id="fb-create-images" type="file" accept="image/*" multiple class="hidden"/>
@@ -1290,7 +1300,7 @@
                                             <span class="w-10 h-10 rounded-full bg-[#24384f] flex items-center justify-center"><i class="fa-solid fa-image text-[#45bd62]"></i></span>
                                             <div class="flex-1 min-w-0">
                                                 <div class="text-white font-bold">Ảnh/video</div>
-                                                <div class="text-hud-muted text-[10px]">Chọn nhiều ảnh, tối đa 6 ảnh. Ảnh sẽ hiển thị như composer Facebook.</div>
+                                                <div class="text-hud-muted text-[10px]">Chọn nhiều ảnh, tối đa 10 ảnh. Có thể xoay ảnh tự động theo từng page.</div>
                                             </div>
                                             <i class="fa-solid fa-plus text-hud-fb"></i>
                                         </div>
@@ -1299,7 +1309,7 @@
 
                                 <div id="fb-create-image-preview" class="hidden rounded-2xl border border-hud-fb/20 bg-[#0f1720] p-3"></div>
 
-                                <div class="grid grid-cols-3 gap-5">
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-5">
                                     <div>
                                         <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-comment-dots"></i> TONE</label>
                                         <select id="fb-create-tone" class="hud-select w-full px-4 py-3 text-sm">
@@ -1323,6 +1333,13 @@
                                         <div class="input-wrap">
                                             <input id="fb-create-hashtag-count" type="text" value="5" class="hud-input w-full px-4 py-3 text-sm" placeholder="Số hashtag"/>
                                         </div>
+                                    </div>
+                                    <div>
+                                        <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;"><i class="fa-solid fa-shuffle"></i> XOAY ẢNH</label>
+                                        <select id="fb-create-image-rotation" class="hud-select w-full px-4 py-3 text-sm">
+                                            <option value="rotate_single" selected>1 ảnh/page</option>
+                                            <option value="all">Tất cả ảnh/post</option>
+                                        </select>
                                     </div>
                                 </div>
 

@@ -5425,7 +5425,9 @@
                                         <select id="fb-reels-flowkit-videos-per-page" class="hud-select w-full px-4 py-3 text-sm">
                                             <option value="1">1 video/page</option>
                                             <option value="2">2 video/page</option>
-                                            <option value="3">3 video/page</option>
+                                            <option value="3" selected>3 video/page · khuyến nghị</option>
+                                            <option value="4">4 video/page</option>
+                                            <option value="5">5 video/page · batch tối đa</option>
                                         </select>
                                     </div>
                                     <div>

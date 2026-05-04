@@ -31,6 +31,7 @@ settings = get_settings()
 router = APIRouter(prefix=f"{settings.api_prefix}/facebook/reels/flowkit", tags=["facebook-reel-flowkit"])
 FLOWKIT_REEL_UPLOAD_DIR = Path("data/facebook_reel_flowkit_uploads")
 FLOWKIT_REEL_DOWNLOAD_DIR = Path("data/facebook_reel_flowkit_downloads")
+MAX_REEL_VARIANTS_PER_PAGE = 5
 PRODUCT_IMAGE_GUARD = (
     "Product fidelity rules: preserve the exact product identity, shape, proportions, color, labels, logo placement, "
     "material, packaging geometry, count of items, and visible defects from the reference/brief. Do not redesign the "
@@ -133,7 +134,7 @@ def _build_reel_plan(
     expanded = [
         {"page": page, "variant": variant}
         for page in pages
-        for variant in range(max(1, min(videos_per_page, 3)))
+        for variant in range(max(1, min(videos_per_page, MAX_REEL_VARIANTS_PER_PAGE)))
     ]
     fallback = {
         "items": [
@@ -178,7 +179,10 @@ def _build_reel_plan(
         if isinstance(items, list) and items:
             by_page = {str(page.get("page_id")): page for page in pages}
             normalized: list[dict[str, Any]] = []
-            for index, item in enumerate(items[: len(expanded)]):
+            source_items = [item for item in items if isinstance(item, dict)]
+            if len(source_items) < len(expanded):
+                source_items = [*source_items, *fallback["items"][len(source_items) :]]
+            for index, item in enumerate(source_items[: len(expanded)]):
                 page_id = str(item.get("page_id") or expanded[index]["page"].get("page_id") or "")
                 page = by_page.get(page_id) or expanded[index]["page"]
                 image_index = item.get("image_index")
@@ -250,7 +254,7 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
         pages, warnings = _select_pages(request.get("page_ids") or [], request.get("groups") or [])
         if not pages:
             raise RuntimeError("No Facebook pages matched the selected page_ids/groups.")
-        videos_per_page = max(1, min(int(request.get("videos_per_page") or 1), 3))
+        videos_per_page = max(1, min(int(request.get("videos_per_page") or 3), MAX_REEL_VARIANTS_PER_PAGE))
         plan = _build_reel_plan(
             pages=pages,
             brief=str(request.get("brief") or ""),
@@ -346,7 +350,7 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
                     break
                 await asyncio.sleep(client.poll_interval)
 
-        _job_progress(job, "videos", "Queueing FlowKit videos in batch...", 58)
+        _job_progress(job, "videos", f"Queueing {len(scenes)} FlowKit videos in one batch...", 58)
         await client.submit_batch([
             {
                 "type": "GENERATE_VIDEO",
@@ -553,7 +557,7 @@ async def create_facebook_reel_flowkit_job(
     groups: str = Form("[]"),
     publish_status: Literal["publish", "scheduled"] = Form("publish"),
     scheduled_at: str = Form(""),
-    videos_per_page: int = Form(1),
+    videos_per_page: int = Form(3),
     material: str = Form("realistic"),
     images: list[UploadFile] = File(default=[]),
 ) -> FacebookReelFlowKitJobCreateResponse:
@@ -604,7 +608,7 @@ async def create_facebook_reel_flowkit_job(
             "groups": selected_groups,
             "publish_status": publish_status,
             "scheduled_at": scheduled_at,
-            "videos_per_page": max(1, min(int(videos_per_page or 1), 3)),
+            "videos_per_page": max(1, min(int(videos_per_page or 3), MAX_REEL_VARIANTS_PER_PAGE)),
             "material": _normalize_flowkit_material(material),
             "image_count": len(upload_paths),
         },

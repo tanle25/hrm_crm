@@ -34,6 +34,7 @@ from app.facebook_pages import (
     list_facebook_pages,
     mark_facebook_conversation_read,
     process_facebook_webhook,
+    resubscribe_facebook_page_webhooks,
     send_facebook_message,
     sync_facebook_comments,
     sync_facebook_aggregate_stats,
@@ -580,6 +581,11 @@ async def connect_facebook_pages_endpoint(request: FacebookConnectRequest) -> Fa
         raise HTTPException(status_code=400, detail=str(error)) from error
     log.info("facebook_pages_connected", total=result.get("total"), batch_id=result.get("batch_id"))
     return FacebookConnectResponse(**result)
+
+
+@app.post(f"{settings.api_prefix}/facebook/pages/resubscribe-webhooks")
+async def resubscribe_facebook_page_webhooks_endpoint() -> dict:
+    return await asyncio.to_thread(resubscribe_facebook_page_webhooks)
 
 
 @app.get(f"{settings.api_prefix}/facebook/page-groups", response_model=FacebookPageGroupListResponse)
@@ -1335,4 +1341,7 @@ async def get_stats() -> StatsResponse:
 async def root() -> FileResponse:
     with suppress(Exception):
         start_metrics_server_once(settings.metrics_port)
-    return FileResponse(UI_DIR / "content_forge.html")
+    return FileResponse(
+        UI_DIR / "content_forge.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )

@@ -346,7 +346,7 @@ def _upsert_page(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _subscribe_page_webhook(client: httpx.Client, base_url: str, page_id: str, page_token: str) -> dict[str, Any]:
-    fields = "messages,message_echoes,messaging_postbacks"
+    fields = "messages,message_echoes,messaging_postbacks,feed"
     try:
         response = client.post(
             f"{base_url}/{page_id}/subscribed_apps",
@@ -444,6 +444,22 @@ def connect_facebook_pages(short_lived_token: str) -> dict[str, Any]:
         "batch_id": batch_id,
         "expires_in": token_payload.get("expires_in"),
     }
+
+
+def resubscribe_facebook_page_webhooks() -> dict[str, Any]:
+    settings = get_settings()
+    base_url = f"https://graph.facebook.com/{settings.facebook_graph_version}"
+    pages = [page for page in _list_facebook_page_records() if page.get("page_access_token")]
+    updated: list[dict[str, Any]] = []
+    with httpx.Client(timeout=30) as client:
+        for page in pages:
+            page_id = str(page.get("page_id") or "")
+            page_token = str(page.get("page_access_token") or "")
+            if not page_id or not page_token:
+                continue
+            webhook_status = _subscribe_page_webhook(client, base_url, page_id, page_token)
+            updated.append(_public_page(_upsert_page({**page, **webhook_status})))
+    return {"status": "completed", "total": len(updated), "pages": updated}
 
 
 def _insight_values(payload: dict[str, Any], metric: str) -> list[dict[str, Any]]:
@@ -643,6 +659,10 @@ def _parse_graph_time_utc(value: str | None) -> datetime | None:
 
 def _apply_read_state_to_conversation(conversation: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
     existing = existing or _get_cached_facebook_conversation(str(conversation.get("conversation_id") or "")) or {}
+    conversation["unread_count"] = _safe_int(existing.get("unread_count"))
+    conversation["status"] = existing.get("status") or ("unread" if conversation["unread_count"] else "open")
+    if existing.get("read_at"):
+        conversation["read_at"] = existing.get("read_at")
     read_at = _parse_graph_time_utc(str(existing.get("read_at") or ""))
     updated_time = _parse_graph_time_utc(str(conversation.get("updated_time") or ""))
     if read_at and updated_time and read_at >= updated_time:
@@ -1297,6 +1317,7 @@ def sync_facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, An
                             )
                         )
                         _upsert_facebook_comment(comments[-1])
+                        _publish_facebook_comment_event(comments[-1])
                     continue
 
                 comment_payload: dict[str, Any] | None = None
@@ -1333,12 +1354,24 @@ def sync_facebook_comments(limit: int = 50, max_pages: int = 25) -> dict[str, An
                         )
                     )
                     _upsert_facebook_comment(comments[-1])
+                    _publish_facebook_comment_event(comments[-1])
 
     if not comments and pages and not warnings:
         warnings.append("Graph API did not return comments for recent posts. Check whether the page has comments and whether pages_read_user_content is available for this app.")
 
     comments.sort(key=lambda item: item.get("created_time") or "", reverse=True)
-    return _facebook_comments_payload(comments[:limit], len(pages), warnings)
+    payload = _facebook_comments_payload(comments[:limit], len(pages), warnings)
+    publish_realtime_event(
+        "facebook:comments",
+        {
+            "type": "facebook.comments.sync.completed",
+            "comments": payload.get("comments") or [],
+            "totals": payload.get("totals") or {},
+            "total": payload.get("total") or 0,
+            "warnings": payload.get("warnings") or [],
+        },
+    )
+    return payload
 
 
 def _message_participant_name(participant: dict[str, Any]) -> str:
@@ -1629,10 +1662,10 @@ def _normalize_conversation(page: dict[str, Any], raw: dict[str, Any]) -> dict[s
         "customer_name": _message_participant_name(customer),
         "snippet": raw.get("snippet") or last_message.get("message") or last_message.get("fallback_label") or "",
         "updated_time": str(raw.get("updated_time") or last_message.get("created_time") or ""),
-        "unread_count": _safe_int(raw.get("unread_count")),
+        "unread_count": 0,
         "message_count": _safe_int(raw.get("message_count")) or len(messages),
         "messages": messages,
-        "status": "unread" if _safe_int(raw.get("unread_count")) else "open",
+        "status": "open",
     }
 
 
@@ -1724,6 +1757,22 @@ def _refresh_conversation_cache(
     return payload
 
 
+def _new_local_unread_count(existing: dict[str, Any], messages: list[dict[str, Any]]) -> int:
+    read_at = _parse_graph_time_utc(str(existing.get("read_at") or ""))
+    count = 0
+    for message in messages:
+        if str(message.get("direction") or "") != "inbound":
+            continue
+        message_id = str(message.get("message_id") or "")
+        if message_id and _get_cached_facebook_message(message_id):
+            continue
+        created_time = _parse_graph_time_utc(str(message.get("created_time") or ""))
+        if read_at and created_time and created_time <= read_at:
+            continue
+        count += 1
+    return count
+
+
 def mark_facebook_conversation_read(conversation_id: str) -> dict[str, Any]:
     conversation_id = (conversation_id or "").strip()
     if not conversation_id:
@@ -1777,6 +1826,31 @@ def _publish_facebook_conversation_synced(conversation: dict[str, Any], sync_job
             "conversation": conversation,
             "message": latest_message,
             "sync_job_id": sync_job_id,
+        },
+    )
+
+
+def _publish_facebook_comment_event(comment: dict[str, Any], event_type: str = "facebook.comment.upserted") -> None:
+    publish_realtime_event(
+        "facebook:comments",
+        {
+            "type": event_type,
+            "comment_id": comment.get("comment_id") or "",
+            "post_id": comment.get("post_id") or "",
+            "page_id": comment.get("page_id") or "",
+            "comment": comment,
+        },
+    )
+
+
+def _publish_facebook_stats_event(payload: dict[str, Any], event_type: str = "facebook.stats.updated") -> None:
+    publish_realtime_event(
+        "facebook:stats",
+        {
+            "type": event_type,
+            "stats": payload,
+            "days": payload.get("days") or 7,
+            "page_count": payload.get("page_count") or 0,
         },
     )
 
@@ -1933,7 +2007,13 @@ def sync_facebook_conversations(limit: int = 50, max_pages: int = 500, sync_job_
                                 message["sticker"] = extras["sticker"]
                             if extras.get("reply_to"):
                                 message["reply_to"] = extras["reply_to"]
-                        conversation = _apply_read_state_to_conversation(_normalize_conversation(page, item))
+                        normalized_conversation = _normalize_conversation(page, item)
+                        existing_conversation = _get_cached_facebook_conversation(str(normalized_conversation.get("conversation_id") or "")) or {}
+                        new_unread = _new_local_unread_count(existing_conversation, normalized_conversation.get("messages") or [])
+                        conversation = _apply_read_state_to_conversation(normalized_conversation, existing_conversation)
+                        if new_unread:
+                            conversation["unread_count"] = _safe_int(existing_conversation.get("unread_count")) + new_unread
+                            conversation["status"] = "unread"
                         conversations.append(conversation)
                         fetched_for_page += 1
                         _upsert_facebook_conversation(conversation)
@@ -2188,6 +2268,51 @@ def process_facebook_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     entries = payload.get("entry") or []
     processed = 0
     for entry in entries:
+        page_id_from_entry = str(entry.get("id") or "")
+        for change in entry.get("changes") or []:
+            if str(change.get("field") or "") != "feed":
+                continue
+            value = change.get("value") or {}
+            if str(value.get("item") or "") != "comment":
+                continue
+            comment_id = str(value.get("comment_id") or value.get("id") or "")
+            if not comment_id:
+                continue
+            page_id = page_id_from_entry or str(value.get("page_id") or "")
+            page = next((item for item in _list_facebook_page_records() if str(item.get("page_id") or "") == page_id), None) or {}
+            post_id = str(value.get("post_id") or value.get("parent_id") or "")
+            cached_post = _get_cached_facebook_post(post_id) or {}
+            sender = value.get("from") if isinstance(value.get("from"), dict) else {}
+            sender_id = str(value.get("sender_id") or sender.get("id") or "")
+            sender_name = str(value.get("sender_name") or sender.get("name") or "")
+            raw_created_time = value.get("created_time") or ""
+            if isinstance(raw_created_time, (int, float)):
+                created_time = datetime.fromtimestamp(raw_created_time, tz=timezone.utc).isoformat()
+            else:
+                created_time = str(raw_created_time or _now())
+            comment = {
+                "comment_id": comment_id,
+                "post_id": post_id,
+                "page_id": page_id,
+                "page_name": page.get("name") or cached_post.get("page_name") or "",
+                "page_picture_url": page.get("picture_url") or cached_post.get("page_picture_url") or "",
+                "author_id": sender_id,
+                "author_name": sender_name or "Facebook User",
+                "message": str(value.get("message") or ""),
+                "created_time": created_time,
+                "post_message": cached_post.get("message") or "",
+                "permalink_url": cached_post.get("permalink_url") or "",
+                "like_count": 0,
+                "reply_count": 0,
+                "sentiment": _comment_sentiment(str(value.get("message") or "")),
+                "status": "pending",
+                "raw": value,
+            }
+            if comment["sentiment"] == "positive":
+                comment["status"] = "auto"
+            _upsert_facebook_comment(comment)
+            _publish_facebook_comment_event(comment, "facebook.comment.webhook")
+            processed += 1
         for messaging in entry.get("messaging") or []:
             message = messaging.get("message") or {}
             message_id = str(message.get("mid") or "")
@@ -2398,4 +2523,5 @@ def sync_facebook_aggregate_stats(days: int = 7, max_pages: int = 25) -> dict[st
     warnings.extend(posts_payload.get("warnings") or [])
     payload = _facebook_stats_from_cached_posts(days, len(pages), warnings)
     _upsert_facebook_stats(cache_key, payload)
+    _publish_facebook_stats_event(payload)
     return payload

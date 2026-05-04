@@ -1,5 +1,6 @@
 (function () {
     const API_BASE = "/api";
+    document.title = "HRM";
     const PAGE_STEPS = [
         "deduplicator",
         "fetcher",
@@ -41,12 +42,24 @@
         jobsSortKey: "",
         jobsSortDir: "asc",
         selectedFacebookCommentId: "",
+        facebookCommentsPayload: null,
+        facebookCommentsSocket: null,
+        facebookCommentsSocketReconnectTimer: null,
+        facebookCommentsReconnectAttempts: 0,
+        facebookCommentsStreamActive: false,
+        facebookCommentsRenderTimer: null,
         facebookPostsSyncing: false,
         facebookCommentsSyncing: false,
         facebookPostsAutoSynced: false,
         facebookCommentsAutoSynced: false,
         facebookPostsOffset: 0,
         facebookPostsLimit: 20,
+        facebookStatsPayload: null,
+        facebookStatsSocket: null,
+        facebookStatsSocketReconnectTimer: null,
+        facebookStatsReconnectAttempts: 0,
+        facebookStatsStreamActive: false,
+        facebookStatsRenderTimer: null,
         facebookStatsSyncing: false,
         facebookStatsAutoSynced: false,
         facebookPageGroupFilter: "",
@@ -62,6 +75,9 @@
         facebookMessagesSyncJobId: "",
         facebookMessagesSyncing: false,
         facebookMessagesAutoSynced: false,
+        facebookMessageNotifiedIds: {},
+        facebookMessageRealtimeSeenIds: {},
+        originalDocumentTitle: "HRM",
         facebookConversationDetails: {},
         facebookConversationDetailPending: {},
         facebookMessageDraftMedia: [],
@@ -2612,17 +2628,83 @@
         `;
     }
 
+    function closeFacebookStatsStream() {
+        if (state.facebookStatsSocketReconnectTimer) {
+            clearTimeout(state.facebookStatsSocketReconnectTimer);
+            state.facebookStatsSocketReconnectTimer = null;
+        }
+        if (state.facebookStatsRenderTimer) {
+            clearTimeout(state.facebookStatsRenderTimer);
+            state.facebookStatsRenderTimer = null;
+        }
+        state.facebookStatsStreamActive = false;
+        if (state.facebookStatsSocket) {
+            state.facebookStatsSocket.onclose = null;
+            state.facebookStatsSocket.close();
+            state.facebookStatsSocket = null;
+        }
+    }
+
+    function scheduleFacebookStatsRender() {
+        const section = document.getElementById("page-fb-stats");
+        if (!section || !section.classList.contains("active")) return;
+        if (state.facebookStatsRenderTimer) clearTimeout(state.facebookStatsRenderTimer);
+        state.facebookStatsRenderTimer = setTimeout(() => {
+            state.facebookStatsRenderTimer = null;
+            renderFacebookStatsPage(true).catch((error) => console.warn("Facebook stats realtime render failed", error));
+        }, 120);
+    }
+
+    function applyFacebookStatsRealtime(payload) {
+        if (payload?.type !== "facebook.stats.updated" || !payload.stats) return;
+        state.facebookStatsPayload = payload.stats;
+        state.facebookStatsSyncing = false;
+        scheduleFacebookStatsRender();
+    }
+
+    function connectFacebookStatsStream() {
+        if (state.facebookStatsSocket && state.facebookStatsSocket.readyState <= 1) return;
+        state.facebookStatsStreamActive = true;
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        state.facebookStatsSocket = new WebSocket(`${protocol}//${window.location.host}${API_BASE}/realtime/ws`);
+        state.facebookStatsSocket.onopen = () => {
+            state.facebookStatsReconnectAttempts = 0;
+            state.facebookStatsSocket?.send(JSON.stringify({ type: "subscribe", channels: ["facebook:stats"] }));
+        };
+        state.facebookStatsSocket.onmessage = (event) => {
+            let data = {};
+            try {
+                data = JSON.parse(event.data);
+            } catch {
+                return;
+            }
+            if (data.channel === "facebook:stats") applyFacebookStatsRealtime(data.payload || {});
+        };
+        state.facebookStatsSocket.onclose = () => {
+            state.facebookStatsSocket = null;
+            if (!state.facebookStatsStreamActive) return;
+            const delay = Math.min(1000 * (state.facebookStatsReconnectAttempts + 1), 8000);
+            state.facebookStatsReconnectAttempts += 1;
+            state.facebookStatsSocketReconnectTimer = setTimeout(connectFacebookStatsStream, delay);
+        };
+    }
+
     async function renderFacebookStatsPage() {
         const section = document.getElementById("page-fb-stats");
         if (!section) return;
+        connectFacebookStatsStream();
         if (!section.dataset.hydrated) {
             section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Đang đọc cache thống kê Facebook...</div>`;
         }
         try {
-            const controller = new AbortController();
-            const timeout = window.setTimeout(() => controller.abort(), 15000);
-            const stats = await fetchJSON("/facebook/stats?days=7", { signal: controller.signal });
-            window.clearTimeout(timeout);
+            let stats = state.facebookStatsPayload;
+            if (!stats) {
+                const controller = new AbortController();
+                const timeout = window.setTimeout(() => controller.abort(), 15000);
+                stats = await fetchJSON("/facebook/stats?days=7", { signal: controller.signal });
+                state.facebookStatsPayload = stats;
+                window.clearTimeout(timeout);
+            }
             const totals = stats.totals || {};
             const topPosts = stats.top_posts || [];
             const contentPerformance = stats.content_performance || [];
@@ -2740,7 +2822,8 @@
                 const button = section.querySelector("#fb-stats-refresh");
                 if (button) button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> SYNCING`;
                 try {
-                    await fetchJSON("/facebook/stats/sync?days=7", { method: "POST" });
+                    const synced = await fetchJSON("/facebook/stats/sync?days=7", { method: "POST" });
+                    state.facebookStatsPayload = synced;
                 } finally {
                     state.facebookStatsSyncing = false;
                     await renderFacebookStatsPage();
@@ -3434,8 +3517,14 @@
         return state.facebookConversations.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
     }
 
+    function facebookMessagesPageIsActive() {
+        return Boolean(document.getElementById("page-fb-messages")?.classList.contains("active"));
+    }
+
     function updateFacebookUnreadBadges() {
         const total = facebookUnreadTotal();
+        const baseTitle = state.originalDocumentTitle || "HRM";
+        document.title = total > 0 ? `(${formatNumber(total)}) ${baseTitle}` : baseTitle;
         const sidebar = document.getElementById("fb-messages-sidebar-unread");
         if (sidebar) {
             sidebar.textContent = formatNumber(total);
@@ -3448,6 +3537,55 @@
         }
         const header = document.getElementById("fb-messages-header-unread");
         if (header) header.textContent = `INBOX · ${formatNumber(total)} UNREAD`;
+    }
+
+    function showFacebookMessageNotification(conversation, message) {
+        const messageId = String(message?.message_id || "");
+        if (!messageId || state.facebookMessageNotifiedIds[messageId]) return;
+        state.facebookMessageNotifiedIds[messageId] = true;
+        const containerId = "facebook-message-notification-stack";
+        let stack = document.getElementById(containerId);
+        if (!stack) {
+            stack = document.createElement("div");
+            stack.id = containerId;
+            stack.className = "fixed right-5 bottom-5 z-[9999] space-y-2 w-[340px] max-w-[calc(100vw-24px)]";
+            document.body.appendChild(stack);
+        }
+        const text = message.message || message.fallback_label || "Tin nhắn mới";
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "block w-full text-left border border-hud-fb/50 bg-[#07111f]/95 shadow-[0_0_24px_rgba(74,158,255,0.25)] p-3 hover:border-hud-cyan/80 transition";
+        item.innerHTML = `
+            <div class="flex items-start gap-3">
+                <div class="w-9 h-9 rounded-full border border-hud-fb/50 bg-hud-fb/15 flex items-center justify-center text-hud-fb shrink-0">
+                    <i class="fa-brands fa-facebook-messenger"></i>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <div class="text-[10px] uppercase-widest font-bold text-hud-fb">TIN NHẮN MỚI</div>
+                    <div class="text-xs font-bold text-white truncate">${escapeHtml(conversation.customer_name || message.from_name || "Facebook User")}</div>
+                    <div class="text-[11px] text-white/75 truncate">${escapeHtml(text)}</div>
+                    <div class="text-[9px] text-hud-muted uppercase-wide mt-1">${escapeHtml(conversation.page_name || "Facebook Page")}</div>
+                </div>
+            </div>
+        `;
+        item.addEventListener("click", () => {
+            state.selectedFacebookConversationId = conversation.conversation_id || message.conversation_id || "";
+            if (window.switchPage) window.switchPage("fb-messages");
+            item.remove();
+        });
+        stack.prepend(item);
+        setTimeout(() => item.remove(), 8000);
+        while (stack.children.length > 4) stack.lastElementChild?.remove();
+    }
+
+    async function refreshFacebookUnreadFromDatabase() {
+        try {
+            const payload = await fetchJSON("/facebook/conversations?limit=100&message_limit=0");
+            state.facebookConversations = payload.conversations || [];
+            updateFacebookUnreadBadges();
+        } catch (error) {
+            console.warn("Facebook unread refresh failed", error);
+        }
     }
 
     async function uploadFacebookMessageMedia(file, conversationId) {
@@ -3687,7 +3825,7 @@
         if (payload?.type === "facebook.conversation.synced") {
             const conversation = payload?.conversation || {};
             patchFacebookConversationFromSummary(conversation);
-            if (conversation?.conversation_id === state.selectedFacebookConversationId) {
+            if (conversation?.conversation_id === state.selectedFacebookConversationId && facebookMessagesPageIsActive()) {
                 markFacebookConversationReadLocal(conversation.conversation_id);
             }
             refreshFacebookSelectedConversationIfNeeded(conversation).catch((error) => console.warn("Facebook synced conversation refresh failed", error));
@@ -3707,10 +3845,23 @@
         const conversationId = payload?.conversation_id || conversation.conversation_id || message.conversation_id || "";
         if (!conversationId) return;
         const normalizedMessage = { ...message, conversation_id: conversationId };
+        const messageId = String(normalizedMessage.message_id || "");
+        const alreadySeenRealtime = Boolean(messageId && state.facebookMessageRealtimeSeenIds[messageId]);
+        if (messageId) state.facebookMessageRealtimeSeenIds[messageId] = true;
         if (normalizedMessage.direction === "outbound" && !normalizedMessage.local_status) {
             removeOptimisticFacebookMessage(conversationId, normalizedMessage);
         }
         const normalizedConversation = { ...conversation, conversation_id: conversationId };
+        const messagesPageActive = facebookMessagesPageIsActive();
+        const shouldCountUnread = normalizedMessage.direction === "inbound"
+            && !(conversationId === state.selectedFacebookConversationId && messagesPageActive);
+        if (shouldCountUnread) {
+            const existingConversation = state.facebookConversations.find((item) => item.conversation_id === conversationId) || {};
+            const existingUnread = Number(existingConversation.unread_count || 0);
+            const serverUnread = Number(normalizedConversation.unread_count || 0);
+            normalizedConversation.unread_count = alreadySeenRealtime ? Math.max(serverUnread, existingUnread) : Math.max(serverUnread, existingUnread + 1);
+            normalizedConversation.status = normalizedConversation.unread_count > 0 ? "unread" : (normalizedConversation.status || "open");
+        }
         if ((normalizedConversation.messages || []).some((item) => item.local_status)) {
             normalizedConversation.messages = normalizedConversation.messages.filter((item) => !item.local_status);
         }
@@ -3726,8 +3877,12 @@
         }
         appendRealtimeFacebookMessage(normalizedMessage);
         updateRealtimeFacebookConversationList(conversationId);
-        if (normalizedMessage.direction === "inbound" && conversationId === state.selectedFacebookConversationId) {
+        if (normalizedMessage.direction === "inbound" && conversationId === state.selectedFacebookConversationId && messagesPageActive) {
             markFacebookConversationReadLocal(conversationId);
+        } else if (normalizedMessage.direction === "inbound") {
+            const nextConversation = state.facebookConversations.find((item) => item.conversation_id === conversationId) || normalizedConversation;
+            showFacebookMessageNotification(nextConversation, normalizedMessage);
+            setTimeout(refreshFacebookUnreadFromDatabase, 300);
         }
     }
 
@@ -5744,14 +5899,111 @@
         return ["cyan", "NEUTRAL", "fa-user"];
     }
 
+    function facebookCommentTotals(comments) {
+        const totals = { pending: 0, negative: 0, question: 0, positive: 0, neutral: 0 };
+        (comments || []).forEach((comment) => {
+            if (comment.status === "pending") totals.pending += 1;
+            const sentiment = String(comment.sentiment || "neutral").toLowerCase();
+            totals[sentiment] = (totals[sentiment] || 0) + 1;
+        });
+        return totals;
+    }
+
+    function closeFacebookCommentsStream() {
+        if (state.facebookCommentsSocketReconnectTimer) {
+            clearTimeout(state.facebookCommentsSocketReconnectTimer);
+            state.facebookCommentsSocketReconnectTimer = null;
+        }
+        if (state.facebookCommentsRenderTimer) {
+            clearTimeout(state.facebookCommentsRenderTimer);
+            state.facebookCommentsRenderTimer = null;
+        }
+        state.facebookCommentsStreamActive = false;
+        if (state.facebookCommentsSocket) {
+            state.facebookCommentsSocket.onclose = null;
+            state.facebookCommentsSocket.close();
+            state.facebookCommentsSocket = null;
+        }
+    }
+
+    function scheduleFacebookCommentsRender() {
+        const section = document.getElementById("page-fb-comments");
+        if (!section || !section.classList.contains("active")) return;
+        if (state.facebookCommentsRenderTimer) clearTimeout(state.facebookCommentsRenderTimer);
+        state.facebookCommentsRenderTimer = setTimeout(() => {
+            state.facebookCommentsRenderTimer = null;
+            renderFacebookCommentsPage(true).catch((error) => console.warn("Facebook comments realtime render failed", error));
+        }, 160);
+    }
+
+    function applyFacebookCommentsRealtime(payload) {
+        if (payload?.type === "facebook.comments.sync.completed") {
+            const comments = payload.comments || [];
+            state.facebookCommentsPayload = {
+                ...(state.facebookCommentsPayload || {}),
+                total: Number(payload.total ?? comments.length),
+                comments,
+                totals: payload.totals || facebookCommentTotals(comments),
+                warnings: payload.warnings || [],
+            };
+            if (!state.selectedFacebookCommentId && comments[0]) state.selectedFacebookCommentId = comments[0].comment_id;
+            state.facebookCommentsSyncing = false;
+            scheduleFacebookCommentsRender();
+            return;
+        }
+        const comment = payload?.comment;
+        if (!comment?.comment_id) return;
+        const current = state.facebookCommentsPayload || { total: 0, comments: [], totals: {}, warnings: [] };
+        const existing = current.comments || [];
+        const withoutDuplicate = existing.filter((item) => item.comment_id !== comment.comment_id);
+        const comments = [comment, ...withoutDuplicate].sort((a, b) => String(b.created_time || "").localeCompare(String(a.created_time || ""))).slice(0, 50);
+        state.facebookCommentsPayload = {
+            ...current,
+            total: Math.max(Number(current.total || 0), comments.length),
+            comments,
+            totals: facebookCommentTotals(comments),
+        };
+        if (!state.selectedFacebookCommentId) state.selectedFacebookCommentId = comment.comment_id;
+        scheduleFacebookCommentsRender();
+    }
+
+    function connectFacebookCommentsStream() {
+        if (state.facebookCommentsSocket && state.facebookCommentsSocket.readyState <= 1) return;
+        state.facebookCommentsStreamActive = true;
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        state.facebookCommentsSocket = new WebSocket(`${protocol}//${window.location.host}${API_BASE}/realtime/ws`);
+        state.facebookCommentsSocket.onopen = () => {
+            state.facebookCommentsReconnectAttempts = 0;
+            state.facebookCommentsSocket?.send(JSON.stringify({ type: "subscribe", channels: ["facebook:comments"] }));
+        };
+        state.facebookCommentsSocket.onmessage = (event) => {
+            let data = {};
+            try {
+                data = JSON.parse(event.data);
+            } catch {
+                return;
+            }
+            if (data.channel === "facebook:comments") applyFacebookCommentsRealtime(data.payload || {});
+        };
+        state.facebookCommentsSocket.onclose = () => {
+            state.facebookCommentsSocket = null;
+            if (!state.facebookCommentsStreamActive) return;
+            const delay = Math.min(1000 * (state.facebookCommentsReconnectAttempts + 1), 8000);
+            state.facebookCommentsReconnectAttempts += 1;
+            state.facebookCommentsSocketReconnectTimer = setTimeout(connectFacebookCommentsStream, delay);
+        };
+    }
+
     async function renderFacebookCommentsPage() {
         const section = document.getElementById("page-fb-comments");
         if (!section) return;
+        connectFacebookCommentsStream();
         if (!section.dataset.hydrated) {
             section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Đang đọc cache bình luận...</div>`;
         }
         try {
-            const payload = await fetchJSON("/facebook/comments?limit=50");
+            const payload = state.facebookCommentsPayload || await fetchJSON("/facebook/comments?limit=50");
+            state.facebookCommentsPayload = payload;
             const comments = payload.comments || [];
             const totals = payload.totals || {};
             if (!state.selectedFacebookCommentId && comments[0]) state.selectedFacebookCommentId = comments[0].comment_id;
@@ -5863,7 +6115,8 @@
                 const button = section.querySelector("#fb-comments-refresh");
                 if (button) button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> SYNCING`;
                 try {
-                    await fetchJSON("/facebook/comments/sync?limit=50", { method: "POST" });
+                    const synced = await fetchJSON("/facebook/comments/sync?limit=50", { method: "POST" });
+                    state.facebookCommentsPayload = synced;
                 } finally {
                     state.facebookCommentsSyncing = false;
                     await renderFacebookCommentsPage();
@@ -6086,7 +6339,9 @@
     async function onPageActivated(pageKey) {
         if (pageKey !== "jobs") closeJobsStream();
         if (pageKey !== "detail") closeDetailStream();
-        if (pageKey !== "fb-messages") closeFacebookMessagesStream();
+        if (pageKey !== "fb-messages") stopFacebookMessagesFallbackSync();
+        if (pageKey !== "fb-comments") closeFacebookCommentsStream();
+        if (pageKey !== "fb-stats") closeFacebookStatsStream();
         if (pageKey !== "fb-jobs" && state.facebookContentJobsRefreshTimer) {
             clearTimeout(state.facebookContentJobsRefreshTimer);
             state.facebookContentJobsRefreshTimer = null;
@@ -6237,6 +6492,8 @@
             };
         }
         const activePage = document.querySelector(".page.active")?.id?.replace("page-", "") || "submit";
+        connectFacebookMessagesStream();
+        refreshFacebookUnreadFromDatabase();
         onPageActivated(activePage);
     });
 })();

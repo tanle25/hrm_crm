@@ -565,6 +565,36 @@
         return target;
     }
 
+    function randomizeFacebookBestTimeSchedule(posts) {
+        const items = Array.isArray(posts) ? posts : [];
+        if (!items.length) return { posts: items, firstLocal: "", lastLocal: "" };
+        const now = new Date();
+        const min = new Date(now.getTime() + 12 * 60 * 1000);
+        const latest = new Date(now);
+        latest.setHours(22, 0, 0, 0);
+        if (latest.getTime() <= min.getTime()) {
+            latest.setDate(latest.getDate() + 1);
+            latest.setHours(22, 0, 0, 0);
+        }
+        const span = Math.max(1, latest.getTime() - min.getTime());
+        const step = span / Math.max(1, items.length);
+        const scheduled = items.map((post, index) => {
+            const jitter = (Math.random() * 0.74 + 0.13) * step;
+            const target = new Date(Math.min(latest.getTime(), min.getTime() + index * step + jitter));
+            const local = toDatetimeLocalValue(target);
+            return {
+                ...post,
+                scheduled_at: target.toISOString(),
+                scheduled_at_local: local,
+            };
+        }).sort((left, right) => new Date(left.scheduled_at).getTime() - new Date(right.scheduled_at).getTime());
+        return {
+            posts: scheduled,
+            firstLocal: scheduled[0]?.scheduled_at_local || "",
+            lastLocal: scheduled[scheduled.length - 1]?.scheduled_at_local || "",
+        };
+    }
+
     function renderFacebookScheduleDialog(defaultValue = "") {
         const fallback = new Date(Date.now() + 30 * 60 * 1000);
         const value = defaultValue || state.facebookCreateScheduledAt || toDatetimeLocalValue(fallback);
@@ -609,11 +639,11 @@
             const bestTime = stats.best_posting_time || "20:00";
             const target = nextFacebookScheduleTimeFromHour(bestTime);
             state.facebookCreateScheduledAt = toDatetimeLocalValue(target);
-            setFacebookCreateFeedback("success", `AI đã chọn giờ vàng: ${state.facebookCreateScheduledAt.replace("T", " ")}.`);
+            setFacebookCreateFeedback("success", `AI đã lấy giờ vàng tham chiếu ${state.facebookCreateScheduledAt.replace("T", " ")}. Khi enqueue, từng bài sẽ được rải ngẫu nhiên đến trước 22:00.`);
         } catch (error) {
             const target = nextFacebookScheduleTimeFromHour("20:00");
             state.facebookCreateScheduledAt = toDatetimeLocalValue(target);
-            setFacebookCreateFeedback("warn", `Không lấy được giờ vàng từ stats, tạm dùng ${state.facebookCreateScheduledAt.replace("T", " ")}.`);
+            setFacebookCreateFeedback("warn", `Không lấy được stats, dùng khung giờ ngẫu nhiên từ hiện tại đến trước 22:00.`);
         }
     }
 
@@ -682,6 +712,7 @@
                                                     ${post.review?.rewritten ? `<span class="text-hud-amber"> · đã rewrite</span>` : ""}
                                                 </div>
                                                 ${(post.assigned_image_names || []).length ? `<div class="text-[10px] text-hud-green truncate mt-1"><i class="fa-solid fa-image"></i> ${escapeHtml((post.assigned_image_names || []).join(", "))}</div>` : ""}
+                                                ${post.scheduled_at_local ? `<div class="text-[10px] text-hud-amber truncate mt-1"><i class="fa-solid fa-clock"></i> ${escapeHtml(post.scheduled_at_local.replace("T", " "))}</div>` : ""}
                                             </div>
                                             <button type="button" class="fb-preview-edit btn-ghost px-2 py-1 text-[10px]" data-index="${index}" title="Chỉnh sửa"><i class="fa-solid fa-pen"></i></button>
                                             <button type="button" class="fb-preview-copy btn-ghost px-2 py-1 text-[10px]" data-index="${index}"><i class="fa-solid fa-copy"></i></button>
@@ -6151,6 +6182,17 @@
                 payload.scheduled_at = state.facebookCreateScheduledAt ? new Date(state.facebookCreateScheduledAt).toISOString() : "";
                 payload.scheduled_at_local = state.facebookCreateScheduledAt || "";
             }
+            let variantsToPublish = state.facebookCreatePreview.posts;
+            let scheduledText = payload.schedule_mode === "now" ? "đang đăng" : `đã hẹn giờ ${payload.scheduled_at_local.replace("T", " ")}`;
+            if (payload.schedule_mode === "best_time") {
+                const schedulePlan = randomizeFacebookBestTimeSchedule(variantsToPublish);
+                variantsToPublish = schedulePlan.posts;
+                state.facebookCreatePreview.posts = variantsToPublish;
+                renderFacebookContentVariantPreview(state.facebookCreatePreview);
+                payload.scheduled_at = schedulePlan.firstLocal ? new Date(schedulePlan.firstLocal).toISOString() : payload.scheduled_at;
+                payload.scheduled_at_local = schedulePlan.firstLocal || payload.scheduled_at_local;
+                scheduledText = `đã rải lịch từ ${schedulePlan.firstLocal.replace("T", " ")} đến ${schedulePlan.lastLocal.replace("T", " ")}`;
+            }
             setSelectedFacebookCreatePages(payload.page_ids);
             setSelectedFacebookCreateGroups(payload.groups);
             const button = document.getElementById("fb-create-enqueue");
@@ -6164,7 +6206,7 @@
                     body: JSON.stringify({
                         brief: payload.brief,
                         sample_content: payload.sample_content,
-                        variants: state.facebookCreatePreview.posts,
+                        variants: variantsToPublish,
                         images: payload.images,
                         image_rotation: payload.image_rotation,
                         publish_status: payload.schedule_mode === "now" ? "publish" : "scheduled",
@@ -6172,7 +6214,6 @@
                         schedule_mode: payload.schedule_mode === "best_time" ? "best_time" : (payload.schedule_mode === "scheduled" ? "manual" : ""),
                     }),
                 });
-                const scheduledText = payload.schedule_mode === "now" ? "đang đăng" : `đã hẹn giờ ${payload.scheduled_at_local.replace("T", " ")}`;
                 setFacebookCreateFeedback("success", `Đã enqueue job Facebook ${result.job_id}. Hệ thống ${scheduledText} ${state.facebookCreatePreview.posts.length} post.`);
             } catch (error) {
                 setFacebookCreateFeedback("error", `Enqueue failed: ${error.message}`);

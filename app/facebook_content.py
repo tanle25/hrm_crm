@@ -75,6 +75,8 @@ class FacebookPostVariant(BaseModel):
     core_index: int = 0
     assigned_image_ids: list[str] = Field(default_factory=list)
     assigned_image_names: list[str] = Field(default_factory=list)
+    scheduled_at: str = ""
+    scheduled_at_local: str = ""
 
 
 class FacebookContentVariantResponse(BaseModel):
@@ -373,7 +375,7 @@ def _run_publish_job(job_id: str) -> None:
                     pages.get(page_id) or {},
                     variant,
                     image_paths,
-                    str(job.get("scheduled_at") or ""),
+                    str(variant.get("scheduled_at") or job.get("scheduled_at") or ""),
                 )
             except Exception as exc:
                 result = {

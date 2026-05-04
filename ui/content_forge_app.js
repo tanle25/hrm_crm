@@ -5409,7 +5409,7 @@
                                     </label>
                                     <div id="fb-reels-flowkit-image-preview" class="hidden mt-3"></div>
                                 </div>
-                                <div class="grid md:grid-cols-3 gap-4">
+                                <div class="grid md:grid-cols-2 gap-4">
                                     <div>
                                         <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">MATERIAL</label>
                                         <select id="fb-reels-flowkit-material" class="hud-select w-full px-4 py-3 text-sm">
@@ -5421,18 +5421,8 @@
                                         </select>
                                     </div>
                                     <div>
-                                        <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">VIDEO / PAGE</label>
-                                        <select id="fb-reels-flowkit-videos-per-page" class="hud-select w-full px-4 py-3 text-sm">
-                                            <option value="1">1 video/page</option>
-                                            <option value="2">2 video/page</option>
-                                            <option value="3" selected>3 video/page · khuyến nghị</option>
-                                            <option value="4">4 video/page</option>
-                                            <option value="5">5 video/page · batch tối đa</option>
-                                        </select>
-                                    </div>
-                                    <div>
                                         <label class="text-[10px] font-bold uppercase-widest mb-2 block" style="color:#4a9eff;">OUTPUT</label>
-                                        <div class="border border-hud-cyan/20 bg-black/25 px-4 py-3 text-[11px] text-hud-muted">Mặc định 9:16 · tạo xong sẽ chờ duyệt trước khi đăng</div>
+                                        <div class="border border-hud-cyan/20 bg-black/25 px-4 py-3 text-[11px] text-hud-muted">1 video/page · xoay vòng ảnh nguồn · batch cùng lúc</div>
                                     </div>
                                 </div>
                             </div>
@@ -5561,7 +5551,7 @@
                     form.append("groups", JSON.stringify(state.selectedFacebookReelGroups));
                     form.append("publish_status", publishStatus);
                     form.append("scheduled_at", scheduledLocal ? new Date(scheduledLocal).toISOString() : "");
-                    form.append("videos_per_page", String(section.querySelector("#fb-reels-flowkit-videos-per-page")?.value || "1"));
+                    form.append("videos_per_page", "1");
                     form.append("material", String(section.querySelector("#fb-reels-flowkit-material")?.value || "realistic"));
                     (state.facebookReelImages || []).forEach((file) => form.append("images", file));
                     result = await fetchJSON("/facebook/reels/flowkit/jobs", { method: "POST", body: form });

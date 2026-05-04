@@ -31,7 +31,6 @@ settings = get_settings()
 router = APIRouter(prefix=f"{settings.api_prefix}/facebook/reels/flowkit", tags=["facebook-reel-flowkit"])
 FLOWKIT_REEL_UPLOAD_DIR = Path("data/facebook_reel_flowkit_uploads")
 FLOWKIT_REEL_DOWNLOAD_DIR = Path("data/facebook_reel_flowkit_downloads")
-MAX_REEL_VARIANTS_PER_PAGE = 5
 PRODUCT_IMAGE_GUARD = (
     "Product fidelity rules: preserve the exact product identity, shape, proportions, color, labels, logo placement, "
     "material, packaging geometry, count of items, and visible defects from the reference/brief. Do not redesign the "
@@ -131,11 +130,8 @@ def _build_reel_plan(
     image_count: int,
     videos_per_page: int,
 ) -> list[dict[str, Any]]:
-    expanded = [
-        {"page": page, "variant": variant}
-        for page in pages
-        for variant in range(max(1, min(videos_per_page, MAX_REEL_VARIANTS_PER_PAGE)))
-    ]
+    # One generated video per page. Uploaded source images are rotated across pages.
+    expanded = [{"page": page, "variant": 0} for page in pages]
     fallback = {
         "items": [
             {
@@ -170,7 +166,7 @@ def _build_reel_plan(
                 "video_prompt tiếng Anh mô tả chuyển động 8 giây 9:16, không voiceover/không lời thoại/chỉ nhạc nền. "
                 "Bắt buộc giữ nguyên sản phẩm: không đổi hình dáng, màu, nhãn, logo, số lượng, bao bì; không làm méo, chảy, biến dạng, nhân bản hoặc morph sản phẩm. "
                 "Nếu có ảnh upload, coi ảnh đó là source of truth; chỉ mô tả chuyển động camera/ánh sáng/nền, không thay đổi sản phẩm. Không thêm giải thích ngoài JSON.\n"
-                f"Brief: {brief}\nTitle: {title}\nCTA: {cta}\nImage count: {image_count}\nVideos per page: {videos_per_page}\nPages: {json.dumps(page_context, ensure_ascii=False)}"
+                f"Brief: {brief}\nTitle: {title}\nCTA: {cta}\nImage count: {image_count}\nVideos per page: 1. Tạo đúng 1 item cho mỗi page, không nhân theo số ảnh upload. Pages: {json.dumps(page_context, ensure_ascii=False)}"
             ),
             fallback=fallback,
             max_tokens=2600,
@@ -254,14 +250,13 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
         pages, warnings = _select_pages(request.get("page_ids") or [], request.get("groups") or [])
         if not pages:
             raise RuntimeError("No Facebook pages matched the selected page_ids/groups.")
-        videos_per_page = max(1, min(int(request.get("videos_per_page") or 3), MAX_REEL_VARIANTS_PER_PAGE))
         plan = _build_reel_plan(
             pages=pages,
             brief=str(request.get("brief") or ""),
             title=str(request.get("title") or ""),
             cta=str(request.get("cta") or ""),
             image_count=len(upload_paths),
-            videos_per_page=videos_per_page,
+            videos_per_page=1,
         )
         job["plan"] = plan
         job["warnings"] = [*(job.get("warnings") or []), *warnings]
@@ -557,7 +552,7 @@ async def create_facebook_reel_flowkit_job(
     groups: str = Form("[]"),
     publish_status: Literal["publish", "scheduled"] = Form("publish"),
     scheduled_at: str = Form(""),
-    videos_per_page: int = Form(3),
+    videos_per_page: int = Form(1),
     material: str = Form("realistic"),
     images: list[UploadFile] = File(default=[]),
 ) -> FacebookReelFlowKitJobCreateResponse:
@@ -608,7 +603,7 @@ async def create_facebook_reel_flowkit_job(
             "groups": selected_groups,
             "publish_status": publish_status,
             "scheduled_at": scheduled_at,
-            "videos_per_page": max(1, min(int(videos_per_page or 3), MAX_REEL_VARIANTS_PER_PAGE)),
+            "videos_per_page": 1,
             "material": _normalize_flowkit_material(material),
             "image_count": len(upload_paths),
         },

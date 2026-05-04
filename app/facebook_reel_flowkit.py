@@ -31,6 +31,19 @@ settings = get_settings()
 router = APIRouter(prefix=f"{settings.api_prefix}/facebook/reels/flowkit", tags=["facebook-reel-flowkit"])
 FLOWKIT_REEL_UPLOAD_DIR = Path("data/facebook_reel_flowkit_uploads")
 FLOWKIT_REEL_DOWNLOAD_DIR = Path("data/facebook_reel_flowkit_downloads")
+PRODUCT_IMAGE_GUARD = (
+    "Product fidelity rules: preserve the exact product identity, shape, proportions, color, labels, logo placement, "
+    "material, packaging geometry, count of items, and visible defects from the reference/brief. Do not redesign the "
+    "product, do not change text or labels, do not add/remove parts, do not invent variants, no warped geometry, no "
+    "melted edges, no duplicated product, no deformed hands touching the product, no surreal morphing."
+)
+PRODUCT_VIDEO_GUARD = (
+    "Critical product preservation: use the assigned image as the exact first frame/source of truth. The product must "
+    "remain rigid and unchanged for the whole clip: same silhouette, dimensions, colors, labels, logo, package shape, "
+    "texture, and item count. Do not morph, bend, melt, stretch, shrink, duplicate, replace, rotate into a different "
+    "object, or change packaging text. Only animate camera movement, lighting, shallow depth of field, background "
+    "atmosphere, and subtle environmental motion. Keep product edges stable and sharp."
+)
 
 
 class FacebookReelFlowKitJobCreateResponse(BaseModel):
@@ -59,7 +72,8 @@ def _visual_prompt_seed(brief: str, page: dict[str, Any], title: str) -> str:
     return (
         f"Create a realistic vertical 9:16 Facebook Reel for {page_name}, a {category}. "
         f"Topic: {brief or title}. Commercial social video, clear subject, natural motion, "
-        "mobile-first composition, no text overlay, no watermark."
+        "mobile-first composition, no text overlay, no watermark. "
+        f"{PRODUCT_IMAGE_GUARD}"
     )
 
 
@@ -72,10 +86,28 @@ def _video_prompt_for_page(brief: str, page: dict[str, Any], variant: int, title
     ]
     return (
         "True vertical 9:16 mobile Reel, fill the entire frame edge to edge, no black bars. "
-        "Use the assigned image as the exact first frame and preserve its subject identity. "
+        f"{PRODUCT_VIDEO_GUARD} "
         "No voiceover, no spoken dialogue, no narration; background music only. "
         f"Brand/page context: {page_name}. Topic: {brief or title}. "
         f"{variants[variant % len(variants)]}"
+    )
+
+
+def _guard_image_prompt(prompt: str) -> str:
+    prompt = _safe_text(prompt, 3000)
+    if PRODUCT_IMAGE_GUARD in prompt:
+        return prompt
+    return f"{prompt}\n\n{PRODUCT_IMAGE_GUARD}\nPhotorealistic product-ad first frame, stable geometry, clean commercial lighting."
+
+
+def _guard_video_prompt(prompt: str) -> str:
+    prompt = _safe_text(prompt, 3000)
+    if PRODUCT_VIDEO_GUARD in prompt:
+        return prompt
+    return (
+        f"{PRODUCT_VIDEO_GUARD}\n"
+        "True vertical 9:16, edge-to-edge frame, no black bars. No voiceover, no spoken dialogue, background music only.\n"
+        f"{prompt}"
     )
 
 
@@ -112,8 +144,8 @@ def _build_reel_plan(
                 "title": title or _safe_text(brief, 90) or "Facebook Reel",
                 "caption": _caption_for_page(brief, item["page"], title, cta),
                 "image_index": (index % image_count) if image_count > 0 else None,
-                "image_prompt": _simple_image_prompt(_visual_prompt_seed(brief, item["page"], title), "realistic", "VERTICAL"),
-                "video_prompt": _video_prompt_for_page(brief, item["page"], item["variant"], title),
+                "image_prompt": _guard_image_prompt(_simple_image_prompt(_visual_prompt_seed(brief, item["page"], title), "realistic", "VERTICAL")),
+                "video_prompt": _guard_video_prompt(_video_prompt_for_page(brief, item["page"], item["variant"], title)),
             }
             for index, item in enumerate(expanded)
         ]
@@ -134,7 +166,9 @@ def _build_reel_plan(
             (
                 "Tạo kế hoạch Reels cho từng fanpage. Mỗi item phải có: page_id, page_name, variant, title, "
                 "caption tiếng Việt có hook + lợi ích + CTA, image_index nếu có ảnh upload, image_prompt tiếng Anh, "
-                "video_prompt tiếng Anh mô tả chuyển động 8 giây 9:16, không voiceover/không lời thoại/chỉ nhạc nền. Không thêm giải thích ngoài JSON.\n"
+                "video_prompt tiếng Anh mô tả chuyển động 8 giây 9:16, không voiceover/không lời thoại/chỉ nhạc nền. "
+                "Bắt buộc giữ nguyên sản phẩm: không đổi hình dáng, màu, nhãn, logo, số lượng, bao bì; không làm méo, chảy, biến dạng, nhân bản hoặc morph sản phẩm. "
+                "Nếu có ảnh upload, coi ảnh đó là source of truth; chỉ mô tả chuyển động camera/ánh sáng/nền, không thay đổi sản phẩm. Không thêm giải thích ngoài JSON.\n"
                 f"Brief: {brief}\nTitle: {title}\nCTA: {cta}\nImage count: {image_count}\nVideos per page: {videos_per_page}\nPages: {json.dumps(page_context, ensure_ascii=False)}"
             ),
             fallback=fallback,
@@ -163,8 +197,8 @@ def _build_reel_plan(
                         "title": _safe_text(item.get("title") or title or brief, 255),
                         "caption": str(item.get("caption") or _caption_for_page(brief, page, title, cta))[:5000],
                         "image_index": image_index,
-                        "image_prompt": str(item.get("image_prompt") or _visual_prompt_seed(brief, page, title)),
-                        "video_prompt": str(item.get("video_prompt") or _video_prompt_for_page(brief, page, expanded[index]["variant"], title)),
+                        "image_prompt": _guard_image_prompt(str(item.get("image_prompt") or _visual_prompt_seed(brief, page, title))),
+                        "video_prompt": _guard_video_prompt(str(item.get("video_prompt") or _video_prompt_for_page(brief, page, expanded[index]["variant"], title))),
                     }
                 )
             return normalized
@@ -261,11 +295,15 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
         orient_prefix = "vertical"
         _job_progress(job, "scenes", f"Creating {len(plan)} scenes for selected pages...", 30)
         for index, item in enumerate(plan):
+            image_prompt = _guard_image_prompt(item.get("image_prompt") or "")
+            video_prompt = _guard_video_prompt(item.get("video_prompt") or "")
+            item["image_prompt"] = image_prompt
+            item["video_prompt"] = video_prompt
             scene = await client.create_scene(
                 video_id=flowkit_video_id,
-                prompt=item.get("image_prompt") or item.get("video_prompt") or request.get("brief") or "",
-                image_prompt=item.get("image_prompt") or "",
-                video_prompt=item.get("video_prompt") or "",
+                prompt=image_prompt or video_prompt or request.get("brief") or "",
+                image_prompt=image_prompt,
+                video_prompt=video_prompt,
                 display_order=index,
                 chain_type="ROOT",
                 orientation="VERTICAL",

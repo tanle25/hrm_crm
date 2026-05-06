@@ -8,7 +8,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -875,6 +875,56 @@ async def rag_ingest_text(request: RAGTextIngestRequest) -> RAGIngestResponse:
         raise HTTPException(status_code=400, detail=str(error)) from error
     log.info(
         "rag_text_ingested",
+        source_id=result.get("source_id"),
+        title=result.get("title"),
+        status=result.get("status"),
+        documents_count=result.get("documents_count", 0),
+        categories=result.get("categories", []),
+    )
+    return RAGIngestResponse(**result)
+
+
+@app.post(f"{settings.api_prefix}/rag/ingest-file", response_model=RAGIngestResponse)
+async def rag_ingest_file(
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    manual_category: str = Form(""),
+    note: str = Form(""),
+    force_reingest: bool = Form(True),
+) -> RAGIngestResponse:
+    filename = file.filename or "knowledge.txt"
+    suffix = Path(filename).suffix.lower()
+    allowed_suffixes = {".txt", ".md", ".markdown", ".csv"}
+    if suffix not in allowed_suffixes:
+        raise HTTPException(status_code=400, detail="Only .txt, .md, .markdown and .csv files are supported.")
+
+    max_bytes = 2 * 1024 * 1024
+    payload = await file.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise HTTPException(status_code=400, detail="Knowledge file is too large. Maximum size is 2MB.")
+    try:
+        content = payload.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        content = payload.decode("latin-1")
+
+    cleaned_title = title.strip() or Path(filename).stem.replace("_", " ").replace("-", " ").strip() or filename
+    categories = [manual_category.strip()] if manual_category.strip() else []
+    try:
+        result = await asyncio.to_thread(
+            ingest_text,
+            cleaned_title,
+            content,
+            categories,
+            [],
+            note.strip() or None,
+            f"file-{filename}",
+            force_reingest,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    log.info(
+        "rag_file_ingested",
+        filename=filename,
         source_id=result.get("source_id"),
         title=result.get("title"),
         status=result.get("status"),

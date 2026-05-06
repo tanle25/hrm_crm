@@ -1888,6 +1888,35 @@
                             <div class="hud-card fade-in">
                                 <span class="c-tl"></span><span class="c-br"></span>
                                 <div class="header-strip px-5 py-3 flex items-center gap-2">
+                                    <i class="fa-solid fa-file-lines text-hud-amber"></i>
+                                    <span class="font-display font-black text-xs text-white uppercase-widest">INGEST FILE</span>
+                                </div>
+                                <div class="p-5 space-y-4">
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 block">File kiến thức</label>
+                                            <div class="input-wrap"><input id="rag-file-input" type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv" class="hud-input w-full px-4 py-2.5 text-sm"/></div>
+                                            <div class="text-[10px] text-hud-muted mt-1">Hỗ trợ .md, .txt, .markdown, .csv · tối đa 2MB</div>
+                                        </div>
+                                        <div>
+                                            <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 block">Danh mục lớn</label>
+                                            <div class="input-wrap">
+                                                <select id="rag-file-category" class="hud-input w-full px-4 py-2.5 text-sm">
+                                                    <option value="">Chọn danh mục</option>
+                                                    ${categories.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="input-wrap"><input id="rag-file-title" type="text" class="hud-input w-full px-4 py-2.5 text-sm" placeholder="Tiêu đề tuỳ chọn, bỏ trống sẽ lấy theo tên file"/></div>
+                                    <div class="input-wrap"><input id="rag-file-note" type="text" class="hud-input w-full px-4 py-2.5 text-sm" placeholder="Ghi chú ngữ cảnh hoặc mục đích sử dụng (không bắt buộc)"/></div>
+                                    <button id="rag-file-ingest-btn" class="btn-primary w-full py-2.5 text-xs uppercase-wide font-bold tracking-widest flex items-center justify-center gap-2"><i class="fa-solid fa-upload"></i> UPLOAD FILE KNOWLEDGE</button>
+                                    <div id="rag-file-feedback" class="text-[11px] text-hud-muted"></div>
+                                </div>
+                            </div>
+                            <div class="hud-card fade-in">
+                                <span class="c-tl"></span><span class="c-br"></span>
+                                <div class="header-strip px-5 py-3 flex items-center gap-2">
                                     <i class="fa-solid fa-magnifying-glass text-hud-cyan"></i>
                                     <span class="font-display font-black text-xs text-white uppercase-widest">SOURCE LIST</span>
                                 </div>
@@ -1997,6 +2026,35 @@
                     renderKnowledgePage();
                 } catch (error) {
                     if (feedback) feedback.textContent = `Lưu kiến thức thất bại: ${error.message}`;
+                }
+            });
+            section.querySelector("#rag-file-ingest-btn")?.addEventListener("click", async () => {
+                const fileInput = section.querySelector("#rag-file-input");
+                const file = fileInput?.files?.[0];
+                const category = section.querySelector("#rag-file-category")?.value.trim() || "";
+                const title = section.querySelector("#rag-file-title")?.value.trim() || "";
+                const note = section.querySelector("#rag-file-note")?.value.trim() || "";
+                const feedback = section.querySelector("#rag-file-feedback");
+                if (!file || !category) {
+                    if (feedback) feedback.textContent = "Cần chọn file và danh mục.";
+                    return;
+                }
+                try {
+                    if (feedback) feedback.textContent = "Đang upload và lưu kiến thức từ file...";
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    formData.append("manual_category", category);
+                    formData.append("title", title);
+                    formData.append("note", note);
+                    formData.append("force_reingest", "true");
+                    const result = await fetchJSON("/rag/ingest-file", {
+                        method: "POST",
+                        body: formData,
+                    });
+                    if (feedback) feedback.textContent = `Đã lưu ${result.documents_count || 0} chunks từ file ${file.name}.`;
+                    renderKnowledgePage();
+                } catch (error) {
+                    if (feedback) feedback.textContent = `Upload file thất bại: ${error.message}`;
                 }
             });
             const categoryDialog = section.querySelector("#rag-category-dialog");

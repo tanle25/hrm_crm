@@ -1819,7 +1819,11 @@
                 fetchJSON("/rag/sources?limit=50"),
                 fetchJSON("/rag/categories"),
             ]);
-            const categories = categoriesPayload.categories || [];
+            const categories = Array.from(new Set([
+                ...(categoriesPayload.categories || []),
+                ...(taxonomy.available_primary_categories || []),
+                ...(taxonomy.primary_category ? [taxonomy.primary_category] : []),
+            ].map((item) => String(item || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "vi"));
             section.innerHTML = `
                 <div class="max-w-7xl mx-auto">
                     <div class="grid grid-cols-4 gap-4 mb-6">

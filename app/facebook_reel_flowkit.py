@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import uuid
 from pathlib import Path
@@ -31,6 +32,8 @@ settings = get_settings()
 router = APIRouter(prefix=f"{settings.api_prefix}/facebook/reels/flowkit", tags=["facebook-reel-flowkit"])
 FLOWKIT_REEL_UPLOAD_DIR = Path("data/facebook_reel_flowkit_uploads")
 FLOWKIT_REEL_DOWNLOAD_DIR = Path("data/facebook_reel_flowkit_downloads")
+FLOWKIT_REEL_IMAGE_STALL_SEC = int(os.getenv("FLOWKIT_REEL_IMAGE_STALL_SEC", "600"))
+FLOWKIT_REEL_VIDEO_STALL_SEC = int(os.getenv("FLOWKIT_REEL_VIDEO_STALL_SEC", "900"))
 PRODUCT_IMAGE_GUARD = (
     "Product fidelity rules: preserve the exact product identity, shape, proportions, color, labels, logo placement, "
     "material, packaging geometry, count of items, and visible defects from the reference/brief. Do not redesign the "
@@ -214,6 +217,67 @@ def _job_progress(job: dict[str, Any], stage: str, detail: str, percent: int | N
     _upsert_job(job)
 
 
+async def _wait_flowkit_batch(
+    *,
+    client: Any,
+    job: dict[str, Any],
+    flowkit_video_id: str,
+    req_type: str,
+    stage: str,
+    base_percent: int,
+    span_percent: int,
+    stall_sec: int,
+) -> dict[str, Any]:
+    last_done = -1
+    last_processing = -1
+    last_pending = -1
+    last_change = asyncio.get_running_loop().time()
+    zero_active_seen = 0
+
+    while True:
+        status = await client.get_batch_status(video_id=flowkit_video_id, req_type=req_type, orientation="VERTICAL")
+        total = max(1, int(status.get("total") or 0))
+        pending = int(status.get("pending") or 0)
+        completed = int(status.get("completed") or 0)
+        failed = int(status.get("failed") or 0)
+        processing = int(status.get("processing") or 0)
+        done_count = completed + failed
+        active_count = pending + processing + done_count
+
+        if (done_count, processing, pending) != (last_done, last_processing, last_pending):
+            last_done = done_count
+            last_processing = processing
+            last_pending = pending
+            last_change = asyncio.get_running_loop().time()
+
+        pct = base_percent + min(span_percent, round(((done_count + processing * 0.5) / total) * span_percent))
+        _job_progress(
+            job,
+            stage,
+            f"{req_type.replace('_', ' ').title()} progress {completed}/{total} completed, {pending} pending, {processing} processing, {failed} failed",
+            pct,
+        )
+
+        if status.get("done"):
+            if failed:
+                raise RuntimeError(f"FlowKit {req_type.lower()} generation failed: {status}")
+            return status
+
+        if active_count == 0:
+            zero_active_seen += 1
+            if zero_active_seen >= 2:
+                requests = await client.list_requests(video_id=flowkit_video_id, type=req_type)
+                raise RuntimeError(f"FlowKit {req_type.lower()} batch has no active requests: status={status}, requests={requests[:5]}")
+        else:
+            zero_active_seen = 0
+
+        if asyncio.get_running_loop().time() - last_change > stall_sec:
+            requests = await client.list_requests(video_id=flowkit_video_id, type=req_type)
+            raise RuntimeError(f"FlowKit {req_type.lower()} batch stalled for {stall_sec}s: status={status}, sample_requests={requests[:5]}")
+
+        await asyncio.sleep(client.poll_interval)
+
+
 async def _download_video(url: str, target: Path) -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
     size = 0
@@ -235,6 +299,43 @@ def _replace_result(results: list[dict[str, Any]], index: int, result: dict[str,
     kept = [item for item in results if int(item.get("index", -1)) != index]
     kept.append(result)
     return sorted(kept, key=lambda item: int(item.get("index", 0)))
+
+
+async def _queue_flowkit_video_requests(
+    *,
+    client: Any,
+    scenes: list[dict[str, Any]],
+    project_id: str,
+    flowkit_video_id: str,
+) -> list[dict[str, Any]]:
+    requests = [
+        {
+            "type": "GENERATE_VIDEO",
+            "orientation": "VERTICAL",
+            "scene_id": scene["scene_id"],
+            "project_id": project_id,
+            "video_id": flowkit_video_id,
+            **({"source_media_id": scene["image_media_id"]} if scene.get("image_media_id") else {}),
+        }
+        for scene in scenes
+    ]
+    queued = await client.submit_batch(requests)
+    if isinstance(queued, list) and len(queued) >= len(requests):
+        return queued
+
+    fallback: list[dict[str, Any]] = []
+    for request in requests:
+        fallback.append(
+            await client.submit_request(
+                req_type="GENERATE_VIDEO",
+                scene_id=request["scene_id"],
+                video_id=flowkit_video_id,
+                project_id=project_id,
+                orientation="VERTICAL",
+                source_media_id=request.get("source_media_id"),
+            )
+        )
+    return fallback
 
 
 async def _run_flowkit_reel_job(job_id: str) -> None:
@@ -309,17 +410,22 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
             )
             scene_id = str(scene.get("id") or "")
             image_index = item.get("image_index")
+            image_media_id = ""
             if uploaded_images and image_index is not None:
                 source = uploaded_images[int(image_index) % len(uploaded_images)]
+                image_media_id = source["media_id"]
                 update_payload: dict[str, Any] = {
-                    f"{orient_prefix}_image_media_id": source["media_id"],
+                    f"{orient_prefix}_image_media_id": image_media_id,
                     f"{orient_prefix}_image_status": "COMPLETED",
                 }
                 crop = _crop_coordinates(source.get("path") or "", "VERTICAL")
                 if crop:
                     update_payload[f"{orient_prefix}_image_crop_coordinates"] = json.dumps(crop, separators=(",", ":"))
                 await client.update_scene(scene_id, **update_payload)
-            scenes.append({"scene_id": scene_id, **item})
+                scene_state = await client.get_scene(scene_id)
+                if str(scene_state.get(f"{orient_prefix}_image_media_id") or "") != image_media_id:
+                    raise RuntimeError(f"FlowKit scene {scene_id} did not persist uploaded image media id.")
+            scenes.append({"scene_id": scene_id, "image_media_id": image_media_id, **item})
         job["scenes"] = scenes
 
         if not uploaded_images:
@@ -334,41 +440,36 @@ async def _run_flowkit_reel_job(job_id: str) -> None:
                 }
                 for scene in scenes
             ])
-            while True:
-                status = await client.get_batch_status(video_id=flowkit_video_id, req_type="GENERATE_IMAGE", orientation="VERTICAL")
-                total = max(1, int(status.get("total") or len(scenes)))
-                done = int(status.get("completed") or 0) + int(status.get("failed") or 0)
-                _job_progress(job, "images", f"Image progress {done}/{total}", 38 + round((done / total) * 18))
-                if status.get("done"):
-                    if int(status.get("failed") or 0):
-                        raise RuntimeError(f"FlowKit image generation failed: {status}")
-                    break
-                await asyncio.sleep(client.poll_interval)
+            await _wait_flowkit_batch(
+                client=client,
+                job=job,
+                flowkit_video_id=flowkit_video_id,
+                req_type="GENERATE_IMAGE",
+                stage="images",
+                base_percent=38,
+                span_percent=18,
+                stall_sec=FLOWKIT_REEL_IMAGE_STALL_SEC,
+            )
 
         _job_progress(job, "videos", f"Queueing {len(scenes)} FlowKit videos in one batch...", 58)
-        await client.submit_batch([
-            {
-                "type": "GENERATE_VIDEO",
-                "orientation": "VERTICAL",
-                "scene_id": scene["scene_id"],
-                "project_id": project_id,
-                "video_id": flowkit_video_id,
-            }
-            for scene in scenes
-        ])
-        while True:
-            status = await client.get_batch_status(video_id=flowkit_video_id, req_type="GENERATE_VIDEO", orientation="VERTICAL")
-            total = max(1, int(status.get("total") or len(scenes)))
-            completed = int(status.get("completed") or 0)
-            failed = int(status.get("failed") or 0)
-            processing = int(status.get("processing") or 0)
-            pct = 58 + min(27, round(((completed + failed + processing * 0.5) / total) * 27))
-            _job_progress(job, "videos", f"Video progress {completed}/{total} completed, {processing} processing", pct)
-            if status.get("done"):
-                if failed:
-                    raise RuntimeError(f"FlowKit video generation failed: {status}")
-                break
-            await asyncio.sleep(client.poll_interval)
+        queued_video_requests = await _queue_flowkit_video_requests(
+            client=client,
+            scenes=scenes,
+            project_id=project_id,
+            flowkit_video_id=flowkit_video_id,
+        )
+        job["flowkit_video_requests"] = queued_video_requests
+        _upsert_job(job)
+        await _wait_flowkit_batch(
+            client=client,
+            job=job,
+            flowkit_video_id=flowkit_video_id,
+            req_type="GENERATE_VIDEO",
+            stage="videos",
+            base_percent=58,
+            span_percent=27,
+            stall_sec=FLOWKIT_REEL_VIDEO_STALL_SEC,
+        )
 
         scene_states = {str(scene.get("id") or ""): scene for scene in await client.list_scenes(flowkit_video_id)}
         review_items: list[dict[str, Any]] = []

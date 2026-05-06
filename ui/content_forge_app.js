@@ -1860,6 +1860,34 @@
                             <div class="hud-card fade-in">
                                 <span class="c-tl"></span><span class="c-br"></span>
                                 <div class="header-strip px-5 py-3 flex items-center gap-2">
+                                    <i class="fa-solid fa-keyboard text-hud-green"></i>
+                                    <span class="font-display font-black text-xs text-white uppercase-widest">INGEST TEXT</span>
+                                </div>
+                                <div class="p-5 space-y-4">
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 block">Tiêu đề kiến thức</label>
+                                            <div class="input-wrap"><input id="rag-text-title" type="text" class="hud-input w-full px-4 py-2.5 text-sm" placeholder="vd: Cách bảo quản trà xanh"/></div>
+                                        </div>
+                                        <div>
+                                            <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 block">Danh mục lớn</label>
+                                            <div class="input-wrap">
+                                                <select id="rag-text-category" class="hud-input w-full px-4 py-2.5 text-sm">
+                                                    <option value="">Chọn danh mục</option>
+                                                    ${categories.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="input-wrap"><textarea id="rag-text-content" rows="8" placeholder="Dán kiến thức trực tiếp tại đây. Có thể là ghi chú sản phẩm, cách dùng, FAQ, quy trình tư vấn, thông tin thương hiệu..." class="hud-textarea w-full px-4 py-3 text-sm font-mono"></textarea></div>
+                                    <div class="input-wrap"><input id="rag-text-note" type="text" class="hud-input w-full px-4 py-2.5 text-sm" placeholder="Ghi chú ngữ cảnh, tag hoặc mục đích sử dụng (không bắt buộc)"/></div>
+                                    <button id="rag-text-ingest-btn" class="btn-primary w-full py-2.5 text-xs uppercase-wide font-bold tracking-widest flex items-center justify-center gap-2"><i class="fa-solid fa-database"></i> SAVE TEXT KNOWLEDGE</button>
+                                    <div id="rag-text-feedback" class="text-[11px] text-hud-muted"></div>
+                                </div>
+                            </div>
+                            <div class="hud-card fade-in">
+                                <span class="c-tl"></span><span class="c-br"></span>
+                                <div class="header-strip px-5 py-3 flex items-center gap-2">
                                     <i class="fa-solid fa-magnifying-glass text-hud-cyan"></i>
                                     <span class="font-display font-black text-xs text-white uppercase-widest">SOURCE LIST</span>
                                 </div>
@@ -1940,6 +1968,35 @@
                     renderKnowledgePage();
                 } catch (error) {
                     if (feedback) feedback.textContent = `Ingest failed: ${error.message}`;
+                }
+            });
+            section.querySelector("#rag-text-ingest-btn")?.addEventListener("click", async () => {
+                const title = section.querySelector("#rag-text-title")?.value.trim() || "";
+                const content = section.querySelector("#rag-text-content")?.value.trim() || "";
+                const category = section.querySelector("#rag-text-category")?.value.trim() || "";
+                const note = section.querySelector("#rag-text-note")?.value.trim() || "";
+                const feedback = section.querySelector("#rag-text-feedback");
+                if (!title || !content || !category) {
+                    if (feedback) feedback.textContent = "Cần nhập tiêu đề, nội dung và chọn danh mục.";
+                    return;
+                }
+                try {
+                    if (feedback) feedback.textContent = "Đang lưu kiến thức văn bản...";
+                    const result = await fetchJSON("/rag/ingest-text", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            title,
+                            content,
+                            manual_categories: [category],
+                            manual_tags: [],
+                            note: note || null,
+                            force_reingest: true,
+                        }),
+                    });
+                    if (feedback) feedback.textContent = `Đã lưu ${result.documents_count || 0} chunks từ văn bản.`;
+                    renderKnowledgePage();
+                } catch (error) {
+                    if (feedback) feedback.textContent = `Lưu kiến thức thất bại: ${error.message}`;
                 }
             });
             const categoryDialog = section.querySelector("#rag-category-dialog");

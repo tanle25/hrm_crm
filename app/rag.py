@@ -576,6 +576,84 @@ def ingest_url(
     }
 
 
+def ingest_text(
+    title: str,
+    content: str,
+    manual_categories: list[str] | None = None,
+    manual_tags: list[str] | None = None,
+    note: str | None = None,
+    source_id: str | None = None,
+    force_reingest: bool = True,
+) -> dict:
+    title = re.sub(r"\s+", " ", str(title or "")).strip()
+    content = str(content or "").strip()
+    if len(title) < 2:
+        raise ValueError("Title is required.")
+    if len(content) < 20:
+        raise ValueError("Knowledge text must be at least 20 characters.")
+
+    manual_categories = _normalize_list(manual_categories or [])
+    manual_tags = _normalize_list(manual_tags or [])
+    manual_source_key = _slugify(source_id or title) or hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
+    source_url = f"manual://knowledge/{manual_source_key}"
+    generated_source_id = _source_id(source_url)
+    fetched = {
+        "title": title,
+        "clean_content": content,
+        "metadata": {
+            "url": source_url,
+            "source_type": "manual_text",
+            "product_kind": "",
+            "sitename": "Manual Knowledge",
+            "language": "vi",
+            "product_hints": {"meta_description": note or content[:220]},
+        },
+    }
+    extracted = extractor.run(content, fetched["metadata"])
+
+    existing = get_documents(where={"source_id": generated_source_id})
+    if existing and not force_reingest:
+        first_meta = existing[0].get("metadata", {}) if existing else {}
+        return {
+            "status": "exists",
+            "source_id": generated_source_id,
+            "source_url": source_url,
+            "title": title,
+            "source_type": "manual_text",
+            "product_kind": "",
+            "primary_category": first_meta.get("primary_category", ""),
+            "subcategories": _csv_to_list(first_meta.get("subcategories")),
+            "knowledge_types": _csv_to_list(first_meta.get("knowledge_types")),
+            "usage_intents": _csv_to_list(first_meta.get("usage_intents")),
+            "documents_count": len(existing),
+            "document_ids": [item["id"] for item in existing[:20]],
+        }
+    if existing:
+        delete_documents(where={"source_id": generated_source_id})
+
+    units, taxonomy = _knowledge_units(fetched, extracted, manual_categories, manual_tags, note)
+    for unit in units:
+        add_document(unit["document"], unit["metadata"], unit["id"])
+
+    return {
+        "status": "ingested",
+        "source_id": generated_source_id,
+        "source_url": source_url,
+        "title": title,
+        "source_type": "manual_text",
+        "product_kind": "",
+        "primary_category": taxonomy["primary_category"],
+        "categories": _normalize_list([taxonomy["primary_category"]] + manual_categories + ["manual_text"]),
+        "subcategories": taxonomy["subcategories"],
+        "knowledge_types": taxonomy["knowledge_types"],
+        "usage_intents": taxonomy["usage_intents"],
+        "tags": taxonomy["tags"],
+        "documents_count": len(units),
+        "document_ids": [item["id"] for item in units[:20]],
+        "preview_chunks": [{"kind": item["metadata"]["chunk_kind"], "text": item["document"][:220]} for item in units[:8]],
+    }
+
+
 def search_knowledge(query: str, limit: int = 5, category: str | None = None) -> dict:
     where = {"primary_category": category} if category else None
     results = search_documents(query, n_results=limit, where=where)

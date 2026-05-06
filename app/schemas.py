@@ -277,6 +277,16 @@ class RAGIngestRequest(BaseModel):
     force_reingest: bool = True
 
 
+class RAGTextIngestRequest(BaseModel):
+    title: str = Field(..., min_length=2, max_length=255)
+    content: str = Field(..., min_length=20)
+    manual_categories: List[str] = Field(default_factory=list)
+    manual_tags: List[str] = Field(default_factory=list)
+    note: Optional[str] = None
+    source_id: Optional[str] = None
+    force_reingest: bool = True
+
+
 class RAGIngestResponse(BaseModel):
     status: str
     source_id: str

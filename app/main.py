@@ -54,7 +54,7 @@ from app.postgres import init_schema as init_postgres_schema, migrate_local_stat
 from app.public_chat import router as public_chat_router
 from app.queue import create_job_id, enqueue_job, enqueue_saved_state, init_job_state, queue_is_full, update_job
 from app.rag_categories import create_category, list_categories
-from app.rag import delete_source_documents, get_source_documents, get_taxonomy_summary, ingest_url, list_rag_sources, search_knowledge
+from app.rag import delete_source_documents, get_source_documents, get_taxonomy_summary, ingest_text, ingest_url, list_rag_sources, search_knowledge
 from app.shopee import get_shopee_product, import_legacy_sample, list_shopee_products, upsert_shopee_product
 from app.schemas import (
     JobListItem,
@@ -88,6 +88,7 @@ from app.schemas import (
     RAGSourceListResponse,
     RAGSourceResponse,
     RAGTaxonomyResponse,
+    RAGTextIngestRequest,
     ShopeeEnqueueRequest,
     ShopeeProductDetailResponse,
     ShopeeProductListItem,
@@ -850,6 +851,32 @@ async def rag_ingest(request: RAGIngestRequest) -> RAGIngestResponse:
     log.info(
         "rag_ingested",
         source_url=str(request.url),
+        status=result.get("status"),
+        documents_count=result.get("documents_count", 0),
+        categories=result.get("categories", []),
+    )
+    return RAGIngestResponse(**result)
+
+
+@app.post(f"{settings.api_prefix}/rag/ingest-text", response_model=RAGIngestResponse)
+async def rag_ingest_text(request: RAGTextIngestRequest) -> RAGIngestResponse:
+    try:
+        result = await asyncio.to_thread(
+            ingest_text,
+            request.title,
+            request.content,
+            request.manual_categories,
+            request.manual_tags,
+            request.note,
+            request.source_id,
+            request.force_reingest,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    log.info(
+        "rag_text_ingested",
+        source_id=result.get("source_id"),
+        title=result.get("title"),
         status=result.get("status"),
         documents_count=result.get("documents_count", 0),
         categories=result.get("categories", []),

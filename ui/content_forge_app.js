@@ -1896,7 +1896,7 @@
                                         <div>
                                             <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 block">File kiến thức</label>
                                             <div class="input-wrap"><input id="rag-file-input" type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv" class="hud-input w-full px-4 py-2.5 text-sm"/></div>
-                                            <div class="text-[10px] text-hud-muted mt-1">Hỗ trợ .md, .txt, .markdown, .csv · tối đa 2MB</div>
+                                            <div class="text-[10px] text-hud-muted mt-1">Hỗ trợ .md, .txt, .markdown, .csv · tối đa 10MB</div>
                                         </div>
                                         <div>
                                             <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 block">Danh mục lớn</label>

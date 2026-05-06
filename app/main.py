@@ -898,10 +898,10 @@ async def rag_ingest_file(
     if suffix not in allowed_suffixes:
         raise HTTPException(status_code=400, detail="Only .txt, .md, .markdown and .csv files are supported.")
 
-    max_bytes = 2 * 1024 * 1024
+    max_bytes = int(getattr(settings, "rag_file_max_mb", 10) or 10) * 1024 * 1024
     payload = await file.read(max_bytes + 1)
     if len(payload) > max_bytes:
-        raise HTTPException(status_code=400, detail="Knowledge file is too large. Maximum size is 2MB.")
+        raise HTTPException(status_code=400, detail=f"Knowledge file is too large. Maximum size is {max_bytes // 1024 // 1024}MB.")
     try:
         content = payload.decode("utf-8-sig")
     except UnicodeDecodeError:

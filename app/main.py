@@ -8,7 +8,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -54,8 +54,9 @@ from app.postgres import init_schema as init_postgres_schema, migrate_local_stat
 from app.public_chat import router as public_chat_router
 from app.queue import create_job_id, enqueue_job, enqueue_saved_state, init_job_state, queue_is_full, update_job
 from app.rag_categories import create_category, list_categories
-from app.rag import delete_source_documents, get_source_documents, get_taxonomy_summary, ingest_text, ingest_url, list_rag_sources, search_knowledge
+from app.rag import delete_source_documents, get_source_documents, get_taxonomy_summary, list_rag_sources, search_knowledge
 from app.shopee import get_shopee_product, import_legacy_sample, list_shopee_products, upsert_shopee_product
+from app.rag_jobs import create_rag_job, get_rag_job, list_rag_jobs, public_rag_job, run_rag_job
 from app.schemas import (
     JobListItem,
     JobListResponse,
@@ -83,7 +84,6 @@ from app.schemas import (
     RAGCategoryListResponse,
     PipelineState,
     RAGIngestRequest,
-    RAGIngestResponse,
     RAGSearchResponse,
     RAGSourceListResponse,
     RAGSourceResponse,
@@ -838,60 +838,51 @@ async def receive_facebook_webhook(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, **result})
 
 
-@app.post(f"{settings.api_prefix}/rag/ingest", response_model=RAGIngestResponse)
-async def rag_ingest(request: RAGIngestRequest) -> RAGIngestResponse:
-    result = await asyncio.to_thread(
-        ingest_url,
-        str(request.url),
-        request.manual_categories,
-        request.manual_tags,
-        request.note,
-        request.force_reingest,
+@app.post(f"{settings.api_prefix}/rag/ingest")
+async def rag_ingest(request: RAGIngestRequest, background_tasks: BackgroundTasks) -> dict:
+    job = await asyncio.to_thread(
+        create_rag_job,
+        "url",
+        {
+            "url": str(request.url),
+            "manual_categories": request.manual_categories,
+            "manual_tags": request.manual_tags,
+            "note": request.note,
+            "force_reingest": request.force_reingest,
+        },
     )
-    log.info(
-        "rag_ingested",
-        source_url=str(request.url),
-        status=result.get("status"),
-        documents_count=result.get("documents_count", 0),
-        categories=result.get("categories", []),
+    background_tasks.add_task(run_rag_job, job["job_id"])
+    return {"job_id": job["job_id"], "status": job["status"], "job": public_rag_job(job)}
+
+
+@app.post(f"{settings.api_prefix}/rag/ingest-text")
+async def rag_ingest_text(request: RAGTextIngestRequest, background_tasks: BackgroundTasks) -> dict:
+    job = await asyncio.to_thread(
+        create_rag_job,
+        "text",
+        {
+            "title": request.title,
+            "content": request.content,
+            "manual_categories": request.manual_categories,
+            "manual_tags": request.manual_tags,
+            "note": request.note,
+            "source_id": request.source_id,
+            "force_reingest": request.force_reingest,
+        },
     )
-    return RAGIngestResponse(**result)
+    background_tasks.add_task(run_rag_job, job["job_id"])
+    return {"job_id": job["job_id"], "status": job["status"], "job": public_rag_job(job)}
 
 
-@app.post(f"{settings.api_prefix}/rag/ingest-text", response_model=RAGIngestResponse)
-async def rag_ingest_text(request: RAGTextIngestRequest) -> RAGIngestResponse:
-    try:
-        result = await asyncio.to_thread(
-            ingest_text,
-            request.title,
-            request.content,
-            request.manual_categories,
-            request.manual_tags,
-            request.note,
-            request.source_id,
-            request.force_reingest,
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    log.info(
-        "rag_text_ingested",
-        source_id=result.get("source_id"),
-        title=result.get("title"),
-        status=result.get("status"),
-        documents_count=result.get("documents_count", 0),
-        categories=result.get("categories", []),
-    )
-    return RAGIngestResponse(**result)
-
-
-@app.post(f"{settings.api_prefix}/rag/ingest-file", response_model=RAGIngestResponse)
+@app.post(f"{settings.api_prefix}/rag/ingest-file")
 async def rag_ingest_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: str = Form(""),
     manual_category: str = Form(""),
     note: str = Form(""),
     force_reingest: bool = Form(True),
-) -> RAGIngestResponse:
+) -> dict:
     filename = file.filename or "knowledge.txt"
     suffix = Path(filename).suffix.lower()
     allowed_suffixes = {".txt", ".md", ".markdown", ".csv"}
@@ -902,36 +893,43 @@ async def rag_ingest_file(
     payload = await file.read(max_bytes + 1)
     if len(payload) > max_bytes:
         raise HTTPException(status_code=400, detail=f"Knowledge file is too large. Maximum size is {max_bytes // 1024 // 1024}MB.")
-    try:
-        content = payload.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        content = payload.decode("latin-1")
-
     cleaned_title = title.strip() or Path(filename).stem.replace("_", " ").replace("-", " ").strip() or filename
     categories = [manual_category.strip()] if manual_category.strip() else []
-    try:
-        result = await asyncio.to_thread(
-            ingest_text,
-            cleaned_title,
-            content,
-            categories,
-            [],
-            note.strip() or None,
-            f"file-{filename}",
-            force_reingest,
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    log.info(
-        "rag_file_ingested",
-        filename=filename,
-        source_id=result.get("source_id"),
-        title=result.get("title"),
-        status=result.get("status"),
-        documents_count=result.get("documents_count", 0),
-        categories=result.get("categories", []),
+    upload_dir = Path("data/rag_uploads")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_path = upload_dir / f"{secrets.token_hex(12)}{suffix}"
+    upload_path.write_bytes(payload)
+
+    job = await asyncio.to_thread(
+        create_rag_job,
+        "file",
+        {
+            "filename": filename,
+            "title": cleaned_title,
+            "upload_path": str(upload_path),
+            "manual_categories": categories,
+            "manual_tags": [],
+            "note": note.strip() or None,
+            "source_id": f"file-{filename}",
+            "force_reingest": force_reingest,
+        },
     )
-    return RAGIngestResponse(**result)
+    background_tasks.add_task(run_rag_job, job["job_id"])
+    return {"job_id": job["job_id"], "status": job["status"], "job": public_rag_job(job)}
+
+
+@app.get(f"{settings.api_prefix}/rag/jobs")
+async def rag_jobs(limit: int = 20) -> dict:
+    jobs = await asyncio.to_thread(list_rag_jobs, max(1, min(limit, 100)))
+    return {"total": len(jobs), "jobs": [public_rag_job(job) for job in jobs]}
+
+
+@app.get(f"{settings.api_prefix}/rag/jobs/{{job_id}}")
+async def rag_job(job_id: str) -> dict:
+    job = await asyncio.to_thread(get_rag_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="RAG job not found")
+    return public_rag_job(job)
 
 
 @app.get(f"{settings.api_prefix}/rag/categories", response_model=RAGCategoryListResponse)

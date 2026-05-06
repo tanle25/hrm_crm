@@ -165,6 +165,13 @@ def init_schema() -> None:
                 data JSONB NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS rag_jobs (
+                job_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'queued',
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                data JSONB NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS job_meta (
                 key TEXT PRIMARY KEY,
                 value BIGINT NOT NULL DEFAULT 0
@@ -211,6 +218,12 @@ def init_schema() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_flowkit_jobs_status_updated
             ON flowkit_jobs (status, updated_at DESC);
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rag_jobs_status_updated
+            ON rag_jobs (status, updated_at DESC);
             """
         )
         cur.execute("INSERT INTO job_meta (key, value) VALUES ('jobs_version', 0) ON CONFLICT (key) DO NOTHING;")

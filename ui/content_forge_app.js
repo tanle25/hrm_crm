@@ -1970,6 +1970,18 @@
                     </dialog>
                 </div>
             `;
+            const waitForRagJob = async (jobId, feedback, label) => {
+                for (let attempt = 0; attempt < 240; attempt += 1) {
+                    const job = await fetchJSON(`/rag/jobs/${encodeURIComponent(jobId)}`);
+                    const percent = Number(job.progress_percent || 0);
+                    const last = (job.progress || []).slice(-1)[0] || {};
+                    if (feedback) feedback.textContent = `${label}: ${job.status} · ${percent}% · ${last.detail || ""}`;
+                    if (job.status === "completed") return job;
+                    if (job.status === "failed") throw new Error(job.error || last.detail || "RAG job failed");
+                    await new Promise((resolve) => setTimeout(resolve, 1500));
+                }
+                throw new Error("RAG job timeout.");
+            };
             section.querySelector("#rag-ingest-btn")?.addEventListener("click", async () => {
                 const urls = (section.querySelector("#rag-ingest-urls")?.value || "")
                     .split(/\r?\n/)
@@ -1982,10 +1994,10 @@
                     return;
                 }
                 try {
-                    if (feedback) feedback.textContent = "Đang ingest...";
-                    let totalDocs = 0;
+                    if (feedback) feedback.textContent = "Đang gửi RAG job...";
+                    const submitted = [];
                     for (const url of urls) {
-                        const result = await fetchJSON("/rag/ingest", {
+                        const payload = await fetchJSON("/rag/ingest", {
                             method: "POST",
                             body: JSON.stringify({
                                 url,
@@ -1995,9 +2007,15 @@
                                 force_reingest: true,
                             }),
                         });
-                        totalDocs += Number(result.documents_count || 0);
+                        submitted.push({ url, job_id: payload.job_id });
                     }
-                    if (feedback) feedback.textContent = `Đã ingest ${urls.length} URL, tổng ${totalDocs} chunks.`;
+                    if (feedback) feedback.textContent = `Đã gửi ${submitted.length} RAG jobs. Có thể chuyển trang, job vẫn chạy nền.`;
+                    let totalDocs = 0;
+                    for (const item of submitted) {
+                        const job = await waitForRagJob(item.job_id, feedback, truncate(item.url, 42));
+                        totalDocs += Number(job.result?.documents_count || 0);
+                    }
+                    if (feedback) feedback.textContent = `Hoàn tất ${submitted.length} URL, tổng ${totalDocs} chunks.`;
                     renderKnowledgePage();
                 } catch (error) {
                     if (feedback) feedback.textContent = `Ingest failed: ${error.message}`;
@@ -2014,8 +2032,8 @@
                     return;
                 }
                 try {
-                    if (feedback) feedback.textContent = "Đang lưu kiến thức văn bản...";
-                    const result = await fetchJSON("/rag/ingest-text", {
+                    if (feedback) feedback.textContent = "Đang gửi RAG text job...";
+                    const payload = await fetchJSON("/rag/ingest-text", {
                         method: "POST",
                         body: JSON.stringify({
                             title,
@@ -2026,7 +2044,8 @@
                             force_reingest: true,
                         }),
                     });
-                    if (feedback) feedback.textContent = `Đã lưu ${result.documents_count || 0} chunks từ văn bản.`;
+                    const job = await waitForRagJob(payload.job_id, feedback, "Text knowledge");
+                    if (feedback) feedback.textContent = `Đã lưu ${job.result?.documents_count || 0} chunks từ văn bản.`;
                     renderKnowledgePage();
                 } catch (error) {
                     if (feedback) feedback.textContent = `Lưu kiến thức thất bại: ${error.message}`;
@@ -2044,18 +2063,19 @@
                     return;
                 }
                 try {
-                    if (feedback) feedback.textContent = "Đang upload và lưu kiến thức từ file...";
+                    if (feedback) feedback.textContent = "Đang upload file và gửi RAG job...";
                     const formData = new FormData();
                     formData.append("file", file);
                     formData.append("manual_category", category);
                     formData.append("title", title);
                     formData.append("note", note);
                     formData.append("force_reingest", "true");
-                    const result = await fetchJSON("/rag/ingest-file", {
+                    const payload = await fetchJSON("/rag/ingest-file", {
                         method: "POST",
                         body: formData,
                     });
-                    if (feedback) feedback.textContent = `Đã lưu ${result.documents_count || 0} chunks từ file ${file.name}.`;
+                    const job = await waitForRagJob(payload.job_id, feedback, file.name);
+                    if (feedback) feedback.textContent = `Đã lưu ${job.result?.documents_count || 0} chunks từ file ${file.name}.`;
                     renderKnowledgePage();
                 } catch (error) {
                     if (feedback) feedback.textContent = `Upload file thất bại: ${error.message}`;

@@ -5,6 +5,7 @@ import os
 import tempfile
 import re
 import unicodedata
+import xmlrpc.client
 from html import escape, unescape
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
@@ -341,6 +342,79 @@ def _shopee_taxonomy_terms(normalized: dict) -> dict[str, list[str]]:
     return terms
 
 
+def _php_serialize(value) -> str:
+    if value is None:
+        return "N;"
+    if isinstance(value, bool):
+        return f"b:{1 if value else 0};"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"i:{value};"
+    if isinstance(value, float):
+        return f"d:{value};"
+    if isinstance(value, str):
+        return f's:{len(value.encode("utf-8"))}:"{value}";'
+    if isinstance(value, list):
+        items = []
+        for index, item in enumerate(value):
+            items.append(_php_serialize(index))
+            items.append(_php_serialize(item))
+        return f"a:{len(value)}:{{{''.join(items)}}}"
+    if isinstance(value, dict):
+        items = []
+        for key, item in value.items():
+            items.append(_php_serialize(str(key)))
+            items.append(_php_serialize(item))
+        return f"a:{len(value)}:{{{''.join(items)}}}"
+    return _php_serialize(str(value))
+
+
+def _wp_custom_field_value(value) -> str:
+    if isinstance(value, (dict, list)):
+        return _php_serialize(value)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _sync_wp_affiliate_custom_fields(site_config: dict, post_id: int, payload: dict) -> str:
+    meta = payload.get("meta") or {}
+    if not isinstance(meta, dict) or not meta:
+        return ""
+
+    endpoint = f"{site_config['woo_url'].rstrip('/')}/xmlrpc.php"
+    proxy = xmlrpc.client.ServerProxy(endpoint, allow_none=True)
+    username = site_config["username"]
+    app_password = site_config["app_password"]
+
+    post = proxy.wp.getPost(0, username, app_password, int(post_id))
+    existing_fields = post.get("custom_fields") if isinstance(post, dict) else []
+    existing_by_key: dict[str, dict] = {}
+    for field in existing_fields or []:
+        if isinstance(field, dict) and field.get("key") and str(field.get("key")) not in existing_by_key:
+            existing_by_key[str(field["key"])] = field
+
+    custom_fields = []
+    for key, value in meta.items():
+        key_text = str(key or "").strip()
+        if not key_text or key_text.startswith("_"):
+            continue
+        field = {"key": key_text, "value": _wp_custom_field_value(value)}
+        existing_id = existing_by_key.get(key_text, {}).get("id")
+        if existing_id:
+            field["id"] = existing_id
+        custom_fields.append(field)
+
+    proxy.wp.editPost(0, username, app_password, int(post_id), {"custom_fields": custom_fields})
+
+    terms = payload.get("terms") or {}
+    if isinstance(terms, dict) and terms:
+        try:
+            proxy.wp.editPost(0, username, app_password, int(post_id), {"terms_names": terms})
+        except Exception as exc:
+            return f"Affiliate taxonomy sync warning: {exc}"
+    return ""
+
+
 def _shopee_source_image_urls(state: dict) -> list[str]:
     image_data = state.get("image_data", {}) or {}
     source_seed = state.get("source_seed") or {}
@@ -470,6 +544,8 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     original_source_url = str(normalized.get("source_url") or state.get("url") or "").strip()
     clean_product_url = _clean_shopee_product_url(original_source_url, normalized)
     affiliate_url = _shopee_affiliate_url(state)
+    affiliate_suffix = urlencode(_affiliate_query_items(site_config), doseq=True)
+    affiliate_query = f"?{affiliate_suffix}" if affiliate_suffix else ""
     regular_price = re.sub(r"[^\d]", "", str(normalized.get("regular_price") or ""))
     sale_price = re.sub(r"[^\d]", "", str(normalized.get("sale_price") or ""))
     source_urls = _shopee_source_image_urls(state)
@@ -485,7 +561,13 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     rating_count = str(normalized.get("rating_count") or 15)
     sold = str(normalized.get("sold") or "")
     shop_name = str(normalized.get("shop_name") or "")
+    shop_id = str(normalized.get("shop_id") or "")
     shop_link = str(normalized.get("shop_url") or "")
+    if not shop_link and shop_id:
+        shop_link = f"https://shopee.vn/shop/{shop_id}"
+    brand = str(normalized.get("brand") or "")
+    category = str(normalized.get("category") or "")
+    current_price = sale_price or regular_price
 
     payload = {
         "title": state["plan"]["title"],
@@ -507,37 +589,79 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
             "_content_forge_shopee_item_id": str(normalized.get("item_id") or ""),
             "_content_forge_shopee_shop_id": str(normalized.get("shop_id") or ""),
             "id_pr": product_identity,
+            "Shop": shop_name or shop_id,
+            "shop": shop_name or shop_id,
+            "shop_id": shop_id,
             "ShopeeID": shopee_id,
+            "shopee_id": shopee_id,
             "shop_name": shop_name,
+            "ShopName": shop_name,
+            "shopName": shop_name,
             "shop_link": shop_link,
+            "ShopURL": shop_link,
+            "shop_url": shop_link,
             "image_featured_cs": image_slots[0],
+            "featured_image": image_slots[0],
+            "Image": image_slots[0],
+            "image": image_slots[0],
+            "Gallery": gallery_urls,
+            "gallery": gallery_urls,
             "affiliate_url": affiliate_url,
             "_affiliate_url": affiliate_url,
             "product_url": affiliate_url,
             "_product_url": affiliate_url,
-            "shopee_url": affiliate_url,
+            "shopee_url": clean_product_url,
+            "Link_Shopee": clean_product_url,
+            "Shopee_Affiliate": affiliate_query,
             "Lalada_URL": "",
+            "Lazada_URL": "",
+            "Link_Lazada": "",
+            "Lazada_Affiliate": "",
             "Tiki_URL": "",
+            "Link_Tiki": "",
+            "Tiki_Affiliate": "",
+            "Tiktok_URL": "",
+            "Link_Tiktok": "",
+            "Tiktok_Affiliate": "",
             "clean_product_url": clean_product_url,
-            "Price": sale_price or regular_price,
+            "Price": current_price,
+            "price_shopee": current_price,
+            "Price_Shopee": current_price,
             "Price_Min": price_min,
             "Price_Max": price_max,
             "Price_Min_BF": price_min_before,
             "Price_Max_BF": price_max_before,
             "Price_LAZ": "",
+            "Price_Lazada": "",
             "Price_Tiki": "",
+            "Price_Tiktok": "",
             "regular_price": regular_price,
             "sale_price": sale_price,
-            "price": sale_price or regular_price,
+            "price": current_price,
             "image_1": image_slots[0],
             "image_2": image_slots[1],
             "image_3": image_slots[2],
             "image_4": image_slots[3],
             "image_5": image_slots[4],
+            "Images_1": image_slots[0],
+            "Images_2": image_slots[1],
+            "Images_3": image_slots[2],
+            "Images_4": image_slots[3],
+            "Images_5": image_slots[4],
             "video_url": str(normalized.get("video_url") or ""),
+            "video_link": str(normalized.get("video_url") or ""),
+            "video_file": "",
+            "Video_File": "",
+            "file_video": "",
             "Rating": str(normalized.get("rating") or ""),
+            "Rating_Star": str(normalized.get("rating") or ""),
+            "rating_star": str(normalized.get("rating") or ""),
             "Rating_Count": rating_count,
+            "rating_count": rating_count,
             "Sold": sold,
+            "sold": sold,
+            "Brand": brand,
+            "Category": category,
             "Attributes": _shopee_meta_attributes(normalized),
             "gallery_image_ids": [],
             "_gallery_image_ids": [],
@@ -588,20 +712,33 @@ def _publish_wp_post_type_via_rest(state: dict, payload: dict, post_type: str, r
                 response = httpx.post(url, params=params, auth=auth, json=variant, timeout=60)
                 response.raise_for_status()
                 data = response.json()
-                return {
-                    "woo_post_id": data["id"],
-                    "woo_link": data.get("link") or data.get("permalink") or "",
-                    "published_post_type": post_type,
-                    "published_rest_base": rest_base,
-                }
             except httpx.HTTPStatusError as exc:
                 response = exc.response
                 body = re.sub(r"\s+", " ", response.text or "").strip()[:500]
                 route = "index_rest_route" if local_index_route else "wp_json"
                 errors.append(f"{route} POST {response.status_code} variant {variant_index}: {body}")
+                continue
             except Exception as exc:
                 route = "index_rest_route" if local_index_route else "wp_json"
                 errors.append(f"{route} POST error variant {variant_index}: {exc}")
+                continue
+
+            post_id = int(data["id"])
+            try:
+                sync_warning = _sync_wp_affiliate_custom_fields(site_config, post_id, payload)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"WordPress post created (ID={post_id}) but affiliate custom field sync failed via XML-RPC: {exc}"
+                ) from exc
+            result = {
+                "woo_post_id": data["id"],
+                "woo_link": data.get("link") or data.get("permalink") or "",
+                "published_post_type": post_type,
+                "published_rest_base": rest_base,
+            }
+            if sync_warning:
+                result["warning"] = sync_warning
+            return result
     raise RuntimeError(
         f"WordPress affiliate publish failed for post_type={post_type!r}, rest_base={rest_base!r}: "
         + " | ".join(errors)

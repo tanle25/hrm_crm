@@ -399,10 +399,9 @@ def _shopee_affiliate_focus_keyword(state: dict) -> str:
 def _affiliate_meta_title(focus_keyword: str) -> str:
     base = re.sub(r"\s+", " ", focus_keyword or "").strip()
     if not base:
-        return "Sản phẩm Shopee: 5 điểm cần biết"
-    candidate = f"{base}: 5 điểm cần biết"
-    if len(candidate) <= 60:
-        return candidate
+        return "Sản phẩm Shopee"
+    if len(base) <= 60:
+        return base
     return base[:60].rsplit(" ", 1)[0].rstrip(" -–|:,;") or base[:60]
 
 

@@ -326,6 +326,18 @@ def _contains_redacted_marker(value) -> bool:
     return "*" in text or "%2a" in text.lower() or "*" in unquote(text)
 
 
+def _redacted_url_snippet(value) -> str:
+    text = str(value or "")
+    match = re.search(r"https?://[^\s\"'<>]*\*[^\s\"'<>]*", text)
+    if match:
+        return match.group(0)[:180]
+    if "%2a" in text.lower():
+        return text[max(0, text.lower().find("%2a") - 80): text.lower().find("%2a") + 100]
+    if "*" in text:
+        return text[max(0, text.find("*") - 80): text.find("*") + 100]
+    return ""
+
+
 def _strip_redacted_images_from_html(html: str) -> str:
     def replace_figure(match: re.Match[str]) -> str:
         return "" if _contains_redacted_marker(match.group(0)) else match.group(0)
@@ -403,8 +415,9 @@ def _sanitize_shopee_affiliate_payload(payload: dict, state: dict, uploaded_imag
         meta["product_gallery_urls"] = source_urls
         meta["_product_gallery_urls"] = source_urls
 
-    if _contains_redacted_marker(payload.get("content")) or _contains_redacted_marker(meta):
-        raise RuntimeError("Shopee affiliate publish blocked: redacted image URL remains in final WordPress payload")
+    snippet = _redacted_url_snippet(payload.get("content")) or _redacted_url_snippet(meta)
+    if snippet:
+        raise RuntimeError(f"Shopee affiliate publish blocked: redacted image URL remains in final WordPress payload: {snippet}")
     return payload
 
 
@@ -491,10 +504,10 @@ def _publish_wp_post_type_via_rest(state: dict, payload: dict, post_type: str, r
         {key: value for key, value in payload.items() if key != "meta"},
         {key: value for key, value in payload.items() if key in {"title", "content", "status", "slug", "featured_media"}},
     ]
-    if _source_origin(state) == "shopee":
-        for variant_index, variant in enumerate(payload_variants, start=1):
-            if _contains_redacted_marker(variant):
-                raise RuntimeError(f"Shopee affiliate publish blocked: redacted image URL remains before WordPress POST variant {variant_index}")
+    for variant_index, variant in enumerate(payload_variants, start=1):
+        snippet = _redacted_url_snippet(variant)
+        if snippet:
+            raise RuntimeError(f"Affiliate publish blocked: redacted image URL remains before WordPress POST variant {variant_index}: {snippet}")
 
     errors: list[str] = []
     for url, params, local_index_route in candidates:

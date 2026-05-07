@@ -20,6 +20,7 @@
     const state = {
         selectedJobId: localStorage.getItem("content_forge_selected_job_id") || "",
         selectedSiteId: "",
+        siteCreateMode: false,
         selectedSubmitSiteIds: JSON.parse(localStorage.getItem("content_forge_submit_site_ids") || "[]"),
         selectedFacebookCreatePageIds: JSON.parse(localStorage.getItem("content_forge_fb_create_page_ids") || "[]"),
         selectedFacebookCreateGroups: JSON.parse(localStorage.getItem("content_forge_fb_create_groups") || "[]"),
@@ -2165,10 +2166,10 @@
         try {
             const payload = await fetchJSON("/sites");
             const sites = payload.sites || [];
-            if (!state.selectedSiteId && sites.length) {
+            if (!state.siteCreateMode && !state.selectedSiteId && sites.length) {
                 state.selectedSiteId = sites[0].site_id;
             }
-            const selectedSite = sites.find((item) => item.site_id === state.selectedSiteId) || null;
+            const selectedSite = state.siteCreateMode ? null : (sites.find((item) => item.site_id === state.selectedSiteId) || null);
             const form = normalizeSiteForForm(selectedSite);
             const connectedCount = sites.filter((item) => item.last_test_status === "connected").length;
             const issueCount = sites.filter((item) => ["offline", "error", "unauthorized"].includes(item.last_test_status)).length;
@@ -2307,10 +2308,12 @@
                 }
             });
             section.querySelectorAll(".site-select-btn").forEach((button) => button.addEventListener("click", () => {
+                state.siteCreateMode = false;
                 state.selectedSiteId = button.dataset.siteId || "";
                 renderWebsiteManagePage();
             }));
             section.querySelector("#site-new-btn")?.addEventListener("click", () => {
+                state.siteCreateMode = true;
                 state.selectedSiteId = "";
                 renderWebsiteManagePage();
             });
@@ -2336,6 +2339,7 @@
                     const saved = selectedSite
                         ? await fetchJSON(`/sites/${encodeURIComponent(selectedSite.site_id)}`, { method: "PUT", body: JSON.stringify(requestBody) })
                         : await fetchJSON("/sites", { method: "POST", body: JSON.stringify(requestBody) });
+                    state.siteCreateMode = false;
                     state.selectedSiteId = saved.site_id;
                     await renderWebsiteManagePage();
                 } catch (error) {
@@ -2374,6 +2378,7 @@
             section.querySelector("#site-delete-btn")?.addEventListener("click", async () => {
                 if (!selectedSite) return;
                 await fetchJSON(`/sites/${encodeURIComponent(selectedSite.site_id)}`, { method: "DELETE" });
+                state.siteCreateMode = false;
                 state.selectedSiteId = "";
                 await renderWebsiteManagePage();
             });

@@ -147,7 +147,13 @@ def _url_reachable(client: httpx.Client, url: str) -> bool:
         return False
 
 
-def _upload_wp_media_from_temp(site_config: dict, image_url: str, alt_text: str, index: int) -> dict | None:
+def _upload_wp_media_from_temp(
+    site_config: dict,
+    image_url: str,
+    alt_text: str,
+    index: int,
+    filename_prefix: str = "content-forge-image",
+) -> dict | None:
     if not (site_config.get("username") and site_config.get("app_password")):
         return None
     image_url = _normalize_image_url(image_url)
@@ -171,8 +177,9 @@ def _upload_wp_media_from_temp(site_config: dict, image_url: str, alt_text: str,
             extension = _image_extension(download.headers.get("content-type", ""), content, image_url)
             if not extension:
                 return None
-            filename = f"content-forge-shopee-{index}{extension}"
-            with tempfile.NamedTemporaryFile(prefix="content-forge-shopee-", suffix=extension, delete=False) as tmp_file:
+            safe_prefix = re.sub(r"[^a-z0-9_-]+", "-", filename_prefix.lower()).strip("-") or "content-forge-image"
+            filename = f"{safe_prefix}-{index}{extension}"
+            with tempfile.NamedTemporaryFile(prefix=f"{safe_prefix}-", suffix=extension, delete=False) as tmp_file:
                 tmp_file.write(content)
                 tmp_path = Path(tmp_file.name)
             try:
@@ -240,6 +247,51 @@ def _upload_shopee_affiliate_images(state: dict) -> list[dict]:
     # Affiliate posts should hotlink Shopee CDN images instead of creating WP
     # media attachments. This avoids filling the target site's disk.
     return []
+
+
+def _website_featured_media_id(state: dict) -> int:
+    image_data = state.get("image_data", {}) or {}
+    uploaded = image_data.get("uploaded") or []
+    for item in uploaded:
+        try:
+            media_id = int(item.get("id") or 0)
+        except Exception:
+            media_id = 0
+        if media_id > 0:
+            return media_id
+
+    candidates = []
+    if image_data.get("url"):
+        candidates.append(str(image_data.get("url") or ""))
+    candidates.extend(str(url or "") for url in (image_data.get("gallery") or []))
+    candidates = [_normalize_image_url(url) for url in candidates]
+    candidates = [url for index, url in enumerate(candidates) if url and url not in candidates[:index]]
+    if not candidates:
+        return 0
+
+    alt_text = str(
+        image_data.get("alt_text")
+        or state.get("plan", {}).get("focus_keyword")
+        or state.get("plan", {}).get("title")
+        or "Featured image"
+    )
+    site_config = _publisher_site_config(state)
+    for index, image_url in enumerate(candidates[:3], start=1):
+        media_item = _upload_wp_media_from_temp(
+            site_config,
+            image_url,
+            alt_text,
+            index,
+            filename_prefix="content-forge-post",
+        )
+        if not media_item:
+            continue
+        image_data.setdefault("uploaded", []).append(media_item)
+        if media_item.get("url"):
+            image_data["url"] = media_item["url"]
+        state["image_data"] = image_data
+        return int(media_item["id"])
+    return 0
 
 
 def _wp_rest_collection_base(value: str) -> str:
@@ -921,6 +973,7 @@ def _build_website_post_payload(state: dict) -> dict:
     image_gallery = image_data.get("gallery") or []
     meta_title = _seo_title(state)
     meta_description = _seo_description(state["plan"])
+    featured_media_id = _website_featured_media_id(state)
     content = _inject_content_images(
         state["linked_html"],
         image_gallery,
@@ -928,7 +981,7 @@ def _build_website_post_payload(state: dict) -> dict:
         force=True,
     )
     content = _prepare_website_post_content(content, state)
-    return {
+    payload = {
         "title": state["plan"]["title"],
         "content": content,
         "status": status,
@@ -944,6 +997,9 @@ def _build_website_post_payload(state: dict) -> dict:
             "_content_forge_source_origin": str(state.get("source_origin") or ""),
         },
     }
+    if featured_media_id > 0:
+        payload["featured_media"] = featured_media_id
+    return payload
 
 
 def _publish_wp_post_via_rest(state: dict, payload: dict) -> dict:

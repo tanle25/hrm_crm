@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import os
 import re
 import secrets
 from contextlib import suppress
@@ -1582,6 +1583,45 @@ async def delete_dlq(job_id: str) -> dict:
 @app.get(f"{settings.api_prefix}/stats", response_model=StatsResponse)
 async def get_stats() -> StatsResponse:
     return StatsResponse(**_stats_payload())
+
+
+@app.get(f"{settings.api_prefix}/cliproxy/quota")
+async def cliproxy_quota(force: int = Query(0, ge=0, le=1)) -> dict:
+    quota_url = os.getenv("CLIPROXY_QUOTA_URL", "http://127.0.0.1:8320").rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            quota_response = await client.get(f"{quota_url}/quota", params={"force": int(bool(force))})
+            quota_response.raise_for_status()
+            quota_payload = quota_response.json()
+            best_payload = {}
+            with suppress(Exception):
+                best_response = await client.get(f"{quota_url}/quota/best")
+                if best_response.status_code == 200:
+                    best_payload = best_response.json()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Cliproxy quota API failed: {exc.response.text[:300]}") from exc
+    except Exception as exc:
+        return {
+            "available": False,
+            "error": str(exc),
+            "summary": {
+                "total": 0,
+                "healthy": 0,
+                "safe_to_use": False,
+                "stale": True,
+                "avg_remaining_5h": 0,
+                "avg_remaining_7d": 0,
+            },
+            "accounts": [],
+            "best": {},
+        }
+    return {
+        "available": True,
+        "summary": quota_payload.get("summary") or {},
+        "accounts": quota_payload.get("accounts") or [],
+        "best": best_payload,
+        "fetched_at": quota_payload.get("fetched_at", ""),
+    }
 
 
 @app.get("/")

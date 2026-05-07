@@ -104,6 +104,8 @@
         flowkitDraft: {},
         flowkitLastJobs: [],
         flowkitPinnedJobId: "",
+        cliproxyQuota: null,
+        cliproxyQuotaTimer: null,
     };
 
     function escapeHtml(value) {
@@ -229,6 +231,62 @@
             throw new Error(message);
         }
         return response.json();
+    }
+
+    function quotaToneClass(value, safe = true) {
+        const numeric = Number(value || 0);
+        if (!safe || numeric <= 10) return "text-hud-red";
+        if (numeric <= 30) return "text-hud-amber";
+        return "text-hud-cyan";
+    }
+
+    function renderSidebarQuota() {
+        const payload = state.cliproxyQuota || {};
+        const summary = payload.summary || {};
+        const available = payload.available !== false;
+        const safe = Boolean(summary.safe_to_use) && available;
+        const avg5h = Number(summary.avg_remaining_5h || 0);
+        const healthy = Number(summary.healthy || 0);
+        const total = Number(summary.total || 0);
+        const valueEl = document.getElementById("cliproxy-quota-5h");
+        const barEl = document.getElementById("cliproxy-quota-bar");
+        const accountsEl = document.getElementById("cliproxy-quota-accounts");
+        if (valueEl) {
+            valueEl.textContent = available ? `${formatNumber(avg5h, 0)}%` : "OFFLINE";
+            valueEl.className = `${quotaToneClass(avg5h, safe)} font-bold`;
+        }
+        if (barEl) {
+            const width = available ? Math.max(0, Math.min(100, avg5h)) : 0;
+            barEl.style.width = `${width}%`;
+            barEl.style.boxShadow = safe ? "0 0 6px #00f0ff" : "0 0 6px #ff3b6b";
+        }
+        if (accountsEl) {
+            accountsEl.textContent = available ? `${healthy} / ${total}` : "-- / --";
+            accountsEl.className = `${healthy > 0 && safe ? "text-hud-amber" : "text-hud-red"} font-bold`;
+        }
+    }
+
+    async function refreshCliproxyQuota(force = false) {
+        try {
+            const payload = await fetchJSON(`/cliproxy/quota${force ? "?force=1" : ""}`);
+            state.cliproxyQuota = payload;
+        } catch (error) {
+            state.cliproxyQuota = {
+                available: false,
+                error: error.message,
+                summary: { safe_to_use: false, stale: true, avg_remaining_5h: 0, avg_remaining_7d: 0, healthy: 0, total: 0 },
+                accounts: [],
+                best: {},
+            };
+        }
+        renderSidebarQuota();
+        return state.cliproxyQuota;
+    }
+
+    function startCliproxyQuotaRefresh() {
+        refreshCliproxyQuota();
+        if (state.cliproxyQuotaTimer) clearInterval(state.cliproxyQuotaTimer);
+        state.cliproxyQuotaTimer = setInterval(() => refreshCliproxyQuota(), 60000);
     }
 
     function setSelectedJob(jobId) {
@@ -6503,10 +6561,85 @@
         if (!section) return;
         section.innerHTML = `<div class="max-w-5xl mx-auto text-hud-muted text-sm">Loading settings...</div>`;
         try {
-            const payload = await fetchJSON("/settings/tokens");
+            const [payload, quotaPayload] = await Promise.all([
+                fetchJSON("/settings/tokens"),
+                refreshCliproxyQuota(true),
+            ]);
             const tokens = payload.tokens || [];
+            const quota = quotaPayload || state.cliproxyQuota || {};
+            const quotaSummary = quota.summary || {};
+            const quotaAccounts = quota.accounts || [];
+            const quotaBest = quota.best || {};
+            const quotaAvailable = quota.available !== false;
             section.innerHTML = `
                 <div class="max-w-5xl mx-auto">
+                    <div class="hud-card mb-6 fade-in">
+                        <span class="c-tl"></span><span class="c-br"></span>
+                        <div class="header-strip px-5 py-3 flex items-center gap-2">
+                            <i class="fa-solid fa-gauge-high text-hud-cyan"></i>
+                            <span class="font-display font-black text-xs text-white uppercase-widest">CODEX QUOTA</span>
+                            <span class="badge ${quotaAvailable && quotaSummary.safe_to_use ? "green" : "red"} ml-auto">${quotaAvailable ? (quotaSummary.safe_to_use ? "SAFE" : "LIMITED") : "OFFLINE"}</span>
+                        </div>
+                        <div class="p-5 space-y-5">
+                            <div class="grid grid-cols-5 gap-3">
+                                <div class="border border-hud-cyan/15 bg-black/20 p-3">
+                                    <div class="text-[9px] text-hud-muted uppercase-wide">Healthy</div>
+                                    <div class="metric-num text-xl text-white">${formatNumber(quotaSummary.healthy || 0)} / ${formatNumber(quotaSummary.total || 0)}</div>
+                                </div>
+                                <div class="border border-hud-cyan/15 bg-black/20 p-3">
+                                    <div class="text-[9px] text-hud-muted uppercase-wide">Avg 5H</div>
+                                    <div class="metric-num text-xl ${quotaToneClass(quotaSummary.avg_remaining_5h, quotaSummary.safe_to_use)}">${formatNumber(quotaSummary.avg_remaining_5h || 0, 0)}%</div>
+                                </div>
+                                <div class="border border-hud-cyan/15 bg-black/20 p-3">
+                                    <div class="text-[9px] text-hud-muted uppercase-wide">Avg 7D</div>
+                                    <div class="metric-num text-xl text-hud-cyan">${formatNumber(quotaSummary.avg_remaining_7d || 0, 0)}%</div>
+                                </div>
+                                <div class="border border-hud-cyan/15 bg-black/20 p-3">
+                                    <div class="text-[9px] text-hud-muted uppercase-wide">Min 5H</div>
+                                    <div class="metric-num text-xl ${quotaToneClass(quotaSummary.min_remaining_5h, true)}">${formatNumber(quotaSummary.min_remaining_5h || 0, 0)}%</div>
+                                </div>
+                                <div class="border border-hud-cyan/15 bg-black/20 p-3">
+                                    <div class="text-[9px] text-hud-muted uppercase-wide">Stale</div>
+                                    <div class="metric-num text-xl ${quotaSummary.stale ? "text-hud-red" : "text-hud-green"}">${quotaSummary.stale ? "YES" : "NO"}</div>
+                                </div>
+                            </div>
+                            <div class="border border-hud-amber/20 bg-hud-amber/5 p-4 text-[11px]">
+                                <div class="flex items-center justify-between gap-4">
+                                    <div>
+                                        <div class="text-hud-muted uppercase-wide mb-1">Best Account</div>
+                                        <div class="text-white font-bold">${escapeHtml(quotaBest.account || "-")}</div>
+                                    </div>
+                                    <div class="text-right">
+                                        <div class="text-hud-cyan font-mono">5H ${formatNumber(quotaBest.five_hour_remaining || 0, 0)}% · 7D ${formatNumber(quotaBest.weekly_remaining || 0, 0)}%</div>
+                                        <div class="text-hud-muted mt-1">Fetched: ${escapeHtml(quotaSummary.fetched_at ? formatDate(quotaSummary.fetched_at) : "-")}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="space-y-2">
+                                ${quotaAccounts.length ? quotaAccounts.map((account) => {
+                                    const status = String(account.status || "unknown");
+                                    const ok = status === "ok" && !account.limit_reached;
+                                    const fiveHour = Number(account.five_hour?.remaining_percent || 0);
+                                    const weekly = Number(account.weekly?.remaining_percent || 0);
+                                    return `
+                                        <div class="border border-hud-cyan/15 bg-black/20 p-3">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-2 h-2 rounded-full ${ok ? "bg-hud-green" : "bg-hud-red"}"></div>
+                                                <div class="flex-1 min-w-0">
+                                                    <div class="text-white font-bold text-xs truncate">${escapeHtml(account.account || account.file || "-")}</div>
+                                                    <div class="text-[10px] text-hud-muted mt-0.5">${escapeHtml(account.file || "")}</div>
+                                                </div>
+                                                <div class="text-right text-[10px]">
+                                                    <div><span class="${quotaToneClass(fiveHour, ok)} font-bold">5H ${formatNumber(fiveHour, 0)}%</span> <span class="text-hud-muted">·</span> <span class="text-hud-cyan font-bold">7D ${formatNumber(weekly, 0)}%</span></div>
+                                                    <div class="${ok ? "text-hud-green" : "text-hud-red"} uppercase-wide mt-1">${escapeHtml(status)}${account.limit_reached ? " · LIMIT" : ""}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join("") : `<div class="text-hud-muted text-[11px]">Không có dữ liệu quota. Kiểm tra service codex-quota trên VPS.</div>`}
+                            </div>
+                        </div>
+                    </div>
                     <div class="hud-card mb-6 fade-in">
                         <span class="c-tl"></span><span class="c-br"></span>
                         <div class="header-strip px-5 py-3 flex items-center gap-2">
@@ -6811,6 +6944,7 @@
             };
         }
         const activePage = document.querySelector(".page.active")?.id?.replace("page-", "") || "submit";
+        startCliproxyQuotaRefresh();
         connectFacebookMessagesStream();
         refreshFacebookUnreadFromDatabase();
         onPageActivated(activePage);

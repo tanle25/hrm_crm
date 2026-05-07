@@ -236,24 +236,9 @@ def _upload_shopee_images_if_needed(state: dict, payload: dict) -> None:
 
 
 def _upload_shopee_affiliate_images(state: dict) -> list[dict]:
-    image_data = state.get("image_data", {}) or {}
-    image_urls = [_normalize_image_url(str(url).strip()) for url in (image_data.get("gallery") or []) if str(url).strip()]
-    image_urls = [url for url in image_urls if url]
-    if not image_urls:
-        return []
-    site_config = _publisher_site_config(state)
-    alt_text = str(
-        image_data.get("alt_text")
-        or state.get("plan", {}).get("focus_keyword")
-        or state.get("plan", {}).get("title")
-        or "Shopee affiliate product"
-    )
-    uploaded: list[dict] = []
-    for index, image_url in enumerate(image_urls[:8], start=1):
-        media_item = _upload_wp_media_from_temp(site_config, image_url, alt_text, index)
-        if media_item:
-            uploaded.append(media_item)
-    return uploaded
+    # Affiliate posts should hotlink Shopee CDN images instead of creating WP
+    # media attachments. This avoids filling the target site's disk.
+    return []
 
 
 def _wp_rest_collection_base(value: str) -> str:
@@ -439,10 +424,8 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     affiliate_url = _shopee_affiliate_url(state)
     regular_price = re.sub(r"[^\d]", "", str(normalized.get("regular_price") or ""))
     sale_price = re.sub(r"[^\d]", "", str(normalized.get("sale_price") or ""))
-    uploaded_ids = [int(item["id"]) for item in uploaded_images if item.get("id")]
-    uploaded_urls = [str(item.get("url") or "").strip() for item in uploaded_images if str(item.get("url") or "").strip()]
     source_urls = _shopee_source_image_urls(state)
-    gallery_urls = source_urls or uploaded_urls
+    gallery_urls = source_urls
 
     payload = {
         "title": state["plan"]["title"],
@@ -471,24 +454,22 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
             "regular_price": regular_price,
             "sale_price": sale_price,
             "price": sale_price or regular_price,
-            "gallery_image_ids": uploaded_ids,
-            "_gallery_image_ids": uploaded_ids,
+            "gallery_image_ids": [],
+            "_gallery_image_ids": [],
             "gallery_image_urls": gallery_urls,
             "_gallery_image_urls": gallery_urls,
-            "product_gallery": uploaded_ids,
-            "_product_gallery": uploaded_ids,
-            "product_gallery_images": uploaded_ids,
-            "_product_gallery_images": uploaded_ids,
-            "product_image_gallery": ",".join(str(item) for item in uploaded_ids),
-            "_product_image_gallery": ",".join(str(item) for item in uploaded_ids),
-            "image_gallery": ",".join(str(item) for item in uploaded_ids),
-            "_image_gallery": ",".join(str(item) for item in uploaded_ids),
+            "product_gallery": [],
+            "_product_gallery": [],
+            "product_gallery_images": [],
+            "_product_gallery_images": [],
+            "product_image_gallery": "",
+            "_product_image_gallery": "",
+            "image_gallery": "",
+            "_image_gallery": "",
             "product_gallery_urls": gallery_urls,
             "_product_gallery_urls": gallery_urls,
         },
     }
-    if uploaded_images:
-        payload["featured_media"] = int(uploaded_images[0]["id"])
     payload = _sanitize_shopee_affiliate_payload(payload, state, uploaded_images)
     return payload, post_type, _wp_rest_collection_base(rest_base)
 

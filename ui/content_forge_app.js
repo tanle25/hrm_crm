@@ -937,7 +937,6 @@
         try {
             const [productsPayload] = await Promise.all([fetchJSON("/shopee/products?limit=100")]);
             const items = productsPayload.items || [];
-            setSelectedShopeeItem("");
             section.innerHTML = `
                 <div class="max-w-7xl mx-auto overflow-x-hidden">
                     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
@@ -983,7 +982,7 @@
                 <aside id="shopee-normalize-drawer" class="hidden fixed right-0 top-0 h-full w-full max-w-[440px] bg-[#07141c] border-l border-hud-cyan/20 shadow-[-24px_0_60px_rgba(0,0,0,0.45)] z-50 overflow-y-auto translate-x-full opacity-0 transition-all duration-300 ease-out">
                     <div class="header-strip px-5 py-4 flex items-center gap-2 sticky top-0">
                         <i class="fa-solid fa-wand-magic-sparkles text-hud-cyan"></i>
-                        <span class="font-display font-black text-xs text-white uppercase-widest">NORMALIZE TO WOO</span>
+                        <span class="font-display font-black text-xs text-white uppercase-widest">PUBLISH AFFILIATE PRODUCT</span>
                         <button id="shopee-drawer-close" class="ml-auto text-hud-cyan hover:text-white text-sm"><i class="fa-solid fa-xmark"></i></button>
                     </div>
                     <div class="p-5 space-y-4">
@@ -1155,6 +1154,11 @@
                     if (feedback) feedback.textContent = `Enqueue failed: ${error.message}`;
                 }
             });
+            if (state.selectedShopeeItemId && itemMap.has(state.selectedShopeeItemId)) {
+                await openDrawer(state.selectedShopeeItemId);
+            } else if (state.selectedShopeeItemId) {
+                setSelectedShopeeItem("");
+            }
         } catch (error) {
             section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Shopee products: ${escapeHtml(error.message)}</div>`;
         }

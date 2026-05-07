@@ -402,6 +402,40 @@ def _wp_custom_field_value(value) -> str:
     return str(value)
 
 
+def _rank_math_meta_from_payload(payload: dict) -> dict[str, str]:
+    meta = payload.get("meta") or {}
+    if not isinstance(meta, dict):
+        return {}
+    output: dict[str, str] = {}
+    for key in ("rank_math_title", "rank_math_description", "rank_math_focus_keyword"):
+        value = str(meta.get(key) or "").strip()
+        if value:
+            output[key] = value
+    robots = meta.get("rank_math_robots")
+    if isinstance(robots, list):
+        output["rank_math_robots"] = ",".join(str(item).strip() for item in robots if str(item).strip())
+    elif robots:
+        output["rank_math_robots"] = str(robots).strip()
+    return output
+
+
+def _sync_rank_math_meta(site_config: dict, post_id: int, payload: dict) -> str:
+    rank_math_meta = _rank_math_meta_from_payload(payload)
+    if not rank_math_meta:
+        return ""
+    endpoint = f"{site_config['woo_url'].rstrip('/')}/wp-json/rankmath/v1/updateMeta"
+    response = httpx.post(
+        endpoint,
+        auth=(site_config["username"], site_config["app_password"]),
+        json={"objectType": "post", "objectID": int(post_id), "meta": rank_math_meta},
+        timeout=30,
+    )
+    if response.status_code in {404, 405}:
+        return f"Rank Math updateMeta endpoint unavailable ({response.status_code}); post meta fallback was used"
+    response.raise_for_status()
+    return ""
+
+
 def _sync_wp_affiliate_custom_fields(site_config: dict, post_id: int, payload: dict) -> str:
     meta = payload.get("meta") or {}
     if not isinstance(meta, dict) or not meta:
@@ -420,9 +454,10 @@ def _sync_wp_affiliate_custom_fields(site_config: dict, post_id: int, payload: d
             existing_by_key[str(field["key"])] = field
 
     custom_fields = []
+    rank_math_keys = set(_rank_math_meta_from_payload(payload))
     for key, value in meta.items():
         key_text = str(key or "").strip()
-        if not key_text or key_text.startswith("_"):
+        if not key_text or (key_text.startswith("_") and key_text not in rank_math_keys):
             continue
         field = {"key": key_text, "value": _wp_custom_field_value(value)}
         existing_id = existing_by_key.get(key_text, {}).get("id")
@@ -432,13 +467,15 @@ def _sync_wp_affiliate_custom_fields(site_config: dict, post_id: int, payload: d
 
     proxy.wp.editPost(0, username, app_password, int(post_id), {"custom_fields": custom_fields})
 
+    warning = _sync_rank_math_meta(site_config, post_id, payload)
+
     terms = payload.get("terms") or {}
     if isinstance(terms, dict) and terms:
         try:
             proxy.wp.editPost(0, username, app_password, int(post_id), {"terms_names": terms})
         except Exception as exc:
-            return f"Affiliate taxonomy sync warning: {exc}"
-    return ""
+            warning = f"{warning}; Affiliate taxonomy sync warning: {exc}" if warning else f"Affiliate taxonomy sync warning: {exc}"
+    return warning
 
 
 def _shopee_source_image_urls(state: dict) -> list[str]:

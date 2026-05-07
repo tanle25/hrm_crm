@@ -55,7 +55,7 @@ from app.public_chat import router as public_chat_router
 from app.queue import create_job_id, enqueue_job, enqueue_saved_state, init_job_state, queue_is_full, update_job
 from app.rag_categories import create_category, list_categories
 from app.rag import delete_source_documents, get_source_documents, get_taxonomy_summary, list_rag_sources, search_knowledge
-from app.shopee import get_shopee_product, import_legacy_sample, list_shopee_products, upsert_shopee_product
+from app.shopee import delete_shopee_product, get_shopee_product, import_legacy_sample, list_shopee_products, upsert_shopee_product
 from app.rag_jobs import create_rag_job, get_rag_job, list_rag_jobs, public_rag_job, run_rag_job
 from app.schemas import (
     JobListItem,
@@ -1068,6 +1068,15 @@ async def shopee_product_detail(item_id: str) -> ShopeeProductDetailResponse:
     if not payload:
         raise HTTPException(status_code=404, detail="Shopee product not found")
     return ShopeeProductDetailResponse(**payload)
+
+
+@app.delete(f"{settings.api_prefix}/shopee/products/{{item_id}}")
+async def shopee_product_delete(item_id: str) -> dict:
+    deleted = await asyncio.to_thread(delete_shopee_product, item_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Shopee product not found")
+    log.info("shopee_product_deleted", item_id=item_id)
+    return {"ok": True, "item_id": item_id}
 
 
 @app.post(f"{settings.api_prefix}/shopee/products", response_model=ShopeeProductDetailResponse)

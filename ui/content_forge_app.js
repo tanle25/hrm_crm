@@ -968,10 +968,16 @@
                                                     <span class="badge ${shopeeTypeBadge(item.type)}">${escapeHtml(item.type)}</span>
                                                     <span class="badge cyan">${escapeHtml(shopeePrice(item.regular_price))}</span>
                                                     <span class="badge purple">${escapeHtml(`${item.variant_count || 0} variants`)}</span>
+                                                    ${item.is_duplicate ? `<span class="badge amber">TRÙNG${item.duplicate_count > 1 ? ` · ${escapeHtml(item.duplicate_count)}` : ""}</span>` : ""}
                                                 </div>
                                                 <div class="text-[10px] text-hud-muted truncate mt-2">${escapeHtml(item.url || item.item_id)}</div>
                                             </div>
-                                            <div class="text-[10px] text-hud-muted text-right shrink-0 hidden md:block">${escapeHtml(formatDate(item.updated_at))}</div>
+                                            <div class="flex flex-col items-end gap-2 shrink-0">
+                                                <div class="text-[10px] text-hud-muted text-right hidden md:block">${escapeHtml(formatDate(item.updated_at))}</div>
+                                                <button type="button" class="shopee-delete-btn btn-danger px-3 py-2 text-[10px] uppercase-wide font-bold" data-item-id="${escapeHtml(item.item_id)}">
+                                                    <i class="fa-solid fa-trash"></i>
+                                                </button>
+                                            </div>
                                         </label>
                                     `;
                                 }).join("") || `<div class="text-center py-6 text-hud-muted">No normalized Shopee products yet. Push data from the Chrome extension API first.</div>`}
@@ -1112,6 +1118,24 @@
             });
             section.querySelector("#shopee-drawer-close")?.addEventListener("click", closeDrawer);
             backdrop?.addEventListener("click", closeDrawer);
+            section.querySelectorAll(".shopee-delete-btn").forEach((button) => button.addEventListener("click", async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const itemId = button.dataset.itemId || "";
+                if (!itemId) return;
+                if (!window.confirm("Xóa sản phẩm Shopee này khỏi danh sách chờ đăng?")) return;
+                button.disabled = true;
+                try {
+                    await fetchJSON(`/shopee/products/${encodeURIComponent(itemId)}`, { method: "DELETE" });
+                    if (state.selectedShopeeItemId === itemId) {
+                        setSelectedShopeeItem("");
+                    }
+                    await renderShopeePage();
+                } catch (error) {
+                    button.disabled = false;
+                    if (feedback) feedback.textContent = `Xóa thất bại: ${error.message}`;
+                }
+            }));
             section.querySelectorAll(".shopee-row").forEach((row) => row.addEventListener("click", (event) => {
                 const checkbox = row.querySelector(".shopee-item-checkbox");
                 const nextId = row.dataset.itemId || "";

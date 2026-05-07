@@ -305,9 +305,19 @@ def list_shopee_products(search: str | None = None, limit: int = 100) -> dict[st
             continue
         filtered.append(record)
 
+    title_counts: dict[str, int] = {}
+    for record in filtered:
+        normalized = record.get("normalized") or {}
+        title_key = re.sub(r"\s+", " ", str(normalized.get("product_title") or "").strip().lower())
+        if title_key:
+            title_counts[title_key] = title_counts.get(title_key, 0) + 1
+
     items = []
     for record in filtered[: max(1, min(limit, 500))]:
         normalized = record.get("normalized") or {}
+        title_key = re.sub(r"\s+", " ", str(normalized.get("product_title") or "").strip().lower())
+        duplicate_count = title_counts.get(title_key, 0)
+        was_updated = bool(record.get("created_at") and record.get("updated_at") and record.get("created_at") != record.get("updated_at"))
         items.append(
             {
                 "item_id": str(record.get("item_id") or ""),
@@ -321,6 +331,8 @@ def list_shopee_products(search: str | None = None, limit: int = 100) -> dict[st
                 "image_url": str((normalized.get("images") or [""])[0] or ""),
                 "url": str(normalized.get("source_url") or ""),
                 "updated_at": str(record.get("updated_at") or ""),
+                "is_duplicate": was_updated or duplicate_count > 1,
+                "duplicate_count": duplicate_count,
             }
         )
     return {

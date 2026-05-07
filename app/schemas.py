@@ -214,6 +214,8 @@ class ShopeeProductListItem(BaseModel):
     image_url: str = ""
     url: str = ""
     updated_at: str = ""
+    is_duplicate: bool = False
+    duplicate_count: int = 0
 
 
 class ShopeeProductListResponse(BaseModel):

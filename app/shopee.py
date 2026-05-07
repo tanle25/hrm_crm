@@ -118,6 +118,9 @@ def _collect_image_urls(raw: dict[str, Any]) -> list[str]:
         value = raw.get(key)
         _collect_image_candidates(value, output, seen)
 
+    if output:
+        return output
+
     for variant in raw.get("variants") or []:
         if isinstance(variant, dict):
             _collect_image_candidates(variant.get("image"), output, seen)

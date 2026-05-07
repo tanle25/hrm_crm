@@ -70,7 +70,7 @@ def _heuristic_plan(
     component_count = specs.get("component_count")
     article_type = "Product Description" if source_type == "product" else ("How-to" if any("buoc" in point.lower() for point in key_points) else "Comprehensive Guide")
     outline = {
-        "intro": "TL;DR + tra loi truc tiep cau hoi chinh cua nguoi dung.",
+        "intro": "Mo bai ngan, bat dau bang focus keyword va tra loi truc tiep nhu cau cua nguoi dung.",
         "sections": [
             (
                 {"h2": "Tong quan san pham", "content_hint": "Tom tat ban chat san pham, nguon goc va gia tri noi bat."}

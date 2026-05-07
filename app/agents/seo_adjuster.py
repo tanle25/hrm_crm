@@ -18,7 +18,8 @@ Quy tắc bắt buộc:
 - Không thêm H1.
 - Giữ bố cục HTML hiện có, chỉ bổ sung/sửa đoạn cần thiết.
 - Rải focus keyword tự nhiên trong câu có ngữ cảnh, tránh nhồi từ khóa.
-- Nếu thiếu outbound/internal link, chèn link do input cung cấp vào câu phù hợp, không dùng rel="nofollow".
+- Nếu thiếu outbound/internal link, chèn link do input cung cấp vào câu phù hợp.
+- Link ngoài phải dùng rel="nofollow noopener noreferrer" và target="_blank"; link nội bộ không cần nofollow.
 - Không nhắc website nguồn, URL nguồn, thương hiệu nguồn hoặc cụm "nguồn tham khảo".
 - Không thêm bảng thông số giả, không thêm dữ kiện không có cơ sở.
 - Trả về JSON: {"html": "...", "notes": ["..."]}.

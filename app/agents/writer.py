@@ -34,7 +34,9 @@ Nếu nguồn là product:
 - Nếu input có primary_color của site và content_mode = per-site, xem đó là định hướng thẩm mỹ ngầm cho cách diễn đạt, không được nhắc mã màu trong nội dung.
 
 Nếu không phải product:
-- Có TL;DR, ít nhất 3 H2, 1 bảng so sánh, FAQ, kết bài có tác giả/ngày/nguồn.
+- Không dùng TL;DR hoặc nhãn "Tóm tắt nhanh"; mở bài phải bắt đầu tự nhiên bằng focus keyword trong câu đầu.
+- Focus keyword phải xuất hiện tự nhiên trong mở bài, một số H2/H3 và thân bài; tránh viết biến thể quá xa khiến Rank Math không nhận diện được.
+- Có ít nhất 3 H2, 1 bảng so sánh nếu phù hợp, FAQ, kết bài có tác giả/ngày/nguồn.
 
 HTML phải sạch, semantic, dùng các thẻ như: p, h2, h3, ul, li, table, tr, th, td, section, figure, figcaption.
 Không thêm giải thích ngoài JSON.

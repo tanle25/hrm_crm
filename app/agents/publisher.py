@@ -31,7 +31,7 @@ def _source_origin(state: dict) -> str:
 def _site_primary_color(state: dict) -> str:
     site_profile = state.get("site_profile") or {}
     color = str(site_profile.get("primary_color") or "").strip()
-    if state.get("content_mode") == "per-site" and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", color):
         return color
     return "#1f6f43"
 
@@ -927,6 +927,7 @@ def _build_website_post_payload(state: dict) -> dict:
         image_data.get("alt_text", state["plan"]["focus_keyword"]),
         force=True,
     )
+    content = _prepare_website_post_content(content, state)
     return {
         "title": state["plan"]["title"],
         "content": content,
@@ -1293,6 +1294,216 @@ def _remove_invalid_content_images(html: str) -> str:
     cleaned = re.sub(r"<img\b[^>]*>", replace, html or "", flags=re.IGNORECASE | re.DOTALL)
     cleaned = re.sub(r"<figure[^>]*>\s*(?:<figcaption[^>]*>.*?</figcaption>\s*)?</figure>\s*", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
     return cleaned
+
+
+def _html_text(html: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", html or "")
+    return re.sub(r"\s+", " ", unescape(text)).strip()
+
+
+def _keyword_count(html: str, focus_keyword: str) -> int:
+    keyword = re.sub(r"\s+", " ", unescape(focus_keyword or "")).strip().lower()
+    if not keyword:
+        return 0
+    return _html_text(html).lower().count(keyword)
+
+
+def _strip_tldr_blocks(html: str) -> str:
+    cleaned = html or ""
+    cleaned = re.sub(
+        r"<(?:h2|h3|p|strong|b)[^>]*>\s*(?:TL;DR|Tóm tắt nhanh)\s*:?\s*</(?:h2|h3|p|strong|b)>\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\bTL;DR\s*:?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bTóm tắt nhanh\s*:?\s*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+def _ensure_focus_keyword_intro(html: str, focus_keyword: str) -> str:
+    keyword = re.sub(r"\s+", " ", unescape(focus_keyword or "")).strip()
+    if not keyword:
+        return html
+    lowered_keyword = keyword.lower()
+
+    def update_first_paragraph(match: re.Match[str]) -> str:
+        attrs = match.group(1) or ""
+        body = match.group(2) or ""
+        body_text = _html_text(body).lower()
+        if body_text.startswith(lowered_keyword):
+            return match.group(0)
+        prefix = (
+            f"<strong>{escape(keyword)}</strong> là nội dung trọng tâm trong bài viết này, "
+            "giúp bạn nắm rõ bối cảnh, tiêu chí lựa chọn và cách áp dụng thực tế. "
+        )
+        return f"<p{attrs}>{prefix}{body}</p>"
+
+    updated, count = re.subn(
+        r"<p\b([^>]*)>(.*?)</p>",
+        update_first_paragraph,
+        html or "",
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if count:
+        return updated
+    return (
+        f"<p><strong>{escape(keyword)}</strong> là nội dung trọng tâm trong bài viết này, "
+        "giúp bạn nắm rõ bối cảnh, tiêu chí lựa chọn và cách áp dụng thực tế.</p>\n"
+        + (html or "")
+    )
+
+
+def _boost_focus_keyword_density(html: str, focus_keyword: str) -> str:
+    keyword = re.sub(r"\s+", " ", unescape(focus_keyword or "")).strip()
+    if not keyword:
+        return html
+    word_count = len(_html_text(html).split())
+    target_count = max(4, min(14, round(word_count * 0.006)))
+    current_count = _keyword_count(html, keyword)
+    if current_count >= target_count:
+        return html
+
+    sentence = (
+        f" Với <strong>{escape(keyword)}</strong>, người đọc nên ưu tiên thông tin rõ ràng, "
+        "tiêu chí lựa chọn thực tế và cách áp dụng phù hợp nhu cầu."
+    )
+
+    remaining = target_count - current_count
+
+    def add_keyword(match: re.Match[str]) -> str:
+        nonlocal remaining
+        if remaining <= 0:
+            return match.group(0)
+        attrs = match.group(1) or ""
+        body = match.group(2) or ""
+        text = _html_text(body)
+        if len(text.split()) < 18:
+            return match.group(0)
+        remaining -= 1
+        return f"<p{attrs}>{body}{sentence}</p>"
+
+    updated = re.sub(r"<p\b([^>]*)>(.*?)</p>", add_keyword, html or "", flags=re.IGNORECASE | re.DOTALL)
+    current_count = _keyword_count(updated, keyword)
+    if current_count >= target_count:
+        return updated
+
+    missing = min(4, target_count - current_count)
+    reinforcement = " ".join(
+        f"{escape(keyword)} cần được hiểu theo nhu cầu thực tế, dữ kiện đáng tin và tiêu chí lựa chọn rõ ràng."
+        for _ in range(missing)
+    )
+    block = f"<p>{reinforcement}</p>"
+    inserted, count = re.subn(
+        r"(</p>)",
+        r"\1\n" + block,
+        updated,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return inserted if count else block + "\n" + updated
+
+
+def _nofollow_external_links(html: str, site_url: str) -> str:
+    site_netloc = urlsplit(site_url or "").netloc.lower().replace("www.", "")
+
+    def update_anchor(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        href_match = re.search(r"""\bhref\s*=\s*(['"])(.*?)\1""", tag, flags=re.IGNORECASE | re.DOTALL)
+        if not href_match:
+            return tag
+        href = unescape(href_match.group(2)).strip()
+        parsed = urlsplit(href)
+        netloc = parsed.netloc.lower().replace("www.", "")
+        if parsed.scheme not in {"http", "https"} or not netloc or (site_netloc and netloc == site_netloc):
+            return tag
+
+        if re.search(r"\brel\s*=", tag, flags=re.IGNORECASE):
+            def update_rel(rel_match: re.Match[str]) -> str:
+                quote = rel_match.group(1)
+                values = re.split(r"\s+", rel_match.group(2).strip())
+                merged = []
+                for value in [*values, "nofollow", "noopener", "noreferrer"]:
+                    if value and value.lower() not in {item.lower() for item in merged}:
+                        merged.append(value)
+                return f'rel={quote}{" ".join(merged)}{quote}'
+
+            tag = re.sub(r"""\brel\s*=\s*(['"])(.*?)\1""", update_rel, tag, count=1, flags=re.IGNORECASE | re.DOTALL)
+        else:
+            tag = tag[:-1] + ' rel="nofollow noopener noreferrer">'
+
+        if not re.search(r"\btarget\s*=", tag, flags=re.IGNORECASE):
+            tag = tag[:-1] + ' target="_blank">'
+        return tag
+
+    return re.sub(r"<a\b[^>]*>", update_anchor, html or "", flags=re.IGNORECASE | re.DOTALL)
+
+
+def _style_website_post_content(html: str, state: dict | None = None) -> str:
+    accent = _site_primary_color(state or {})
+    accent_soft = _rgba(accent, 0.10)
+    styled_html = html or ""
+    if 'class="content-forge-article"' in styled_html:
+        styled_html = re.sub(r'^<div class="content-forge-article"[^>]*>\s*', "", styled_html)
+        styled_html = re.sub(r'\s*</div>\s*$', "", styled_html)
+
+    replacements = {
+        "<h2>": f'<h2 style="margin:42px 0 18px;font-size:26px;line-height:1.32;color:{accent};border-left:5px solid {accent};padding-left:14px">',
+        "<h3>": '<h3 style="margin:26px 0 12px;font-size:20px;line-height:1.4;color:#222">',
+        "<p>": '<p style="margin:0 0 18px;color:#333">',
+        "<ul>": f'<ul style="margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-radius:14px;color:#333">',
+        "<ol>": f'<ol style="margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-radius:14px;color:#333">',
+        "<li>": '<li style="margin-bottom:10px">',
+        "<table>": f'<table style="width:100%;margin:22px 0 30px;border-collapse:separate;border-spacing:0;border:1px solid {_rgba(accent, 0.22)};border-radius:14px;overflow:hidden;background:#fff">',
+        "<th>": f'<th style="padding:14px 16px;background:{accent_soft};border-bottom:1px solid {_rgba(accent, 0.18)};text-align:left;color:#222">',
+        "<td>": '<td style="padding:14px 16px;border-bottom:1px solid #edf0ed;vertical-align:top">',
+        "<figure>": '<figure style="margin:26px 0;text-align:center">',
+        "<figcaption>": '<figcaption style="margin-top:10px;color:#667085;font-size:14px;font-style:italic">',
+    }
+    for source, target in replacements.items():
+        styled_html = styled_html.replace(source, target)
+
+    styled_html = re.sub(
+        r"<a\b(?![^>]*\bstyle=)",
+        f'<a style="color:{accent};font-weight:700;text-decoration:none;border-bottom:1px solid {_rgba(accent, 0.35)}"',
+        styled_html,
+        flags=re.IGNORECASE,
+    )
+    styled_html = re.sub(
+        r'<img\b([^>]*)\sstyle="[^"]*"([^>]*)>',
+        r'<img\1\2>',
+        styled_html,
+        flags=re.IGNORECASE,
+    )
+    styled_html = styled_html.replace(
+        '<img ',
+        '<img style="width:100%;height:auto;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,0.08);display:block" '
+    )
+
+    paragraphs = re.findall(r"<p[^>]*>.*?</p>", styled_html, flags=re.DOTALL | re.IGNORECASE)
+    if paragraphs:
+        intro = re.sub(
+            r'<p\b([^>]*)>',
+            f'<p style="font-size:18px;line-height:1.85;color:#1f2933;background:{accent_soft};border-radius:16px;padding:18px 20px;margin:0 0 24px">',
+            paragraphs[0],
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        styled_html = styled_html.replace(paragraphs[0], intro, 1)
+
+    wrapper_style = "color:#333;font-size:16px;line-height:1.8;font-family:'Segoe UI',Arial,sans-serif"
+    return f'<div class="content-forge-article" style="{wrapper_style}">\n{styled_html}\n</div>'
+
+
+def _prepare_website_post_content(html: str, state: dict) -> str:
+    focus_keyword = state["plan"]["focus_keyword"]
+    site_url = str((state.get("site_profile") or {}).get("url") or "")
+    prepared = _strip_tldr_blocks(html)
+    prepared = _ensure_focus_keyword_intro(prepared, focus_keyword)
+    prepared = _boost_focus_keyword_density(prepared, focus_keyword)
+    prepared = _nofollow_external_links(prepared, site_url)
+    return _style_website_post_content(prepared, state)
 
 
 def _seo_title(state: dict) -> str:

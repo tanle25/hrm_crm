@@ -306,6 +306,41 @@ def _shopee_affiliate_url(state: dict) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items, doseq=True), ""))
 
 
+def _shopee_meta_attributes(normalized: dict) -> list[dict[str, str]]:
+    output: list[dict[str, str]] = []
+    label_map = {
+        "product_page_label_brand": "Thương hiệu",
+        "label_ship_from": "Kho hàng",
+        "label_stock": "Còn hàng",
+    }
+    for item in normalized.get("attributes") or []:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        name = label_map.get(name, name)
+        value = ", ".join(str(option).strip() for option in (item.get("options") or []) if str(option).strip())
+        if value:
+            output.append({"name": name, "value": value})
+    return output
+
+
+def _shopee_product_identity(normalized: dict) -> str:
+    shop_id = str(normalized.get("shop_id") or "").strip()
+    item_id = str(normalized.get("item_id") or "").strip()
+    return f"{shop_id}:{item_id}" if shop_id and item_id else item_id
+
+
+def _shopee_taxonomy_terms(normalized: dict) -> dict[str, list[str]]:
+    terms: dict[str, list[str]] = {}
+    category = str(normalized.get("category") or "").strip()
+    brand = str(normalized.get("brand") or "").strip()
+    if category:
+        terms["danh-muc-affiliate"] = [item.strip() for item in category.split("|") if item.strip()]
+    if brand:
+        terms["thuong-hieu"] = [brand]
+    return terms
+
+
 def _shopee_source_image_urls(state: dict) -> list[str]:
     image_data = state.get("image_data", {}) or {}
     source_seed = state.get("source_seed") or {}
@@ -440,12 +475,25 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     source_urls = _shopee_source_image_urls(state)
     gallery_urls = source_urls
 
+    image_slots = (gallery_urls + ["", "", "", "", ""])[:5]
+    shopee_id = str(normalized.get("item_id") or "")
+    product_identity = _shopee_product_identity(normalized)
+    price_min = re.sub(r"[^\d]", "", str(normalized.get("price_min") or regular_price))
+    price_max = re.sub(r"[^\d]", "", str(normalized.get("price_max") or regular_price))
+    price_min_before = re.sub(r"[^\d]", "", str(normalized.get("price_min_before") or ""))
+    price_max_before = re.sub(r"[^\d]", "", str(normalized.get("price_max_before") or ""))
+    rating_count = str(normalized.get("rating_count") or 15)
+    sold = str(normalized.get("sold") or "")
+    shop_name = str(normalized.get("shop_name") or "")
+    shop_link = str(normalized.get("shop_url") or "")
+
     payload = {
         "title": state["plan"]["title"],
         "content": _shopee_affiliate_content(state, uploaded_images),
         "status": status,
         "slug": _product_slug(state["plan"]),
         "excerpt": _extract_short_description(state),
+        "terms": _shopee_taxonomy_terms(normalized),
         "meta": {
             "rank_math_title": meta_title,
             "rank_math_description": meta_description,
@@ -458,15 +506,39 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
             "_content_forge_clean_product_url": clean_product_url,
             "_content_forge_shopee_item_id": str(normalized.get("item_id") or ""),
             "_content_forge_shopee_shop_id": str(normalized.get("shop_id") or ""),
+            "id_pr": product_identity,
+            "ShopeeID": shopee_id,
+            "shop_name": shop_name,
+            "shop_link": shop_link,
+            "image_featured_cs": image_slots[0],
             "affiliate_url": affiliate_url,
             "_affiliate_url": affiliate_url,
             "product_url": affiliate_url,
             "_product_url": affiliate_url,
             "shopee_url": affiliate_url,
+            "Lalada_URL": "",
+            "Tiki_URL": "",
             "clean_product_url": clean_product_url,
+            "Price": sale_price or regular_price,
+            "Price_Min": price_min,
+            "Price_Max": price_max,
+            "Price_Min_BF": price_min_before,
+            "Price_Max_BF": price_max_before,
+            "Price_LAZ": "",
+            "Price_Tiki": "",
             "regular_price": regular_price,
             "sale_price": sale_price,
             "price": sale_price or regular_price,
+            "image_1": image_slots[0],
+            "image_2": image_slots[1],
+            "image_3": image_slots[2],
+            "image_4": image_slots[3],
+            "image_5": image_slots[4],
+            "video_url": str(normalized.get("video_url") or ""),
+            "Rating": str(normalized.get("rating") or ""),
+            "Rating_Count": rating_count,
+            "Sold": sold,
+            "Attributes": _shopee_meta_attributes(normalized),
             "gallery_image_ids": [],
             "_gallery_image_ids": [],
             "gallery_image_urls": gallery_urls,

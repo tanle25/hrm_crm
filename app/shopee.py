@@ -194,6 +194,15 @@ def _product_attributes(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return attributes
 
 
+def _brand_from_attributes(attributes: list[dict[str, Any]]) -> str:
+    for item in attributes:
+        name = str(item.get("name") or "").strip().lower()
+        if name in {"brand", "thương hiệu", "thuong hieu", "product_page_label_brand"}:
+            options = item.get("options") or []
+            return str(options[0] if options else "").strip()
+    return ""
+
+
 def _price_summary(raw: dict[str, Any]) -> tuple[int, int | None]:
     variants = raw.get("variants") or []
     prices = sorted(_safe_int(item.get("price")) for item in variants if _safe_int(item.get("price")) > 0)
@@ -202,6 +211,17 @@ def _price_summary(raw: dict[str, Any]) -> tuple[int, int | None]:
         return prices[0], compare[0] if compare and compare[0] > prices[0] else None
     regular = _safe_int(raw.get("price"))
     return regular, None
+
+
+def _price_range(raw: dict[str, Any]) -> tuple[int, int, int, int]:
+    variants = raw.get("variants") or []
+    prices = sorted(_safe_int(item.get("price")) for item in variants if _safe_int(item.get("price")) > 0)
+    before_prices = sorted(_safe_int(item.get("priceBeforeDiscount")) for item in variants if _safe_int(item.get("priceBeforeDiscount")) > 0)
+    price_min = prices[0] if prices else _safe_int(raw.get("price"))
+    price_max = prices[-1] if prices else price_min
+    price_min_before = before_prices[0] if before_prices else 0
+    price_max_before = before_prices[-1] if before_prices else 0
+    return price_min, price_max, price_min_before, price_max_before
 
 
 def _variations(raw: dict[str, Any], attributes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -251,25 +271,39 @@ def _seed_content(raw: dict[str, Any], normalized: dict[str, Any]) -> str:
 def normalize_shopee_product(raw: dict[str, Any]) -> dict[str, Any]:
     title = str(raw.get("title") or "").strip()
     regular_price, sale_price = _price_summary(raw)
+    price_min, price_max, price_min_before, price_max_before = _price_range(raw)
     attributes = _product_attributes(raw)
     variations = _variations(raw, attributes)
+    images = _collect_image_urls(raw)
     normalized = {
         "source": "shopee",
         "item_id": str(raw.get("itemId") or ""),
         "shop_id": str(raw.get("shopId") or ""),
         "source_url": str(raw.get("url") or "").strip(),
+        "shop_name": str(raw.get("shopName") or raw.get("shop_name") or raw.get("shop") or "").strip(),
+        "shop_url": str(raw.get("shopUrl") or raw.get("shopURL") or raw.get("shop_url") or "").strip(),
         "product_title": title,
         "product_slug": _slugify(title),
         "type": "variable" if variations else "simple",
         "regular_price": regular_price,
         "sale_price": sale_price,
+        "price_min": price_min,
+        "price_max": price_max,
+        "price_min_before": price_min_before,
+        "price_max_before": price_max_before,
         "short_description": _strip_markup(str(raw.get("shortDescription") or title)),
         "description_text": _clean_description(str(raw.get("description") or "")),
-        "images": _collect_image_urls(raw),
+        "images": images,
+        "featured_image": images[0] if images else "",
+        "brand": str(raw.get("brand") or raw.get("Brand") or _brand_from_attributes(attributes) or "").strip(),
+        "category": str(raw.get("category") or raw.get("Category") or "").strip(),
         "attributes": attributes,
         "variations": variations,
         "raw_variant_count": int(raw.get("variantCount") or len(variations) or 0),
         "rating": raw.get("rating"),
+        "rating_count": _safe_int(raw.get("ratingCount") or raw.get("rating_count") or raw.get("Rating_Count")),
+        "sold": _safe_int(raw.get("sold") or raw.get("historicalSold") or raw.get("soldCount") or raw.get("Sold")),
+        "video_url": str(raw.get("videoUrl") or raw.get("video_url") or "").strip(),
         "currency": str(raw.get("currency") or "VND"),
     }
     normalized["seed_content"] = _seed_content(raw, normalized)

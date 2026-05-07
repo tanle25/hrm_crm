@@ -5,7 +5,7 @@ import os
 import tempfile
 import re
 import unicodedata
-from html import escape
+from html import escape, unescape
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -104,8 +104,49 @@ def _image_extension(content_type: str, content: bytes, url: str) -> str:
     return ""
 
 
+def _normalize_image_url(url: str) -> str:
+    value = unescape(str(url or "")).strip()
+    if not value:
+        return ""
+    if value.startswith("//"):
+        return f"https:{value}"
+    if re.match(r"^[a-z0-9.-]+\.[a-z]{2,}/", value, flags=re.IGNORECASE):
+        return f"https://{value}"
+    return value
+
+
+def _media_source_url(data: dict) -> str:
+    media_details = data.get("media_details") or {}
+    sizes = media_details.get("sizes") or {}
+    full = sizes.get("full") or {}
+    for value in [
+        full.get("source_url"),
+        data.get("source_url"),
+        (data.get("guid") or {}).get("rendered"),
+    ]:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _url_reachable(client: httpx.Client, url: str) -> bool:
+    if not url:
+        return False
+    try:
+        response = client.head(url, timeout=15)
+        if response.status_code == 405:
+            response = client.get(url, headers={"Range": "bytes=0-0"}, timeout=15)
+        return 200 <= response.status_code < 400
+    except Exception:
+        return False
+
+
 def _upload_wp_media_from_temp(site_config: dict, image_url: str, alt_text: str, index: int) -> dict | None:
     if not (site_config.get("username") and site_config.get("app_password")):
+        return None
+    image_url = _normalize_image_url(image_url)
+    if not image_url:
         return None
     try:
         with httpx.Client(follow_redirects=True, timeout=45) as client:
@@ -144,10 +185,14 @@ def _upload_wp_media_from_temp(site_config: dict, image_url: str, alt_text: str,
                 media_id = data.get("id")
                 if not media_id:
                     return None
+                uploaded_url = _media_source_url(data)
+                if uploaded_url and not _url_reachable(client, uploaded_url):
+                    uploaded_url = ""
                 media_item = {
                     "id": int(media_id),
                     "alt": alt_text,
-                    "url": str(data.get("source_url") or data.get("guid", {}).get("rendered") or ""),
+                    "url": uploaded_url,
+                    "source_url": image_url,
                 }
                 try:
                     client.post(
@@ -186,7 +231,8 @@ def _upload_shopee_images_if_needed(state: dict, payload: dict) -> None:
 
 def _upload_shopee_affiliate_images(state: dict) -> list[dict]:
     image_data = state.get("image_data", {}) or {}
-    image_urls = [str(url).strip() for url in (image_data.get("gallery") or []) if str(url).strip()]
+    image_urls = [_normalize_image_url(str(url).strip()) for url in (image_data.get("gallery") or []) if str(url).strip()]
+    image_urls = [url for url in image_urls if url]
     if not image_urls:
         return []
     site_config = _publisher_site_config(state)
@@ -273,7 +319,9 @@ def _shopee_affiliate_content(state: dict, uploaded_images: list[dict]) -> str:
     normalized = ((state.get("source_seed") or {}).get("normalized") or {})
     image_data = state.get("image_data", {}) or {}
     uploaded_urls = [str(item.get("url") or "").strip() for item in uploaded_images if str(item.get("url") or "").strip()]
-    gallery_urls = uploaded_urls or [str(url).strip() for url in (image_data.get("gallery") or []) if str(url).strip()]
+    source_urls = [_normalize_image_url(str(url).strip()) for url in (image_data.get("gallery") or []) if str(url).strip()]
+    source_urls = [url for url in source_urls if url]
+    gallery_urls = uploaded_urls or source_urls
     alt_text = str(image_data.get("alt_text") or state["plan"]["focus_keyword"])
     source_url = _shopee_affiliate_url(state)
     price = re.sub(r"\s+", " ", str(normalized.get("sale_price") or normalized.get("regular_price") or "")).strip()
@@ -336,6 +384,9 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     sale_price = re.sub(r"[^\d]", "", str(normalized.get("sale_price") or ""))
     uploaded_ids = [int(item["id"]) for item in uploaded_images if item.get("id")]
     uploaded_urls = [str(item.get("url") or "").strip() for item in uploaded_images if str(item.get("url") or "").strip()]
+    source_urls = [_normalize_image_url(str(url).strip()) for url in (((state.get("image_data") or {}).get("gallery") or [])) if str(url).strip()]
+    source_urls = [url for url in source_urls if url]
+    gallery_urls = uploaded_urls or source_urls
 
     payload = {
         "title": state["plan"]["title"],
@@ -366,8 +417,18 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
             "price": sale_price or regular_price,
             "gallery_image_ids": uploaded_ids,
             "_gallery_image_ids": uploaded_ids,
-            "gallery_image_urls": uploaded_urls,
-            "_gallery_image_urls": uploaded_urls,
+            "gallery_image_urls": gallery_urls,
+            "_gallery_image_urls": gallery_urls,
+            "product_gallery": uploaded_ids,
+            "_product_gallery": uploaded_ids,
+            "product_gallery_images": uploaded_ids,
+            "_product_gallery_images": uploaded_ids,
+            "product_image_gallery": ",".join(str(item) for item in uploaded_ids),
+            "_product_image_gallery": ",".join(str(item) for item in uploaded_ids),
+            "image_gallery": ",".join(str(item) for item in uploaded_ids),
+            "_image_gallery": ",".join(str(item) for item in uploaded_ids),
+            "product_gallery_urls": gallery_urls,
+            "_product_gallery_urls": gallery_urls,
         },
     }
     if uploaded_images:

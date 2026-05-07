@@ -58,6 +58,17 @@ def _safe_int(value: Any) -> int:
     return int(numeric)
 
 
+def _normalize_image_url(url: str) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    if value.startswith("//"):
+        return f"https:{value}"
+    if re.match(r"^[a-z0-9.-]+\.[a-z]{2,}/", value, flags=re.IGNORECASE):
+        return f"https://{value}"
+    return value
+
+
 def _strip_markup(text: str) -> str:
     text = re.sub(r"<[^>]+>", " ", text or "")
     text = re.sub(r"[_*`#]+", " ", text)
@@ -185,7 +196,7 @@ def normalize_shopee_product(raw: dict[str, Any]) -> dict[str, Any]:
         "sale_price": sale_price,
         "short_description": _strip_markup(str(raw.get("shortDescription") or title)),
         "description_text": _clean_description(str(raw.get("description") or "")),
-        "images": [str(url).strip() for url in (raw.get("images") or []) if str(url).strip()],
+        "images": [_normalize_image_url(str(url).strip()) for url in (raw.get("images") or []) if _normalize_image_url(str(url).strip())],
         "attributes": attributes,
         "variations": variations,
         "raw_variant_count": int(raw.get("variantCount") or len(variations) or 0),

@@ -321,13 +321,19 @@ def _shopee_affiliate_url(state: dict) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items, doseq=True), ""))
 
 
+def _shopee_source_image_urls(state: dict) -> list[str]:
+    image_data = state.get("image_data", {}) or {}
+    source_seed = state.get("source_seed") or {}
+    normalized = source_seed.get("normalized") or {}
+    candidates = list(image_data.get("gallery") or []) or list(normalized.get("images") or [])
+    urls = [_normalize_image_url(str(url).strip()) for url in candidates if str(url).strip()]
+    return [url for url in urls if url]
+
+
 def _shopee_affiliate_content(state: dict, uploaded_images: list[dict]) -> str:
     normalized = ((state.get("source_seed") or {}).get("normalized") or {})
     image_data = state.get("image_data", {}) or {}
-    uploaded_urls = [str(item.get("url") or "").strip() for item in uploaded_images if str(item.get("url") or "").strip()]
-    source_urls = [_normalize_image_url(str(url).strip()) for url in (image_data.get("gallery") or []) if str(url).strip()]
-    source_urls = [url for url in source_urls if url]
-    gallery_urls = uploaded_urls or source_urls
+    gallery_urls = _shopee_source_image_urls(state)
     alt_text = str(image_data.get("alt_text") or state["plan"]["focus_keyword"])
     source_url = _shopee_affiliate_url(state)
     price = re.sub(r"\s+", " ", str(normalized.get("sale_price") or normalized.get("regular_price") or "")).strip()
@@ -390,9 +396,8 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     sale_price = re.sub(r"[^\d]", "", str(normalized.get("sale_price") or ""))
     uploaded_ids = [int(item["id"]) for item in uploaded_images if item.get("id")]
     uploaded_urls = [str(item.get("url") or "").strip() for item in uploaded_images if str(item.get("url") or "").strip()]
-    source_urls = [_normalize_image_url(str(url).strip()) for url in (((state.get("image_data") or {}).get("gallery") or [])) if str(url).strip()]
-    source_urls = [url for url in source_urls if url]
-    gallery_urls = uploaded_urls or source_urls
+    source_urls = _shopee_source_image_urls(state)
+    gallery_urls = source_urls or uploaded_urls
 
     payload = {
         "title": state["plan"]["title"],

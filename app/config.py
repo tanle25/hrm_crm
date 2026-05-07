@@ -79,6 +79,7 @@ class Settings:
     woo_default_status: Literal["draft", "publish"]
     woo_default_price: str
     unsplash_access_key: Optional[str]
+    pexels_api_key: Optional[str]
     webhook_url: Optional[str]
     google_search_api_key: Optional[str]
     google_search_engine_id: Optional[str]
@@ -147,6 +148,7 @@ def get_settings() -> Settings:
         woo_default_status="publish" if woo_default_status == "publish" else "draft",
         woo_default_price=os.getenv("WOO_DEFAULT_PRICE", "99000"),
         unsplash_access_key=os.getenv("UNSPLASH_ACCESS_KEY"),
+        pexels_api_key=os.getenv("PEXELS_API_KEY"),
         webhook_url=os.getenv("WEBHOOK_URL"),
         google_search_api_key=os.getenv("GOOGLE_SEARCH_API_KEY"),
         google_search_engine_id=os.getenv("GOOGLE_SEARCH_ENGINE_ID"),

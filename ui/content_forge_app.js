@@ -22,6 +22,7 @@
         selectedSiteId: "",
         siteCreateMode: false,
         selectedSubmitSiteIds: JSON.parse(localStorage.getItem("content_forge_submit_site_ids") || "[]"),
+        websiteKeywordChips: [],
         selectedFacebookCreatePageIds: JSON.parse(localStorage.getItem("content_forge_fb_create_page_ids") || "[]"),
         selectedFacebookCreateGroups: JSON.parse(localStorage.getItem("content_forge_fb_create_groups") || "[]"),
         facebookCreateImages: [],
@@ -872,35 +873,111 @@
         summary.className = "flex-1 text-white";
     }
 
+    function parseWebsiteKeywords(raw) {
+        return String(raw || "")
+            .split(",")
+            .map((item) => item.replace(/\s+/g, " ").trim())
+            .filter(Boolean)
+            .filter((item, index, items) => items.findIndex((other) => other.toLowerCase() === item.toLowerCase()) === index);
+    }
+
+    function renderWebsiteKeywordChips() {
+        const chips = document.getElementById("submit-keyword-chips");
+        if (!chips) return;
+        const keywords = state.websiteKeywordChips || [];
+        if (!keywords.length) {
+            chips.innerHTML = `<span class="text-[10px] text-hud-muted">Chưa có keyword nào.</span>`;
+            return;
+        }
+        chips.innerHTML = keywords.map((keyword) => `
+            <span class="inline-flex items-center gap-2 px-3 py-1.5 border border-hud-cyan/40 bg-hud-cyan/10 text-white text-[11px] font-bold">
+                <i class="fa-solid fa-tag text-hud-cyan"></i>
+                ${escapeHtml(keyword)}
+                <button type="button" class="text-hud-muted hover:text-hud-red" data-keyword-remove="${escapeHtml(keyword)}">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </span>
+        `).join("");
+        chips.querySelectorAll("[data-keyword-remove]").forEach((button) => {
+            button.addEventListener("click", () => {
+                const value = button.getAttribute("data-keyword-remove") || "";
+                state.websiteKeywordChips = (state.websiteKeywordChips || []).filter((item) => item !== value);
+                const input = document.getElementById("submit-keywords");
+                if (input) input.value = state.websiteKeywordChips.join(", ");
+                renderWebsiteKeywordChips();
+            });
+        });
+    }
+
+    function updateWebsitePostMode() {
+        const mode = document.querySelector('input[name="website-post-mode"]:checked')?.value || "urls";
+        document.getElementById("submit-url-panel")?.classList.toggle("hidden", mode !== "urls");
+        document.getElementById("submit-keyword-panel")?.classList.toggle("hidden", mode !== "keywords");
+    }
+
+    function bindWebsiteSubmitControls() {
+        document.querySelectorAll('input[name="website-post-mode"]').forEach((input) => {
+            if (input.dataset.bound === "1") return;
+            input.dataset.bound = "1";
+            input.addEventListener("change", updateWebsitePostMode);
+        });
+        const keywordInput = document.getElementById("submit-keywords");
+        if (keywordInput && keywordInput.dataset.bound !== "1") {
+            keywordInput.dataset.bound = "1";
+            keywordInput.addEventListener("input", () => {
+                state.websiteKeywordChips = parseWebsiteKeywords(keywordInput.value);
+                renderWebsiteKeywordChips();
+            });
+            keywordInput.addEventListener("blur", () => {
+                state.websiteKeywordChips = parseWebsiteKeywords(keywordInput.value);
+                keywordInput.value = state.websiteKeywordChips.join(", ");
+                renderWebsiteKeywordChips();
+            });
+        }
+        updateWebsitePostMode();
+        renderWebsiteKeywordChips();
+    }
+
     async function submitJob() {
         const urlInput = document.getElementById("submit-urls");
+        const keywordInput = document.getElementById("submit-keywords");
+        const mode = document.querySelector('input[name="website-post-mode"]:checked')?.value || "urls";
         const publishInput = document.querySelector('input[name="status"]:checked');
         const contentModeInput = document.querySelector('input[name="content-mode"]:checked');
-        if (!urlInput) return;
+        if (!urlInput && !keywordInput) return;
         const urls = urlInput.value
             .split(/\r?\n/)
             .map((item) => item.trim())
             .filter(Boolean);
+        const keywords = parseWebsiteKeywords(keywordInput?.value || state.websiteKeywordChips.join(", "));
+        state.websiteKeywordChips = keywords;
+        renderWebsiteKeywordChips();
         const siteIds = Array.from(document.querySelectorAll(".submit-site-checkbox:checked")).map((input) => input.value.trim()).filter(Boolean);
         if (!siteIds.length) {
             showFeedback("error", "Cần chọn ít nhất một website đích.");
             return;
         }
-        if (!urls.length) {
+        if (mode === "urls" && !urls.length) {
             showFeedback("error", "Cần ít nhất một URL.");
+            return;
+        }
+        if (mode === "keywords" && !keywords.length) {
+            showFeedback("error", "Cần ít nhất một từ khóa chính.");
             return;
         }
         setSelectedSubmitSites(siteIds);
         const enqueueButton = document.getElementById("submit-enqueue");
         if (enqueueButton) enqueueButton.disabled = true;
         try {
-            const payload = await fetchJSON("/submit-batch", {
+            const payload = await fetchJSON("/website/posts/submit", {
                 method: "POST",
                 body: JSON.stringify({
-                    urls,
+                    mode,
+                    urls: mode === "urls" ? urls : [],
+                    keywords: mode === "keywords" ? keywords : [],
                     site_ids: siteIds,
                     content_mode: contentModeInput?.value || "shared",
-                    woo_category_id: 1,
+                    category_id: 1,
                     priority: "normal",
                     publish_status: publishInput?.value || "draft",
                 }),
@@ -6553,6 +6630,7 @@
         if (pageKey === "submit") {
             await renderSubmitSiteOptions();
             await renderRecentSubmissions();
+            bindWebsiteSubmitControls();
         }
         if (pageKey === "flowkit") await renderFlowkitPage();
         if (pageKey === "flowkit-results") await renderFlowkitResultsPage();
@@ -6588,6 +6666,7 @@
             dropdown.classList.add("hidden");
         });
         document.getElementById("submit-enqueue")?.addEventListener("click", () => submitJob());
+        bindWebsiteSubmitControls();
     }
 
     function bindFacebookCreatePage() {

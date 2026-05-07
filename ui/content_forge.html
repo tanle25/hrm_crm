@@ -2753,6 +2753,26 @@
                                 </p>
                             </div>
 
+                            <!-- Website Post Mode -->
+                            <div>
+                                <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-3 flex items-center gap-2">
+                                    <i class="fa-solid fa-newspaper"></i>
+                                    <span>Website Post Source</span>
+                                </label>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <label class="hud-input px-4 py-3 cursor-pointer border-hud-cyan/40">
+                                        <input type="radio" name="website-post-mode" value="urls" class="hud-radio mr-2" checked/>
+                                        <span class="text-xs text-white font-bold uppercase-wide">Lấy từ URL bài viết</span>
+                                        <span class="block text-[10px] text-hud-muted mt-1">Crawl URL nguồn rồi viết lại như pipeline hiện tại.</span>
+                                    </label>
+                                    <label class="hud-input px-4 py-3 cursor-pointer border-hud-cyan/40">
+                                        <input type="radio" name="website-post-mode" value="keywords" class="hud-radio mr-2"/>
+                                        <span class="text-xs text-white font-bold uppercase-wide">Viết theo từ khóa</span>
+                                        <span class="block text-[10px] text-hud-muted mt-1">Tách keyword thành chips, ảnh lấy từ Pexels API.</span>
+                                    </label>
+                                </div>
+                            </div>
+
                             <!-- Content Strategy -->
                             <div>
                                 <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-3 flex items-center gap-2">
@@ -2775,7 +2795,7 @@
                             </div>
 
                             <!-- URL INPUT (batch) -->
-                            <div>
+                            <div id="submit-url-panel">
                                 <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 flex items-center gap-2" style="text-shadow: 0 0 8px rgba(0,240,255,0.3);">
                                     <i class="fa-solid fa-link"></i>
                                     <span>Source URLs</span>
@@ -2787,6 +2807,23 @@
                                 <p class="text-[10px] text-hud-muted mt-2">
                                     <i class="fa-solid fa-circle-info text-hud-cyan"></i>
                                     Mỗi dòng là một URL. Hệ thống sẽ tự tách và tạo hàng loạt job.
+                                </p>
+                            </div>
+
+                            <!-- KEYWORD INPUT -->
+                            <div id="submit-keyword-panel" class="hidden">
+                                <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 flex items-center gap-2">
+                                    <i class="fa-solid fa-tags"></i>
+                                    <span>Main Keywords</span>
+                                    <span class="ml-auto text-hud-red">* required</span>
+                                </label>
+                                <div class="input-wrap">
+                                    <textarea id="submit-keywords" rows="5" placeholder="sửa chữa mái tôn thanh hóa, thiết kế nhà phố, dịch vụ chuyển nhà..." class="hud-textarea w-full px-4 py-4 text-sm"></textarea>
+                                </div>
+                                <div id="submit-keyword-chips" class="flex flex-wrap gap-2 mt-3"></div>
+                                <p class="text-[10px] text-hud-muted mt-2">
+                                    <i class="fa-solid fa-circle-info text-hud-cyan"></i>
+                                    Mỗi từ khóa cách nhau bằng dấu phẩy. Mỗi chip sẽ tạo một job bài viết riêng.
                                 </p>
                             </div>
 

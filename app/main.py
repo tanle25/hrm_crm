@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import re
 import secrets
 from contextlib import suppress
 from pathlib import Path
@@ -104,6 +105,7 @@ from app.schemas import (
     SubmitBatchResponse,
     SubmitRequest,
     SubmitResponse,
+    WebsitePostSubmitRequest,
 )
 from app.site_store import create_site, delete_site, get_site, list_sites, test_site_connection, update_site
 
@@ -436,6 +438,113 @@ async def _enqueue_multi_site_batch(
             child_job_ids.append(child_job_id)
             master_state.setdefault("child_job_ids", []).append(child_job_id)
 
+        update_job(master_job_id, master_state)
+
+    return SubmitBatchResponse(
+        batch_id=batch_id,
+        status="queued",
+        total_jobs=len(master_job_ids) + len(child_job_ids),
+        master_job_ids=master_job_ids,
+        child_job_ids=child_job_ids,
+    )
+
+
+async def _enqueue_website_keyword_batch(
+    *,
+    keywords: list[str],
+    sites: list[dict],
+    content_mode: str,
+    category_id: int,
+    priority: str,
+    publish_status: str,
+    brief: str = "",
+) -> SubmitBatchResponse:
+    batch_id = create_job_id()
+    master_job_ids: list[str] = []
+    child_job_ids: list[str] = []
+
+    async def enqueue_standard(keyword: str, site: dict, mode: str) -> str:
+        payload = PipelineState(
+            url=f"keyword://{keyword}",
+            site_id=str(site.get("site_id") or ""),
+            content_mode=mode,
+            site_profile=_site_profile_payload(site),
+            source_origin="website_keyword",
+            source_seed={"keyword": keyword, "brief": brief, "source_url": f"keyword://{keyword}"},
+            priority=priority,
+            woo_category_id=category_id,
+            focus_keyword_override=keyword,
+            publish_status=publish_status,
+        )
+        job_id = create_job_id()
+        init_job_state(job_id, payload)
+        state = get_job(job_id) or {}
+        state["batch_id"] = batch_id
+        state["workflow_role"] = "standard"
+        state["site_name"] = site.get("site_name", "")
+        update_job(job_id, state)
+        queue_name = enqueue_saved_state(job_id, state)
+        if queue_name == "inline":
+            asyncio.create_task(run_pipeline_async(job_id, state))
+        jobs_submitted.inc()
+        return job_id
+
+    if len(sites) == 1 or content_mode == "per-site":
+        for keyword in keywords:
+            for site in sites:
+                child_job_ids.append(await enqueue_standard(keyword, site, "per-site" if content_mode == "per-site" else content_mode))
+        return SubmitBatchResponse(batch_id=batch_id, status="queued", total_jobs=len(child_job_ids), child_job_ids=child_job_ids)
+
+    for keyword in keywords:
+        master_payload = PipelineState(
+            url=f"keyword://{keyword}",
+            site_id="",
+            content_mode="shared",
+            site_profile={},
+            source_origin="website_keyword",
+            source_seed={"keyword": keyword, "brief": brief, "source_url": f"keyword://{keyword}"},
+            priority=priority,
+            woo_category_id=category_id,
+            focus_keyword_override=keyword,
+            publish_status=publish_status,
+        )
+        master_job_id = create_job_id()
+        init_job_state(master_job_id, master_payload)
+        master_state = get_job(master_job_id) or {}
+        master_state["batch_id"] = batch_id
+        master_state["workflow_role"] = "shared_master"
+        master_state["site_name"] = ""
+        master_state["child_job_ids"] = []
+        update_job(master_job_id, master_state)
+        queue_name = enqueue_saved_state(master_job_id, master_state)
+        if queue_name == "inline":
+            asyncio.create_task(run_pipeline_async(master_job_id, master_state))
+        jobs_submitted.inc()
+        master_job_ids.append(master_job_id)
+
+        for site in sites:
+            child_payload = PipelineState(
+                url=f"keyword://{keyword}",
+                site_id=str(site.get("site_id") or ""),
+                content_mode="shared",
+                site_profile=_site_profile_payload(site),
+                source_origin="website_keyword",
+                source_seed={"keyword": keyword, "brief": brief, "source_url": f"keyword://{keyword}"},
+                priority=priority,
+                woo_category_id=category_id,
+                focus_keyword_override=keyword,
+                publish_status=publish_status,
+            )
+            child_job_id = create_job_id()
+            init_job_state(child_job_id, child_payload)
+            child_state = get_job(child_job_id) or {}
+            child_state["batch_id"] = batch_id
+            child_state["parent_job_id"] = master_job_id
+            child_state["workflow_role"] = "shared_publish_child"
+            child_state["site_name"] = site.get("site_name", "")
+            update_job(child_job_id, child_state)
+            child_job_ids.append(child_job_id)
+            master_state.setdefault("child_job_ids", []).append(child_job_id)
         update_job(master_job_id, master_state)
 
     return SubmitBatchResponse(
@@ -1048,6 +1157,48 @@ async def submit_batch(request: SubmitBatchRequest) -> SubmitBatchResponse:
         focus_keyword=request.focus_keyword,
         priority=request.priority,
         publish_status=request.publish_status,
+    )
+
+
+@app.post(f"{settings.api_prefix}/website/posts/submit", response_model=SubmitBatchResponse)
+async def submit_website_posts(request: WebsitePostSubmitRequest) -> SubmitBatchResponse:
+    if queue_is_full():
+        raise HTTPException(status_code=429, detail="Queue day (> 100 jobs dang cho)")
+    if not request.site_ids:
+        raise HTTPException(status_code=400, detail="At least one site is required")
+    sites = await _resolve_sites(request.site_ids)
+    if request.mode == "urls":
+        if not request.urls:
+            raise HTTPException(status_code=400, detail="At least one URL is required")
+        return await _enqueue_multi_site_batch(
+            urls=[str(url) for url in request.urls],
+            sites=sites,
+            content_mode=request.content_mode,
+            woo_category_id=request.category_id,
+            focus_keyword=None,
+            priority=request.priority,
+            publish_status=request.publish_status,
+            source_origin="website_article_url",
+        )
+
+    keywords = []
+    seen: set[str] = set()
+    for keyword in request.keywords:
+        text = re.sub(r"\s+", " ", str(keyword or "").strip())
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            keywords.append(text)
+    if not keywords:
+        raise HTTPException(status_code=400, detail="At least one keyword is required")
+    return await _enqueue_website_keyword_batch(
+        keywords=keywords[:100],
+        sites=sites,
+        content_mode=request.content_mode,
+        category_id=request.category_id,
+        priority=request.priority,
+        publish_status=request.publish_status,
+        brief=request.brief,
     )
 
 

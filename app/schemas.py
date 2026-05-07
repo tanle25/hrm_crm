@@ -190,6 +190,18 @@ class SubmitBatchResponse(BaseModel):
     child_job_ids: List[str] = Field(default_factory=list)
 
 
+class WebsitePostSubmitRequest(BaseModel):
+    mode: Literal["urls", "keywords"]
+    urls: List[HttpUrl] = Field(default_factory=list)
+    keywords: List[str] = Field(default_factory=list)
+    site_ids: List[str]
+    content_mode: Literal["shared", "per-site"] = "shared"
+    category_id: int = 1
+    priority: Literal["normal", "high"] = "normal"
+    publish_status: Literal["draft", "publish"] = "draft"
+    brief: str = ""
+
+
 class ShopeeEnqueueRequest(BaseModel):
     site_ids: List[str]
     content_mode: Literal["shared", "per-site"] = "shared"

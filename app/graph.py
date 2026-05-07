@@ -108,6 +108,8 @@ def _run_deduplicator(state: dict) -> dict:
 def _run_fetcher(state: dict) -> dict:
     if state.get("source_origin") == "shopee" and state.get("source_seed"):
         state["fetch_result"] = fetcher.run_seeded_product(state["source_seed"])
+    elif state.get("source_origin") == "website_keyword" and state.get("source_seed"):
+        state["fetch_result"] = fetcher.run_seeded_keyword(state["source_seed"])
     else:
         state["fetch_result"] = fetcher.run(state["url"])
     return state
@@ -173,6 +175,7 @@ def _run_image_selector(state: dict) -> dict:
         metadata.get("featured_image_url"),
         metadata.get("featured_image_alt"),
         metadata.get("image_urls") or [],
+        provider="pexels" if str(state.get("source_origin") or "") == "website_keyword" else "",
     )
     return state
 

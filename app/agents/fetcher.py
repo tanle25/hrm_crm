@@ -486,6 +486,44 @@ def run_seeded_product(seed: dict) -> dict:
     }
 
 
+def run_seeded_keyword(seed: dict) -> dict:
+    keyword = re.sub(r"\s+", " ", str(seed.get("keyword") or "").strip())
+    if not keyword:
+        raise RuntimeError("Keyword seed is empty")
+    brief = re.sub(r"\s+", " ", str(seed.get("brief") or "").strip())
+    clean_content = (
+        f"Viết bài SEO tiếng Việt chuyên sâu theo từ khóa chính: {keyword}.\n"
+        f"Mục tiêu: cung cấp thông tin hữu ích, dễ đọc, có cấu trúc heading rõ ràng, FAQ, checklist và CTA mềm.\n"
+        f"Không viết như trang sản phẩm WooCommerce; đây là bài viết website/blog."
+    )
+    if brief:
+        clean_content += f"\nGhi chú thêm: {brief}"
+    return {
+        "title": keyword,
+        "clean_content": clean_content,
+        "html": clean_content,
+        "metadata": {
+            "author": "Content Forge",
+            "publish_date": "",
+            "url": str(seed.get("source_url") or f"keyword://{keyword}"),
+            "sitename": "Keyword Brief",
+            "language": "vi",
+            "featured_image_url": "",
+            "featured_image_alt": keyword,
+            "image_urls": [],
+            "source_type": "article",
+            "source_kind": "keyword",
+            "source_classification": {
+                "source_type": "article",
+                "source_kind": "keyword",
+                "confidence": 1.0,
+                "reason": "seeded article brief from keyword",
+            },
+            "product_hints": {},
+        },
+    }
+
+
 def _fetch_wordpress_content(url: str) -> dict | None:
     fetch_url = _canonical_fetch_url(url)
     page_html = _curl_get(fetch_url)

@@ -913,6 +913,72 @@ def _publish_wp_post_type_via_rest(state: dict, payload: dict, post_type: str, r
     )
 
 
+def _build_website_post_payload(state: dict) -> dict:
+    settings = get_settings()
+    status = state.get("publish_status") or settings.woo_default_status
+    schema = build_schema(state)
+    image_data = state.get("image_data", {}) or {}
+    image_gallery = image_data.get("gallery") or []
+    meta_title = _seo_title(state)
+    meta_description = _seo_description(state["plan"])
+    content = _inject_content_images(
+        state["linked_html"],
+        image_gallery,
+        image_data.get("alt_text", state["plan"]["focus_keyword"]),
+        force=True,
+    )
+    return {
+        "title": state["plan"]["title"],
+        "content": content,
+        "status": status,
+        "slug": _product_slug(state["plan"]),
+        "excerpt": _extract_short_description(state),
+        "categories": [int(state["woo_category_id"])] if state.get("woo_category_id") else [],
+        "meta": {
+            "rank_math_title": meta_title,
+            "rank_math_description": meta_description,
+            "rank_math_focus_keyword": state["plan"]["focus_keyword"],
+            "rank_math_robots": ["index", "follow"],
+            "_content_forge_schema": json.dumps(schema, ensure_ascii=False),
+            "_content_forge_source_origin": str(state.get("source_origin") or ""),
+        },
+    }
+
+
+def _publish_wp_post_via_rest(state: dict, payload: dict) -> dict:
+    site_config = _publisher_site_config(state)
+    if not (site_config.get("username") and site_config.get("app_password")):
+        raise RuntimeError("WordPress post publish requires site username and application password")
+
+    base = site_config["woo_url"].rstrip("/")
+    auth = (site_config["username"], site_config["app_password"])
+    candidates = [
+        (f"{base}/wp-json/wp/v2/posts", None, False),
+        (f"{base}/index.php", {"rest_route": "/wp/v2/posts"}, True),
+    ]
+    errors: list[str] = []
+    for url, params, local_index_route in candidates:
+        try:
+            response = httpx.post(url, params=params, auth=auth, json=payload, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as exc:
+            body = re.sub(r"\s+", " ", exc.response.text or "").strip()[:500]
+            route = "index_rest_route" if local_index_route else "wp_json"
+            errors.append(f"{route} POST {exc.response.status_code}: {body}")
+            continue
+        except Exception as exc:
+            route = "index_rest_route" if local_index_route else "wp_json"
+            errors.append(f"{route} POST error: {exc}")
+            continue
+
+        post_id = int(data["id"])
+        _sync_rank_math_meta(site_config, post_id, payload)
+        return {"woo_post_id": post_id, "woo_link": data.get("link") or data.get("permalink") or ""}
+
+    raise RuntimeError("WordPress post publish failed: " + " | ".join(errors))
+
+
 def _faq_schema(state: dict) -> dict | None:
     faq_items = state.get("extracted", {}).get("faq_items") or []
     entities = []
@@ -1498,6 +1564,9 @@ def _create_variations_via_rest(
 
 
 def run(state: dict) -> dict:
+    if _source_origin(state) in {"website_article_url", "website_keyword"}:
+        return run_website_post(state)
+
     schema = build_schema(state)
     payload = _build_product_payload(state)
     publish_result = _publish_via_rest(state, payload)
@@ -1508,6 +1577,23 @@ def run(state: dict) -> dict:
         "final_article": {
             "title": state["plan"]["title"],
             "html": state["linked_html"],
+            "schema": schema,
+        },
+    }
+
+
+def run_website_post(state: dict) -> dict:
+    schema = build_schema(state)
+    payload = _build_website_post_payload(state)
+    publish_result = _publish_wp_post_via_rest(state, payload)
+    return {
+        "woo_post_id": publish_result["woo_post_id"],
+        "woo_link": publish_result["woo_link"],
+        "published_post_type": "post",
+        "published_rest_base": "posts",
+        "final_article": {
+            "title": state["plan"]["title"],
+            "html": payload["content"],
             "schema": schema,
         },
     }

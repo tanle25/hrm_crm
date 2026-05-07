@@ -63,14 +63,61 @@ def _select_best_unsplash(query: str) -> dict:
     }
 
 
+def _pexels_search(query: str, limit: int = 6) -> list[dict]:
+    settings = get_settings()
+    if not settings.pexels_api_key or httpx is None:
+        return []
+    try:
+        response = httpx.get(
+            "https://api.pexels.com/v1/search",
+            params={"query": query, "per_page": limit, "orientation": "landscape", "locale": "vi-VN"},
+            headers={"Authorization": settings.pexels_api_key},
+            timeout=12,
+        )
+        response.raise_for_status()
+    except Exception:
+        return []
+    return response.json().get("photos", [])
+
+
+def _select_best_pexels(query: str) -> dict:
+    photos = _pexels_search(query, limit=6)
+    if not photos:
+        return {}
+    best = max(photos, key=lambda item: int(item.get("width") or 0))
+    description = (best.get("alt") or "featured image").strip()
+    photographer = str(best.get("photographer") or "Pexels").strip()
+    return {
+        "url": (best.get("src") or {}).get("large2x") or (best.get("src") or {}).get("large") or (best.get("src") or {}).get("original") or "",
+        "media_id": 0,
+        "alt_text": f"{query} - {description}",
+        "photographer": photographer,
+        "gallery": _unique_urls(
+            [
+                (item.get("src") or {}).get("large2x") or (item.get("src") or {}).get("large") or (item.get("src") or {}).get("original") or ""
+                for item in photos
+            ],
+            limit=6,
+        ),
+        "pexels_link": best.get("url", ""),
+        "unsplash_link": "",
+    }
+
+
 def run(
     focus_keyword: str,
     article_type: str,
     source_image_url: str | None = None,
     source_image_alt: str | None = None,
     source_image_urls: list[str] | None = None,
+    provider: str = "",
 ) -> dict:
     query = focus_keyword or article_type or "trà"
+    if provider == "pexels":
+        pexels = _select_best_pexels(query)
+        if pexels.get("url"):
+            return pexels
+
     unsplash = _select_best_unsplash(query)
     if unsplash.get("url"):
         return unsplash

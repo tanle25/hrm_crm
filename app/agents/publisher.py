@@ -325,9 +325,15 @@ def _shopee_source_image_urls(state: dict) -> list[str]:
     image_data = state.get("image_data", {}) or {}
     source_seed = state.get("source_seed") or {}
     normalized = source_seed.get("normalized") or {}
-    candidates = list(image_data.get("gallery") or []) or list(normalized.get("images") or [])
-    urls = [_normalize_image_url(str(url).strip()) for url in candidates if str(url).strip()]
-    return [url for url in urls if url]
+    candidates = list(image_data.get("gallery") or []) + list(normalized.get("images") or [])
+    output: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        url = _normalize_image_url(str(candidate).strip())
+        if url and url not in seen:
+            seen.add(url)
+            output.append(url)
+    return output
 
 
 def _shopee_affiliate_content(state: dict, uploaded_images: list[dict]) -> str:

@@ -134,6 +134,8 @@ def run(key_points: list[str], knowledge_facts: list[dict], metadata: dict, focu
         f"Knowledge facts: {knowledge_facts[:5]}\n"
         f"Extracted: {extracted or {}}\n"
         f"Focus keyword override: {focus_keyword_override or ''}\n"
+        "Nếu source_kind là keyword, hãy lập outline dựa nhiều vào Knowledge facts vì keyword brief không phải nguồn dữ kiện đầy đủ.\n"
+        "Nếu source_kind là article, hãy kết hợp dữ kiện URL nguồn với Knowledge facts để bổ sung chiều sâu.\n"
     )
     data = call_json("planner", PLANNER_SYSTEM_PROMPT, prompt, fallback=fallback, max_tokens=1800)
     source_type = (metadata.get("source_type") or "").lower()

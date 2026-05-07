@@ -297,8 +297,17 @@ def run(state: dict) -> dict:
         "product_kind": state["plan"].get("product_kind") or state["fetch_result"].get("metadata", {}).get("product_kind"),
     }
     concise_plan = _clean_for_writer(concise_plan, state)
+    source_origin = str(state.get("source_origin") or "").strip().lower()
     source_excerpt = _replace_source_terms(str(state["fetch_result"].get("clean_content") or ""), state)[:1800]
-    knowledge_facts = _clean_for_writer(state.get("knowledge_facts", [])[:4], state)
+    knowledge_limit = 8 if source_origin in {"website_keyword", "website_article_url"} else 4
+    knowledge_facts = _clean_for_writer(state.get("knowledge_facts", [])[:knowledge_limit], state)
+    knowledge_instruction = (
+        "Với bài viết theo keyword, hãy lấy kiến thức RAG làm nguồn chính; chỉ dùng brief keyword để định hướng intent, không coi brief là nguồn dữ kiện đầy đủ.\n"
+        if source_origin == "website_keyword"
+        else "Với bài viết từ URL, hãy kết hợp dữ kiện nguồn và knowledge facts từ RAG; ưu tiên nguồn khi có xung đột.\n"
+        if source_origin == "website_article_url"
+        else ""
+    )
     prompt = (
         f"Metadata: {concise_metadata}\n"
         f"Plan: {concise_plan}\n"
@@ -308,7 +317,8 @@ def run(state: dict) -> dict:
         f"Concise extracted data: {concise_extracted}\n"
         f"Uploaded/local image library (3-5 ảnh để dùng tự nhiên trong bài): {image_library}\n"
         f"Knowledge facts: {knowledge_facts}\n"
-        f"Clean product excerpt: {source_excerpt}\n"
+        f"Source/brief excerpt: {source_excerpt}\n"
+        f"{knowledge_instruction}"
         "Yêu cầu: tiếng Việt tự nhiên, có quan sát thực tế, không sáo rỗng, không bịa dữ kiện.\n"
         "Không nhắc website nguồn, URL nguồn hoặc thương hiệu nguồn trong nội dung cuối.\n"
         "Không dùng blockquote mở đầu, không dùng heading kiểu 'Gợi ý nhanh' hay 'Mô tả ngắn'.\n"

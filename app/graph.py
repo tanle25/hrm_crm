@@ -130,10 +130,12 @@ def _run_knowledge(state: dict) -> dict:
         return state
     metadata = dict(state["fetch_result"].get("metadata", {}))
     metadata["title"] = state["fetch_result"].get("title")
+    source_origin = str(state.get("source_origin") or "").strip().lower()
     state["knowledge_facts"] = knowledge.run(
         state["extracted"]["key_points"],
         metadata=metadata,
         extracted=state["extracted"],
+        limit=10 if source_origin in {"website_keyword", "website_article_url"} else 6,
     )
     _update_metrics(state, "knowledge", tokens_delta=200, cost_delta=0.0005)
     return state

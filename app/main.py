@@ -283,6 +283,8 @@ def _site_profile_payload(site: dict) -> dict:
         "consumer_secret": site.get("consumer_secret", ""),
         "username": site.get("username", ""),
         "app_password": site.get("app_password", ""),
+        "shopee_affiliate_post_type": site.get("shopee_affiliate_post_type", "affiliate_product"),
+        "shopee_affiliate_rest_base": site.get("shopee_affiliate_rest_base", ""),
         "shopee_affiliate_query": site.get("shopee_affiliate_query", ""),
     }
 

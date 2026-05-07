@@ -98,6 +98,8 @@ def list_sites(search: str | None = None) -> list[dict[str, Any]]:
                 str(item.get("username") or ""),
                 str(item.get("consumer_key") or ""),
                 str(item.get("consumer_secret") or ""),
+                str(item.get("shopee_affiliate_post_type") or ""),
+                str(item.get("shopee_affiliate_rest_base") or ""),
                 str(item.get("shopee_affiliate_query") or ""),
             ]
         ).lower()
@@ -131,6 +133,8 @@ def create_site(payload: dict[str, Any]) -> dict[str, Any]:
         "consumer_secret": str(payload.get("consumer_secret") or "").strip(),
         "username": str(payload.get("username") or "").strip(),
         "app_password": str(payload.get("app_password") or "").strip(),
+        "shopee_affiliate_post_type": str(payload.get("shopee_affiliate_post_type") or "affiliate_product").strip() or "affiliate_product",
+        "shopee_affiliate_rest_base": str(payload.get("shopee_affiliate_rest_base") or "").strip().strip("/"),
         "shopee_affiliate_query": str(payload.get("shopee_affiliate_query") or "").strip().lstrip("?"),
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
@@ -178,6 +182,8 @@ def update_site(site_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         "consumer_secret": _payload_text(payload, current, "consumer_secret"),
         "username": _payload_text(payload, current, "username"),
         "app_password": _payload_text(payload, current, "app_password"),
+        "shopee_affiliate_post_type": _payload_text(payload, current, "shopee_affiliate_post_type", "affiliate_product") or "affiliate_product",
+        "shopee_affiliate_rest_base": _payload_text(payload, current, "shopee_affiliate_rest_base").strip("/"),
         "shopee_affiliate_query": _payload_text(payload, current, "shopee_affiliate_query").lstrip("?"),
         "updated_at": _now_iso(),
     }

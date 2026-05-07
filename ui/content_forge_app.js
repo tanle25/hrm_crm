@@ -969,6 +969,7 @@
                                                     <span class="badge cyan">${escapeHtml(shopeePrice(item.regular_price))}</span>
                                                     <span class="badge purple">${escapeHtml(`${item.variant_count || 0} variants`)}</span>
                                                     ${item.is_duplicate ? `<span class="badge amber">TRÙNG${item.duplicate_count > 1 ? ` · ${escapeHtml(item.duplicate_count)}` : ""}</span>` : ""}
+                                                    ${item.redacted_image_count ? `<span class="badge red">ẢNH CHE · ${escapeHtml(item.redacted_image_count)}</span>` : ""}
                                                 </div>
                                                 <div class="text-[10px] text-hud-muted truncate mt-2">${escapeHtml(item.url || item.item_id)}</div>
                                             </div>

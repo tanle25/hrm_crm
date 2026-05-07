@@ -1087,11 +1087,20 @@ async def shopee_product_upsert(request: ShopeeUpsertRequest, http_request: Requ
         payload = await asyncio.to_thread(upsert_shopee_product, request.product)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    log.info("shopee_product_upserted", item_id=payload.get("item_id"), title=(payload.get("normalized") or {}).get("product_title"))
+    normalized = payload.get("normalized") or {}
+    raw_images = request.product.get("images") or request.product.get("imageUrls") or request.product.get("image_urls") or []
+    log.info(
+        "shopee_product_upserted",
+        item_id=payload.get("item_id"),
+        title=normalized.get("product_title"),
+        raw_images_type=type(raw_images).__name__,
+        normalized_image_count=len(normalized.get("images") or []),
+        normalized_image_preview=str((normalized.get("images") or [""])[0] or "")[:96],
+    )
     return ShopeeProductDetailResponse(
         item_id=str(payload.get("item_id") or ""),
         raw=payload.get("raw") or {},
-        normalized=payload.get("normalized") or {},
+        normalized=normalized,
     )
 
 

@@ -212,6 +212,7 @@ class ShopeeProductListItem(BaseModel):
     variant_count: int = 0
     image_count: int = 0
     image_url: str = ""
+    redacted_image_count: int = 0
     url: str = ""
     updated_at: str = ""
     is_duplicate: bool = False

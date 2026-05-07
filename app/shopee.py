@@ -74,34 +74,65 @@ def _normalize_image_url(url: str) -> str:
     return value
 
 
+def _looks_redacted(value: Any) -> bool:
+    text = str(value or "")
+    return "*" in text or "%2a" in text.lower() or "*" in unquote(text)
+
+
+def _append_image_candidate(output: list[str], seen: set[str], value: Any) -> None:
+    url = _normalize_image_url(str(value or "").strip())
+    if url and url not in seen:
+        seen.add(url)
+        output.append(url)
+
+
+def _collect_image_candidates(value: Any, output: list[str], seen: set[str]) -> None:
+    if value is None:
+        return
+    if isinstance(value, str):
+        _append_image_candidate(output, seen, value)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_image_candidates(item, output, seen)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key or "").lower()
+            if key_text in {"url", "src", "image", "image_url", "imageurl", "thumbnail", "cover", "origin", "full", "preview"}:
+                _collect_image_candidates(item, output, seen)
+            elif any(part in key_text for part in ("image", "photo", "thumb", "cover", "gallery")):
+                _collect_image_candidates(item, output, seen)
+            elif isinstance(item, (dict, list)):
+                _collect_image_candidates(item, output, seen)
+
+
 def _collect_image_urls(raw: dict[str, Any]) -> list[str]:
-    candidates: list[Any] = []
+    output: list[str] = []
+    seen: set[str] = set()
     for key in ("images", "imageUrls", "image_urls", "imageList", "gallery", "photos"):
         value = raw.get(key)
-        if isinstance(value, list):
-            candidates.extend(value)
-        elif isinstance(value, dict):
-            candidates.extend(value.values())
-        elif value:
-            candidates.append(value)
+        _collect_image_candidates(value, output, seen)
 
     for key in ("image", "imageUrl", "image_url", "mainImage", "cover", "thumbnail"):
         value = raw.get(key)
-        if value:
-            candidates.append(value)
+        _collect_image_candidates(value, output, seen)
 
     for variant in raw.get("variants") or []:
         if isinstance(variant, dict):
-            candidates.append(variant.get("image"))
-
-    output: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        url = _normalize_image_url(str(candidate or "").strip())
-        if url and url not in seen:
-            seen.add(url)
-            output.append(url)
+            _collect_image_candidates(variant.get("image"), output, seen)
     return output
+
+
+def _count_redacted_images(raw: dict[str, Any]) -> int:
+    count = 0
+    for key in ("images", "imageUrls", "image_urls", "imageList", "gallery", "photos", "image", "imageUrl", "image_url", "mainImage", "cover", "thumbnail"):
+        if _looks_redacted(raw.get(key)):
+            count += 1
+    for variant in raw.get("variants") or []:
+        if isinstance(variant, dict) and _looks_redacted(variant.get("image")):
+            count += 1
+    return count
 
 
 def _strip_markup(text: str) -> str:
@@ -415,6 +446,7 @@ def list_shopee_products(search: str | None = None, limit: int = 100) -> dict[st
                 "variant_count": int(normalized.get("raw_variant_count") or 0),
                 "image_count": len(normalized.get("images") or []),
                 "image_url": str((normalized.get("images") or [""])[0] or ""),
+                "redacted_image_count": _count_redacted_images(record.get("raw") or {}),
                 "url": str(normalized.get("source_url") or ""),
                 "updated_at": str(record.get("updated_at") or ""),
                 "is_duplicate": duplicate_count > 1,

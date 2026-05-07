@@ -159,6 +159,8 @@ def _upload_wp_media_from_temp(site_config: dict, image_url: str, alt_text: str,
                 headers={
                     "User-Agent": "Mozilla/5.0 ContentForge/1.0",
                     "Accept": "image/webp,image/jpeg,image/png,image/gif,image/*;q=0.8,*/*;q=0.5",
+                    "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+                    "Referer": "https://shopee.vn/",
                 },
             )
             download.raise_for_status()
@@ -331,7 +333,7 @@ def _shopee_affiliate_content(state: dict, uploaded_images: list[dict]) -> str:
     price = re.sub(r"\s+", " ", str(normalized.get("sale_price") or normalized.get("regular_price") or "")).strip()
 
     content = _style_product_content(
-        _inject_content_images(state["linked_html"], gallery_urls, alt_text),
+        _inject_content_images(state["linked_html"], gallery_urls, alt_text, force=True),
         state,
     )
 
@@ -739,11 +741,11 @@ def _style_product_content(html: str, state: dict | None = None) -> str:
     return f'<div class="content-forge-product" style="{wrapper_style}">\n{styled_html}\n</div>'
 
 
-def _inject_content_images(html: str, image_urls: list[str], alt_text: str) -> str:
-    html = _remove_invalid_content_images(html or "")
+def _inject_content_images(html: str, image_urls: list[str], alt_text: str, force: bool = False) -> str:
+    html = _remove_all_content_images(html or "") if force else _remove_invalid_content_images(html or "")
     if not image_urls:
         return html
-    if _has_valid_content_image(html):
+    if not force and _has_valid_content_image(html):
         return html
     html = re.sub(r"<section\b[^>]*content-forge-image-grid[^>]*>\s*</section>\s*", "", html, flags=re.IGNORECASE | re.DOTALL)
     if "<img " in html.lower():
@@ -773,9 +775,16 @@ def _inject_content_images(html: str, image_urls: list[str], alt_text: str) -> s
 def _has_valid_content_image(html: str) -> bool:
     for match in re.finditer(r"<img\b[^>]*>", html or "", flags=re.IGNORECASE | re.DOTALL):
         src_match = re.search(r"""\bsrc\s*=\s*(['"])(.*?)\1""", match.group(0), flags=re.IGNORECASE | re.DOTALL)
-        if src_match and re.match(r"^https?://", src_match.group(2).strip(), flags=re.IGNORECASE):
+        if src_match and _normalize_image_url(src_match.group(2).strip()):
             return True
     return False
+
+
+def _remove_all_content_images(html: str) -> str:
+    cleaned = re.sub(r"<figure\b[^>]*>.*?<img\b.*?</figure>\s*", "", html or "", flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"<img\b[^>]*>\s*", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"<section\b[^>]*(?:content-forge-image-grid|content-forge-inline-gallery|content-forge-affiliate-gallery)[^>]*>.*?</section>\s*", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    return cleaned
 
 
 def _remove_invalid_content_images(html: str) -> str:
@@ -785,7 +794,7 @@ def _remove_invalid_content_images(html: str) -> str:
         if not src_match:
             return ""
         src = src_match.group(2).strip()
-        if not re.match(r"^https?://", src, flags=re.IGNORECASE):
+        if not _normalize_image_url(src):
             return ""
         return tag
 

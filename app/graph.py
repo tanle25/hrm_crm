@@ -123,6 +123,9 @@ def _run_extractor(state: dict) -> dict:
 
 
 def _run_knowledge(state: dict) -> dict:
+    if str(state.get("source_origin") or "").strip().lower() == "shopee":
+        state["knowledge_facts"] = []
+        return state
     metadata = dict(state["fetch_result"].get("metadata", {}))
     metadata["title"] = state["fetch_result"].get("title")
     state["knowledge_facts"] = knowledge.run(
@@ -135,6 +138,9 @@ def _run_knowledge(state: dict) -> dict:
 
 
 def _run_enricher(state: dict) -> dict:
+    if str(state.get("source_origin") or "").strip().lower() == "shopee":
+        state["additional_sources"] = []
+        return state
     state["additional_sources"] = enricher.run(state["extracted"]["key_points"], state.get("focus_keyword_override"))
     return state
 
@@ -337,6 +343,10 @@ def _route_deduplicator(state: dict) -> str:
     return "duplicate" if state["dedup_result"]["is_duplicate"] else "fetcher"
 
 
+def _route_after_extractor(state: dict) -> str:
+    return "planner" if str(state.get("source_origin") or "").strip().lower() == "shopee" else "knowledge"
+
+
 def _route_qa(state: dict) -> str:
     qa_result = state.get("qa_result", {})
     if qa_result.get("pass"):
@@ -374,7 +384,7 @@ def _get_langgraph_app():
     graph.set_entry_point("deduplicator")
     graph.add_conditional_edges("deduplicator", _route_deduplicator, {"duplicate": END, "fetcher": "fetcher"})
     graph.add_edge("fetcher", "extractor")
-    graph.add_edge("extractor", "knowledge")
+    graph.add_conditional_edges("extractor", _route_after_extractor, {"planner": "planner", "knowledge": "knowledge"})
     graph.add_edge("knowledge", "enricher")
     graph.add_edge("enricher", "planner")
     graph.add_edge("planner", "image_selector")
@@ -414,9 +424,15 @@ def _run_pipeline_sequential(state: dict) -> dict:
             state = _node(step, _run_extractor)(state)
             continue
         if step == "knowledge":
+            if str(state.get("source_origin") or "").strip().lower() == "shopee":
+                state["knowledge_facts"] = []
+                continue
             state = _node(step, _run_knowledge)(state)
             continue
         if step == "enricher":
+            if str(state.get("source_origin") or "").strip().lower() == "shopee":
+                state["additional_sources"] = []
+                continue
             state = _node(step, _run_enricher)(state)
             continue
         if step == "planner":

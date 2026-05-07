@@ -333,6 +333,110 @@ def _affiliate_focus_keyword(state: dict) -> str:
     return "sản phẩm Shopee"
 
 
+def _clean_affiliate_keyword_text(value: str) -> str:
+    text = unicodedata.normalize("NFC", str(value or "")).lower()
+    text = re.sub(r"\([^)]*\)|\[[^\]]*\]|\{[^}]*\}", " ", text)
+    text = re.sub(r"#\S+", " ", text)
+    replacements = [
+        "chính hãng",
+        "nhập khẩu",
+        "giá tốt",
+        "cao cấp",
+        "phiên bản giới hạn",
+        "an toàn cho sức khỏe",
+        "lẻ 1 cây",
+        "lẻ",
+        "combo",
+        "set",
+        "bản nhật",
+        "bản hàn",
+    ]
+    for phrase in replacements:
+        text = re.sub(rf"\b{re.escape(phrase)}\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^\wà-ỹ]+", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _shopee_affiliate_focus_keyword(state: dict) -> str:
+    normalized = ((state.get("source_seed") or {}).get("normalized") or {})
+    title = str(normalized.get("product_title") or state.get("plan", {}).get("title") or "").strip()
+    cleaned = _clean_affiliate_keyword_text(title)
+
+    patterns = [
+        r"\b(inner gel\s+vệ sinh\s+(?:phụ khoa|phụ nữ|vùng kín))\b",
+        r"\b(dung dịch vệ sinh\s+(?:phụ nữ|vùng kín))\b",
+        r"\b(xà phòng trắng da\s+[\wà-ỹ]+(?:\s+[\wà-ỹ]+)?)\b",
+        r"\b(cốc thủy tinh\s+[\wà-ỹ]+(?:\s+[\wà-ỹ]+){0,2})\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+        if match:
+            keyword = re.sub(r"\s+", " ", match.group(1)).strip()
+            if 3 <= len(keyword.split()) <= 7:
+                return keyword
+
+    stop_words = {
+        "sản",
+        "phẩm",
+        "loại",
+        "mẫu",
+        "hàng",
+        "shop",
+        "cho",
+        "và",
+        "của",
+        "có",
+        "với",
+        "the",
+    }
+    words = [word for word in cleaned.split() if word not in stop_words]
+    if len(words) >= 3:
+        return " ".join(words[:6])
+    return _affiliate_focus_keyword(state).lower()
+
+
+def _affiliate_meta_title(focus_keyword: str) -> str:
+    base = re.sub(r"\s+", " ", focus_keyword or "").strip()
+    if not base:
+        return "Sản phẩm Shopee: 5 điểm cần biết"
+    candidate = f"{base}: 5 điểm cần biết"
+    if len(candidate) <= 60:
+        return candidate
+    return base[:60].rsplit(" ", 1)[0].rstrip(" -–|:,;") or base[:60]
+
+
+def _affiliate_meta_description(focus_keyword: str, price: str) -> str:
+    price_text = f", giá tham khảo {price}đ" if price else ""
+    description = f"{focus_keyword} có thông tin rõ ràng{price_text}, hình ảnh sản phẩm và link mua Shopee affiliate tiện kiểm tra trước khi chọn."
+    return description[:155].rstrip(" -–|:,;")
+
+
+def _optimize_shopee_affiliate_plan(state: dict) -> dict:
+    plan = dict(state.get("plan") or {})
+    normalized = ((state.get("source_seed") or {}).get("normalized") or {})
+    focus_keyword = _shopee_affiliate_focus_keyword(state)
+    price = re.sub(r"[^\d]", "", str(normalized.get("sale_price") or normalized.get("regular_price") or ""))
+
+    plan["focus_keyword"] = focus_keyword
+    plan["meta_title"] = _affiliate_meta_title(focus_keyword)
+    plan["meta_description"] = _affiliate_meta_description(focus_keyword, price)
+    plan.setdefault("title", str(normalized.get("product_title") or focus_keyword).strip() or focus_keyword)
+    tags = [focus_keyword]
+    brand = str(normalized.get("brand") or "").strip()
+    category = str(normalized.get("category") or "").strip()
+    if brand:
+        tags.append(brand)
+    if category:
+        tags.extend(item.strip() for item in category.split("|") if item.strip())
+    existing_tags = plan.get("tags") or []
+    if isinstance(existing_tags, list):
+        tags.extend(str(item).strip() for item in existing_tags if str(item).strip())
+    plan["tags"] = list(dict.fromkeys(tags))[:8]
+    state["plan"] = plan
+    return plan
+
+
 def _shopee_meta_attributes(normalized: dict) -> list[dict[str, str]]:
     output: list[dict[str, str]] = []
     label_map = {
@@ -598,18 +702,19 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     site_config = _publisher_site_config(state)
     normalized = ((state.get("source_seed") or {}).get("normalized") or {})
     uploaded_images = _upload_shopee_affiliate_images(state)
+    plan = _optimize_shopee_affiliate_plan(state)
     schema = build_schema(state)
     status = state.get("publish_status") or settings.woo_default_status
     post_type = site_config.get("shopee_affiliate_post_type") or "affiliate_product"
     rest_base = site_config.get("shopee_affiliate_rest_base") or post_type
     meta_title = _seo_title(state)
-    meta_description = _seo_description(state["plan"])
+    meta_description = _seo_description(plan)
     original_source_url = str(normalized.get("source_url") or state.get("url") or "").strip()
     clean_product_url = _clean_shopee_product_url(original_source_url, normalized)
     affiliate_url = _shopee_affiliate_url(state)
     affiliate_suffix = urlencode(_affiliate_query_items(site_config), doseq=True)
     affiliate_query = f"?{affiliate_suffix}" if affiliate_suffix else ""
-    focus_keyword = _affiliate_focus_keyword(state)
+    focus_keyword = plan["focus_keyword"]
     regular_price = re.sub(r"[^\d]", "", str(normalized.get("regular_price") or ""))
     sale_price = re.sub(r"[^\d]", "", str(normalized.get("sale_price") or ""))
     source_urls = _shopee_source_image_urls(state)

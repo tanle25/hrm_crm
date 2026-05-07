@@ -491,6 +491,10 @@ def _publish_wp_post_type_via_rest(state: dict, payload: dict, post_type: str, r
         {key: value for key, value in payload.items() if key != "meta"},
         {key: value for key, value in payload.items() if key in {"title", "content", "status", "slug", "featured_media"}},
     ]
+    if _source_origin(state) == "shopee":
+        for variant_index, variant in enumerate(payload_variants, start=1):
+            if _contains_redacted_marker(variant):
+                raise RuntimeError(f"Shopee affiliate publish blocked: redacted image URL remains before WordPress POST variant {variant_index}")
 
     errors: list[str] = []
     for url, params, local_index_route in candidates:

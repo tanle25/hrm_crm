@@ -4,7 +4,7 @@ import html
 import json
 import re
 import subprocess
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 from app.agents import classifier
 from app.source_cleaner import source_terms_from_metadata
@@ -439,7 +439,15 @@ def run_seeded_product(seed: dict) -> dict:
     raw = dict(seed.get("raw") or {})
     title = str(normalized.get("product_title") or raw.get("title") or "").strip() or _title_from_url(str(normalized.get("source_url") or raw.get("url") or ""))
     clean_content = str(normalized.get("seed_content") or normalized.get("description_text") or raw.get("description") or title).strip()
-    image_urls = [str(url).strip() for url in (normalized.get("images") or raw.get("images") or []) if str(url).strip()]
+    image_candidates = list(normalized.get("images") or [])
+    image_urls = []
+    seen_images: set[str] = set()
+    for url in image_candidates:
+        text = str(url or "").strip()
+        if not text or "*" in text or "%2a" in text.lower() or "*" in unquote(text) or text in seen_images:
+            continue
+        seen_images.add(text)
+        image_urls.append(text)
     product_kind = "variable" if str(normalized.get("type") or "").lower() == "variable" else "simple"
     product_hints = {
         "meta_description": str(normalized.get("short_description") or ""),

@@ -99,12 +99,12 @@ def _image_library(state: dict) -> list[dict]:
         for index, item in enumerate(uploaded[:5], start=1):
             url = _clean_phrase(str(item.get("url", "")))
             alt = _clean_phrase(str(item.get("alt", ""))) or f"{state['plan']['focus_keyword']} - hình {index}"
-            if url:
+            if url and "*" not in url and "%2a" not in url.lower():
                 images.append({"url": url, "alt": alt})
         return images
     for index, url in enumerate((image_data.get("gallery") or [])[:5], start=1):
         cleaned_url = _clean_phrase(str(url))
-        if cleaned_url:
+        if cleaned_url and "*" not in cleaned_url and "%2a" not in cleaned_url.lower():
             images.append({"url": cleaned_url, "alt": f"{state['plan']['focus_keyword']} - hình {index}"})
     return images
 

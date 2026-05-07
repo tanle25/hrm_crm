@@ -13,6 +13,8 @@ def _unique_urls(urls: list[str], limit: int = 8) -> list[str]:
     seen: set[str] = set()
     for url in urls:
         cleaned = (url or "").strip()
+        if "*" in cleaned or "%2a" in cleaned.lower():
+            continue
         if not cleaned or cleaned in seen:
             continue
         seen.add(cleaned)

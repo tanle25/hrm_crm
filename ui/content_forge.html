@@ -2730,6 +2730,17 @@
 
                         <div class="p-8 space-y-6">
 
+                            <div class="grid grid-cols-2 gap-3">
+                                <button type="button" data-submit-tab="product" class="submit-tab-btn hud-input px-4 py-3 text-left border-hud-cyan/60 bg-hud-cyan/10">
+                                    <span class="block text-xs text-white font-bold uppercase-wide"><i class="fa-solid fa-box mr-2 text-hud-cyan"></i>Sản phẩm</span>
+                                    <span class="block text-[10px] text-hud-muted mt-1">URL sản phẩm, publish qua WooCommerce products.</span>
+                                </button>
+                                <button type="button" data-submit-tab="post" class="submit-tab-btn hud-input px-4 py-3 text-left border-hud-cyan/20">
+                                    <span class="block text-xs text-white font-bold uppercase-wide"><i class="fa-solid fa-newspaper mr-2 text-hud-cyan"></i>Bài viết</span>
+                                    <span class="block text-[10px] text-hud-muted mt-1">URL bài viết hoặc keyword chips, publish WordPress posts.</span>
+                                </button>
+                            </div>
+
                             <!-- Site Select -->
                             <div>
                                 <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 flex items-center gap-2">
@@ -2754,7 +2765,7 @@
                             </div>
 
                             <!-- Website Post Mode -->
-                            <div>
+                            <div id="submit-post-mode-panel" class="hidden">
                                 <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-3 flex items-center gap-2">
                                     <i class="fa-solid fa-newspaper"></i>
                                     <span>Website Post Source</span>
@@ -2798,15 +2809,15 @@
                             <div id="submit-url-panel">
                                 <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 flex items-center gap-2" style="text-shadow: 0 0 8px rgba(0,240,255,0.3);">
                                     <i class="fa-solid fa-link"></i>
-                                    <span>Source URLs</span>
+                                    <span id="submit-url-label">Product URLs</span>
                                     <span class="ml-auto text-hud-red">* required</span>
                                 </label>
                                 <div class="input-wrap">
-                                    <textarea id="submit-urls" rows="8" placeholder="https://example.com/url-1&#10;https://example.com/url-2&#10;https://example.com/url-3" class="hud-textarea w-full px-4 py-4 text-sm" required></textarea>
+                                    <textarea id="submit-urls" rows="8" placeholder="https://example.com/product-1&#10;https://example.com/product-2&#10;https://example.com/product-3" class="hud-textarea w-full px-4 py-4 text-sm" required></textarea>
                                 </div>
                                 <p class="text-[10px] text-hud-muted mt-2">
                                     <i class="fa-solid fa-circle-info text-hud-cyan"></i>
-                                    Mỗi dòng là một URL. Hệ thống sẽ tự tách và tạo hàng loạt job.
+                                    <span id="submit-url-help-text">Mỗi dòng là một URL sản phẩm. Hệ thống sẽ tạo hàng loạt job WooCommerce.</span>
                                 </p>
                             </div>
 

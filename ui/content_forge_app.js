@@ -21,6 +21,7 @@
         selectedJobId: localStorage.getItem("content_forge_selected_job_id") || "",
         selectedSiteId: "",
         siteCreateMode: false,
+        submitTab: localStorage.getItem("content_forge_submit_tab") || "product",
         selectedSubmitSiteIds: JSON.parse(localStorage.getItem("content_forge_submit_site_ids") || "[]"),
         websiteKeywordChips: [],
         selectedFacebookCreatePageIds: JSON.parse(localStorage.getItem("content_forge_fb_create_page_ids") || "[]"),
@@ -910,12 +911,42 @@
     }
 
     function updateWebsitePostMode() {
+        const tab = state.submitTab || "product";
         const mode = document.querySelector('input[name="website-post-mode"]:checked')?.value || "urls";
-        document.getElementById("submit-url-panel")?.classList.toggle("hidden", mode !== "urls");
-        document.getElementById("submit-keyword-panel")?.classList.toggle("hidden", mode !== "keywords");
+        const isPost = tab === "post";
+        document.getElementById("submit-post-mode-panel")?.classList.toggle("hidden", !isPost);
+        document.getElementById("submit-url-panel")?.classList.toggle("hidden", isPost && mode !== "urls");
+        document.getElementById("submit-keyword-panel")?.classList.toggle("hidden", !isPost || mode !== "keywords");
+        const urlLabel = document.getElementById("submit-url-label");
+        const urlHelp = document.getElementById("submit-url-help-text");
+        const urlInput = document.getElementById("submit-urls");
+        if (urlLabel) urlLabel.textContent = isPost ? "Article Source URLs" : "Product URLs";
+        if (urlHelp) urlHelp.textContent = isPost
+            ? "Mỗi dòng là một URL bài viết. Hệ thống sẽ crawl và publish thành WordPress post."
+            : "Mỗi dòng là một URL sản phẩm. Hệ thống sẽ tạo hàng loạt job WooCommerce.";
+        if (urlInput) {
+            urlInput.placeholder = isPost
+                ? "https://example.com/article-1\nhttps://example.com/article-2"
+                : "https://example.com/product-1\nhttps://example.com/product-2";
+        }
+        document.querySelectorAll(".submit-tab-btn").forEach((button) => {
+            const active = button.getAttribute("data-submit-tab") === tab;
+            button.classList.toggle("bg-hud-cyan/10", active);
+            button.classList.toggle("border-hud-cyan/60", active);
+            button.classList.toggle("border-hud-cyan/20", !active);
+        });
     }
 
     function bindWebsiteSubmitControls() {
+        document.querySelectorAll(".submit-tab-btn").forEach((button) => {
+            if (button.dataset.bound === "1") return;
+            button.dataset.bound = "1";
+            button.addEventListener("click", () => {
+                state.submitTab = button.getAttribute("data-submit-tab") || "product";
+                localStorage.setItem("content_forge_submit_tab", state.submitTab);
+                updateWebsitePostMode();
+            });
+        });
         document.querySelectorAll('input[name="website-post-mode"]').forEach((input) => {
             if (input.dataset.bound === "1") return;
             input.dataset.bound = "1";
@@ -941,6 +972,7 @@
     async function submitJob() {
         const urlInput = document.getElementById("submit-urls");
         const keywordInput = document.getElementById("submit-keywords");
+        const tab = state.submitTab || "product";
         const mode = document.querySelector('input[name="website-post-mode"]:checked')?.value || "urls";
         const publishInput = document.querySelector('input[name="status"]:checked');
         const contentModeInput = document.querySelector('input[name="content-mode"]:checked');
@@ -957,11 +989,11 @@
             showFeedback("error", "Cần chọn ít nhất một website đích.");
             return;
         }
-        if (mode === "urls" && !urls.length) {
+        if ((tab === "product" || mode === "urls") && !urls.length) {
             showFeedback("error", "Cần ít nhất một URL.");
             return;
         }
-        if (mode === "keywords" && !keywords.length) {
+        if (tab === "post" && mode === "keywords" && !keywords.length) {
             showFeedback("error", "Cần ít nhất một từ khóa chính.");
             return;
         }
@@ -969,19 +1001,31 @@
         const enqueueButton = document.getElementById("submit-enqueue");
         if (enqueueButton) enqueueButton.disabled = true;
         try {
-            const payload = await fetchJSON("/website/posts/submit", {
-                method: "POST",
-                body: JSON.stringify({
-                    mode,
-                    urls: mode === "urls" ? urls : [],
-                    keywords: mode === "keywords" ? keywords : [],
-                    site_ids: siteIds,
-                    content_mode: contentModeInput?.value || "shared",
-                    category_id: 1,
-                    priority: "normal",
-                    publish_status: publishInput?.value || "draft",
-                }),
-            });
+            const payload = tab === "product"
+                ? await fetchJSON("/submit-batch", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        urls,
+                        site_ids: siteIds,
+                        content_mode: contentModeInput?.value || "shared",
+                        woo_category_id: 1,
+                        priority: "normal",
+                        publish_status: publishInput?.value || "draft",
+                    }),
+                })
+                : await fetchJSON("/website/posts/submit", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        mode,
+                        urls: mode === "urls" ? urls : [],
+                        keywords: mode === "keywords" ? keywords : [],
+                        site_ids: siteIds,
+                        content_mode: contentModeInput?.value || "shared",
+                        category_id: 1,
+                        priority: "normal",
+                        publish_status: publishInput?.value || "draft",
+                    }),
+                });
             const focusJobId = (payload.master_job_ids || [])[0] || (payload.child_job_ids || [])[0];
             if (focusJobId) {
                 setSelectedJob(focusJobId);

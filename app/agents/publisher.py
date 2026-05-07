@@ -291,6 +291,18 @@ def _shopee_affiliate_content(state: dict, uploaded_images: list[dict]) -> str:
             "Xem sản phẩm trên Shopee"
             "</a></p>"
         )
+    gallery_html = ""
+    if gallery_urls:
+        figures = []
+        for index, image_url in enumerate(gallery_urls[:8], start=1):
+            figures.append(
+                '<figure><img src="'
+                + escape(image_url, quote=True)
+                + '" alt="'
+                + escape(f"{alt_text} {index}", quote=True)
+                + '" loading="lazy" /></figure>'
+            )
+        gallery_html = '<section class="content-forge-affiliate-gallery"><h2>Hình ảnh sản phẩm</h2>' + "".join(figures) + "</section>"
 
     affiliate_block = (
         '<section class="content-forge-affiliate-box">'
@@ -299,6 +311,7 @@ def _shopee_affiliate_content(state: dict, uploaded_images: list[dict]) -> str:
         "<p>Sản phẩm được giới thiệu theo mô hình affiliate. Giá, tồn kho và ưu đãi có thể thay đổi theo thời điểm trên sàn.</p>"
         f"{button_html}"
         "</section>"
+        f"{gallery_html}"
     )
     if "</div>" in content:
         return content.rsplit("</div>", 1)[0] + affiliate_block + "\n</div>"
@@ -321,6 +334,8 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     affiliate_url = _shopee_affiliate_url(state)
     regular_price = re.sub(r"[^\d]", "", str(normalized.get("regular_price") or ""))
     sale_price = re.sub(r"[^\d]", "", str(normalized.get("sale_price") or ""))
+    uploaded_ids = [int(item["id"]) for item in uploaded_images if item.get("id")]
+    uploaded_urls = [str(item.get("url") or "").strip() for item in uploaded_images if str(item.get("url") or "").strip()]
 
     payload = {
         "title": state["plan"]["title"],
@@ -349,6 +364,10 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
             "regular_price": regular_price,
             "sale_price": sale_price,
             "price": sale_price or regular_price,
+            "gallery_image_ids": uploaded_ids,
+            "_gallery_image_ids": uploaded_ids,
+            "gallery_image_urls": uploaded_urls,
+            "_gallery_image_urls": uploaded_urls,
         },
     }
     if uploaded_images:

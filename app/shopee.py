@@ -262,6 +262,24 @@ def get_shopee_product(item_id: str) -> dict[str, Any] | None:
     return None
 
 
+def delete_shopee_product(item_id: str) -> bool:
+    item_id = str(item_id or "").strip()
+    if not item_id:
+        return False
+    pg_conn = _postgres_conn()
+    if pg_conn is not None:
+        with pg_conn, pg_conn.cursor() as cur:
+            cur.execute("DELETE FROM shopee_products WHERE item_id = %s", (item_id,))
+            return cur.rowcount > 0
+    with STORE_LOCK:
+        items = _load_products()
+        remaining = [item for item in items if str(item.get("item_id") or "") != item_id]
+        if len(remaining) == len(items):
+            return False
+        _save_products(remaining)
+        return True
+
+
 def list_shopee_products(search: str | None = None, limit: int = 100) -> dict[str, Any]:
     if postgres_available():
         pg_conn = _postgres_conn()

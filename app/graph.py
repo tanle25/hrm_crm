@@ -12,6 +12,7 @@ from app.job_store import add_processed_url, delete_dlq_entry, get_dlq_entry, ge
 from app.logging import get_logger
 from app.metrics import active_jobs, job_duration, jobs_completed, jobs_duplicate, jobs_failed
 from app.queue import enqueue_saved_state, send_to_dlq, update_job
+from app.shopee import delete_shopee_product
 from app.webhook import send_job_webhook
 
 try:
@@ -232,6 +233,10 @@ def _run_publisher(state: dict) -> dict:
         state["dedup_result"]["url_hash"],
         {"url": state["url"], "woo_post_id": state["woo_post_id"], "woo_link": state["woo_link"]},
     )
+    if str(state.get("source_origin") or "").strip().lower() == "shopee":
+        item_id = str(((state.get("source_seed") or {}).get("normalized") or {}).get("item_id") or "").strip()
+        if item_id:
+            delete_shopee_product(item_id)
     return state
 
 

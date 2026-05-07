@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any
+from urllib.parse import unquote
 
 from app.postgres import get_connection as _pg_connection, init_schema as _init_postgres_schema, postgres_available, serialize_json
 
@@ -63,10 +64,44 @@ def _normalize_image_url(url: str) -> str:
     if not value:
         return ""
     if value.startswith("//"):
-        return f"https:{value}"
-    if re.match(r"^[a-z0-9.-]+\.[a-z]{2,}/", value, flags=re.IGNORECASE):
-        return f"https://{value}"
+        value = f"https:{value}"
+    elif re.match(r"^[a-z0-9.-]+\.[a-z]{2,}/", value, flags=re.IGNORECASE):
+        value = f"https://{value}"
+    if "*" in value or "%2a" in value.lower() or "*" in unquote(value):
+        return ""
+    if not re.match(r"^https?://", value, flags=re.IGNORECASE):
+        return ""
     return value
+
+
+def _collect_image_urls(raw: dict[str, Any]) -> list[str]:
+    candidates: list[Any] = []
+    for key in ("images", "imageUrls", "image_urls", "imageList", "gallery", "photos"):
+        value = raw.get(key)
+        if isinstance(value, list):
+            candidates.extend(value)
+        elif isinstance(value, dict):
+            candidates.extend(value.values())
+        elif value:
+            candidates.append(value)
+
+    for key in ("image", "imageUrl", "image_url", "mainImage", "cover", "thumbnail"):
+        value = raw.get(key)
+        if value:
+            candidates.append(value)
+
+    for variant in raw.get("variants") or []:
+        if isinstance(variant, dict):
+            candidates.append(variant.get("image"))
+
+    output: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        url = _normalize_image_url(str(candidate or "").strip())
+        if url and url not in seen:
+            seen.add(url)
+            output.append(url)
+    return output
 
 
 def _strip_markup(text: str) -> str:
@@ -196,7 +231,7 @@ def normalize_shopee_product(raw: dict[str, Any]) -> dict[str, Any]:
         "sale_price": sale_price,
         "short_description": _strip_markup(str(raw.get("shortDescription") or title)),
         "description_text": _clean_description(str(raw.get("description") or "")),
-        "images": [_normalize_image_url(str(url).strip()) for url in (raw.get("images") or []) if _normalize_image_url(str(url).strip())],
+        "images": _collect_image_urls(raw),
         "attributes": attributes,
         "variations": variations,
         "raw_variant_count": int(raw.get("variantCount") or len(variations) or 0),

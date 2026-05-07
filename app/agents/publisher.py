@@ -7,7 +7,7 @@ import re
 import unicodedata
 from html import escape, unescape
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -109,9 +109,13 @@ def _normalize_image_url(url: str) -> str:
     if not value:
         return ""
     if value.startswith("//"):
-        return f"https:{value}"
-    if re.match(r"^[a-z0-9.-]+\.[a-z]{2,}/", value, flags=re.IGNORECASE):
-        return f"https://{value}"
+        value = f"https:{value}"
+    elif re.match(r"^[a-z0-9.-]+\.[a-z]{2,}/", value, flags=re.IGNORECASE):
+        value = f"https://{value}"
+    if "*" in value or "%2a" in value.lower() or "*" in unquote(value):
+        return ""
+    if not re.match(r"^https?://", value, flags=re.IGNORECASE):
+        return ""
     return value
 
 

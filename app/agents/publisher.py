@@ -289,6 +289,17 @@ def _clean_shopee_product_url(source_url: str, normalized: dict) -> str:
     return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
+def _clean_url_without_query(url: str) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    parts = urlsplit(value)
+    if not parts.scheme or not parts.netloc:
+        return value
+    path = re.sub(r"/+", "/", parts.path or "/")
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
 def _shopee_affiliate_url(state: dict) -> str:
     site_config = _publisher_site_config(state)
     normalized = ((state.get("source_seed") or {}).get("normalized") or {})
@@ -305,6 +316,21 @@ def _shopee_affiliate_url(state: dict) -> str:
         if key not in existing_keys:
             query_items.append((key, value))
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items, doseq=True), ""))
+
+
+def _affiliate_focus_keyword(state: dict) -> str:
+    plan = state.get("plan") or {}
+    normalized = ((state.get("source_seed") or {}).get("normalized") or {})
+    for value in (
+        plan.get("focus_keyword"),
+        plan.get("title"),
+        normalized.get("product_title"),
+        normalized.get("short_description"),
+    ):
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if text:
+            return text[:120]
+    return "sản phẩm Shopee"
 
 
 def _shopee_meta_attributes(normalized: dict) -> list[dict[str, str]]:
@@ -546,6 +572,7 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     affiliate_url = _shopee_affiliate_url(state)
     affiliate_suffix = urlencode(_affiliate_query_items(site_config), doseq=True)
     affiliate_query = f"?{affiliate_suffix}" if affiliate_suffix else ""
+    focus_keyword = _affiliate_focus_keyword(state)
     regular_price = re.sub(r"[^\d]", "", str(normalized.get("regular_price") or ""))
     sale_price = re.sub(r"[^\d]", "", str(normalized.get("sale_price") or ""))
     source_urls = _shopee_source_image_urls(state)
@@ -562,7 +589,7 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     sold = str(normalized.get("sold") or "")
     shop_name = str(normalized.get("shop_name") or "")
     shop_id = str(normalized.get("shop_id") or "")
-    shop_link = str(normalized.get("shop_url") or "")
+    shop_link = _clean_url_without_query(str(normalized.get("shop_url") or ""))
     if not shop_link and shop_id:
         shop_link = f"https://shopee.vn/shop/{shop_id}"
     brand = str(normalized.get("brand") or "")
@@ -579,7 +606,7 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
         "meta": {
             "rank_math_title": meta_title,
             "rank_math_description": meta_description,
-            "rank_math_focus_keyword": state["plan"]["focus_keyword"],
+            "rank_math_focus_keyword": focus_keyword,
             "rank_math_robots": ["index", "follow"],
             "_content_forge_schema": json.dumps(schema, ensure_ascii=False),
             "_content_forge_source_origin": "shopee",
@@ -610,8 +637,8 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
             "_affiliate_url": affiliate_url,
             "product_url": affiliate_url,
             "_product_url": affiliate_url,
-            "shopee_url": clean_product_url,
-            "Link_Shopee": clean_product_url,
+            "shopee_url": affiliate_url,
+            "Link_Shopee": affiliate_url,
             "Shopee_Affiliate": affiliate_query,
             "Lalada_URL": "",
             "Lazada_URL": "",

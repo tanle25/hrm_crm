@@ -336,6 +336,24 @@ def _shopee_source_image_urls(state: dict) -> list[str]:
     return output
 
 
+def _contains_redacted_marker(value) -> bool:
+    text = str(value or "")
+    return "*" in text or "%2a" in text.lower() or "*" in unquote(text)
+
+
+def _strip_redacted_images_from_html(html: str) -> str:
+    def replace_figure(match: re.Match[str]) -> str:
+        return "" if _contains_redacted_marker(match.group(0)) else match.group(0)
+
+    def replace_img(match: re.Match[str]) -> str:
+        return "" if _contains_redacted_marker(match.group(0)) else match.group(0)
+
+    cleaned = re.sub(r"<figure\b[^>]*>.*?</figure>\s*", replace_figure, html or "", flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"<img\b[^>]*>\s*", replace_img, cleaned, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"https?://[^\s\"'<>]*\*[^\s\"'<>]*", "", cleaned)
+    return cleaned
+
+
 def _shopee_affiliate_content(state: dict, uploaded_images: list[dict]) -> str:
     normalized = ((state.get("source_seed") or {}).get("normalized") or {})
     image_data = state.get("image_data", {}) or {}
@@ -382,6 +400,27 @@ def _shopee_affiliate_content(state: dict, uploaded_images: list[dict]) -> str:
     if "</div>" in content:
         return content.rsplit("</div>", 1)[0] + affiliate_block + "\n</div>"
     return content + affiliate_block
+
+
+def _sanitize_shopee_affiliate_payload(payload: dict, state: dict, uploaded_images: list[dict]) -> dict:
+    source_urls = _shopee_source_image_urls(state)
+    if not source_urls:
+        raise RuntimeError("Shopee affiliate publish blocked: no clean image URL is available after filtering redacted URLs")
+
+    payload["content"] = _strip_redacted_images_from_html(str(payload.get("content") or ""))
+    if _contains_redacted_marker(payload.get("content")):
+        payload["content"] = _shopee_affiliate_content(state, uploaded_images)
+
+    meta = payload.get("meta")
+    if isinstance(meta, dict):
+        meta["gallery_image_urls"] = source_urls
+        meta["_gallery_image_urls"] = source_urls
+        meta["product_gallery_urls"] = source_urls
+        meta["_product_gallery_urls"] = source_urls
+
+    if _contains_redacted_marker(payload.get("content")) or _contains_redacted_marker(meta):
+        raise RuntimeError("Shopee affiliate publish blocked: redacted image URL remains in final WordPress payload")
+    return payload
 
 
 def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
@@ -450,6 +489,7 @@ def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
     }
     if uploaded_images:
         payload["featured_media"] = int(uploaded_images[0]["id"])
+    payload = _sanitize_shopee_affiliate_payload(payload, state, uploaded_images)
     return payload, post_type, _wp_rest_collection_base(rest_base)
 
 

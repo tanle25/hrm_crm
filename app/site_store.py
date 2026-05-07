@@ -156,21 +156,29 @@ def create_site(payload: dict[str, Any]) -> dict[str, Any]:
     return site
 
 
+def _payload_text(payload: dict[str, Any], current: dict[str, Any], key: str, default: str = "") -> str:
+    if key in payload:
+        return str(payload.get(key) or "").strip()
+    return str(current.get(key) or default).strip()
+
+
 def update_site(site_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     current = get_site(site_id)
     if not current:
         return None
+    url = _payload_text(payload, current, "url")
+    primary_color = _payload_text(payload, current, "primary_color", "#22c55e") or "#22c55e"
     updated = {
         **current,
-        "url": _normalize_url(str(payload.get("url") or current.get("url") or "")),
-        "site_name": str(payload.get("site_name") or current.get("site_name") or "").strip(),
-        "topic": str(payload.get("topic") or current.get("topic") or "").strip(),
-        "primary_color": str(payload.get("primary_color") or current.get("primary_color") or "#22c55e").strip() or "#22c55e",
-        "consumer_key": str(payload.get("consumer_key") or current.get("consumer_key") or "").strip(),
-        "consumer_secret": str(payload.get("consumer_secret") or current.get("consumer_secret") or "").strip(),
-        "username": str(payload.get("username") or current.get("username") or "").strip(),
-        "app_password": str(payload.get("app_password") or current.get("app_password") or "").strip(),
-        "shopee_affiliate_query": str(payload.get("shopee_affiliate_query") if "shopee_affiliate_query" in payload else current.get("shopee_affiliate_query") or "").strip().lstrip("?"),
+        "url": _normalize_url(url),
+        "site_name": _payload_text(payload, current, "site_name"),
+        "topic": _payload_text(payload, current, "topic"),
+        "primary_color": primary_color,
+        "consumer_key": _payload_text(payload, current, "consumer_key"),
+        "consumer_secret": _payload_text(payload, current, "consumer_secret"),
+        "username": _payload_text(payload, current, "username"),
+        "app_password": _payload_text(payload, current, "app_password"),
+        "shopee_affiliate_query": _payload_text(payload, current, "shopee_affiliate_query").lstrip("?"),
         "updated_at": _now_iso(),
     }
     pg_conn = _postgres_conn()

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import re
 import unicodedata
+from html import escape
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -57,11 +60,28 @@ def _publisher_site_config(state: dict) -> dict:
         "username": str(site.get("username") or "").strip(),
         "app_password": str(site.get("app_password") or "").strip(),
         "default_status": settings.woo_default_status,
+        "shopee_affiliate_post_type": str(
+            site.get("shopee_affiliate_post_type")
+            or site.get("affiliate_post_type")
+            or os.getenv("SHOPEE_AFFILIATE_POST_TYPE")
+            or "affiliate_product"
+        ).strip(),
+        "shopee_affiliate_rest_base": str(
+            site.get("shopee_affiliate_rest_base")
+            or site.get("affiliate_rest_base")
+            or os.getenv("SHOPEE_AFFILIATE_REST_BASE")
+            or ""
+        ).strip(),
+        "shopee_affiliate_query": str(
+            site.get("shopee_affiliate_query")
+            or site.get("affiliate_query")
+            or os.getenv("SHOPEE_AFFILIATE_QUERY")
+            or ""
+        ).strip(),
+        "shopee_affiliate_params": site.get("shopee_affiliate_params") or site.get("affiliate_params") or {},
     }
     if not config["woo_url"]:
         raise RuntimeError("Site profile is missing WooCommerce URL")
-    if not (config["consumer_key"] and config["consumer_secret"]):
-        raise RuntimeError("Site profile is missing WooCommerce consumer credentials")
     return config
 
 
@@ -124,7 +144,11 @@ def _upload_wp_media_from_temp(site_config: dict, image_url: str, alt_text: str,
                 media_id = data.get("id")
                 if not media_id:
                     return None
-                media_item = {"id": int(media_id), "alt": alt_text}
+                media_item = {
+                    "id": int(media_id),
+                    "alt": alt_text,
+                    "url": str(data.get("source_url") or data.get("guid", {}).get("rendered") or ""),
+                }
                 try:
                     client.post(
                         f"{media_url}/{media_id}",
@@ -158,6 +182,223 @@ def _upload_shopee_images_if_needed(state: dict, payload: dict) -> None:
         payload["images"] = uploaded
         payload["featured_image_id"] = uploaded[0]["id"]
         payload["gallery_image_ids"] = [item["id"] for item in uploaded]
+
+
+def _upload_shopee_affiliate_images(state: dict) -> list[dict]:
+    image_data = state.get("image_data", {}) or {}
+    image_urls = [str(url).strip() for url in (image_data.get("gallery") or []) if str(url).strip()]
+    if not image_urls:
+        return []
+    site_config = _publisher_site_config(state)
+    alt_text = str(
+        image_data.get("alt_text")
+        or state.get("plan", {}).get("focus_keyword")
+        or state.get("plan", {}).get("title")
+        or "Shopee affiliate product"
+    )
+    uploaded: list[dict] = []
+    for index, image_url in enumerate(image_urls[:8], start=1):
+        media_item = _upload_wp_media_from_temp(site_config, image_url, alt_text, index)
+        if media_item:
+            uploaded.append(media_item)
+    return uploaded
+
+
+def _wp_rest_collection_base(value: str) -> str:
+    rest_base = re.sub(r"^/+", "", str(value or "").strip())
+    rest_base = re.sub(r"/+$", "", rest_base)
+    if rest_base in {"", "post"}:
+        return "posts"
+    return rest_base
+
+
+def _affiliate_query_items(site_config: dict) -> list[tuple[str, str]]:
+    items: list[tuple[str, str]] = []
+    params = site_config.get("shopee_affiliate_params") or {}
+    if isinstance(params, dict):
+        for key, value in params.items():
+            key_text = str(key or "").strip()
+            value_text = str(value or "").strip()
+            if key_text and value_text:
+                items.append((key_text, value_text))
+    query = str(site_config.get("shopee_affiliate_query") or "").strip().lstrip("?")
+    if query:
+        for key, value in parse_qsl(query, keep_blank_values=False):
+            key_text = str(key or "").strip()
+            value_text = str(value or "").strip()
+            if key_text and value_text:
+                items.append((key_text, value_text))
+    return items
+
+
+def _shopee_domain(source_url: str) -> str:
+    host = urlsplit(source_url).netloc.lower()
+    if host and "shopee." in host:
+        return host
+    return "shopee.vn"
+
+
+def _clean_shopee_product_url(source_url: str, normalized: dict) -> str:
+    item_id = str(normalized.get("item_id") or "").strip()
+    shop_id = str(normalized.get("shop_id") or "").strip()
+    if item_id and shop_id:
+        return f"https://{_shopee_domain(source_url)}/product/{shop_id}/{item_id}"
+
+    parts = urlsplit(source_url)
+    if not parts.scheme or not parts.netloc:
+        return source_url.strip()
+    path = re.sub(r"/+", "/", parts.path or "/")
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def _shopee_affiliate_url(state: dict) -> str:
+    site_config = _publisher_site_config(state)
+    normalized = ((state.get("source_seed") or {}).get("normalized") or {})
+    source_url = str(normalized.get("source_url") or state.get("url") or "").strip()
+    clean_url = _clean_shopee_product_url(source_url, normalized)
+    configured_items = _affiliate_query_items(site_config)
+    if not configured_items:
+        return clean_url
+
+    parts = urlsplit(clean_url)
+    query_items = parse_qsl(parts.query, keep_blank_values=False)
+    existing_keys = {key for key, _ in query_items}
+    for key, value in configured_items:
+        if key not in existing_keys:
+            query_items.append((key, value))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items, doseq=True), ""))
+
+
+def _shopee_affiliate_content(state: dict, uploaded_images: list[dict]) -> str:
+    normalized = ((state.get("source_seed") or {}).get("normalized") or {})
+    image_data = state.get("image_data", {}) or {}
+    uploaded_urls = [str(item.get("url") or "").strip() for item in uploaded_images if str(item.get("url") or "").strip()]
+    gallery_urls = uploaded_urls or [str(url).strip() for url in (image_data.get("gallery") or []) if str(url).strip()]
+    alt_text = str(image_data.get("alt_text") or state["plan"]["focus_keyword"])
+    source_url = _shopee_affiliate_url(state)
+    price = re.sub(r"\s+", " ", str(normalized.get("sale_price") or normalized.get("regular_price") or "")).strip()
+
+    content = _style_product_content(
+        _inject_content_images(state["linked_html"], gallery_urls, alt_text),
+        state,
+    )
+
+    price_html = f"<p><strong>Giá tham khảo:</strong> {price}</p>" if price else ""
+    button_html = ""
+    if source_url:
+        button_html = (
+            '<p><a href="' + escape(source_url, quote=True) + '" rel="nofollow sponsored" target="_blank">'
+            "Xem sản phẩm trên Shopee"
+            "</a></p>"
+        )
+
+    affiliate_block = (
+        '<section class="content-forge-affiliate-box">'
+        "<h2>Thông tin mua hàng</h2>"
+        f"{price_html}"
+        "<p>Sản phẩm được giới thiệu theo mô hình affiliate. Giá, tồn kho và ưu đãi có thể thay đổi theo thời điểm trên sàn.</p>"
+        f"{button_html}"
+        "</section>"
+    )
+    if "</div>" in content:
+        return content.rsplit("</div>", 1)[0] + affiliate_block + "\n</div>"
+    return content + affiliate_block
+
+
+def _build_shopee_affiliate_payload(state: dict) -> tuple[dict, str, str]:
+    settings = get_settings()
+    site_config = _publisher_site_config(state)
+    normalized = ((state.get("source_seed") or {}).get("normalized") or {})
+    uploaded_images = _upload_shopee_affiliate_images(state)
+    schema = build_schema(state)
+    status = state.get("publish_status") or settings.woo_default_status
+    post_type = site_config.get("shopee_affiliate_post_type") or "affiliate_product"
+    rest_base = site_config.get("shopee_affiliate_rest_base") or post_type
+    meta_title = _seo_title(state)
+    meta_description = _seo_description(state["plan"])
+    original_source_url = str(normalized.get("source_url") or state.get("url") or "").strip()
+    clean_product_url = _clean_shopee_product_url(original_source_url, normalized)
+    affiliate_url = _shopee_affiliate_url(state)
+    regular_price = re.sub(r"[^\d]", "", str(normalized.get("regular_price") or ""))
+    sale_price = re.sub(r"[^\d]", "", str(normalized.get("sale_price") or ""))
+
+    payload = {
+        "title": state["plan"]["title"],
+        "content": _shopee_affiliate_content(state, uploaded_images),
+        "status": status,
+        "slug": _product_slug(state["plan"]),
+        "excerpt": _extract_short_description(state),
+        "meta": {
+            "rank_math_title": meta_title,
+            "rank_math_description": meta_description,
+            "rank_math_focus_keyword": state["plan"]["focus_keyword"],
+            "rank_math_robots": ["index", "follow"],
+            "_content_forge_schema": json.dumps(schema, ensure_ascii=False),
+            "_content_forge_source_origin": "shopee",
+            "_content_forge_source_url": affiliate_url,
+            "_content_forge_original_source_url": original_source_url,
+            "_content_forge_clean_product_url": clean_product_url,
+            "_content_forge_shopee_item_id": str(normalized.get("item_id") or ""),
+            "_content_forge_shopee_shop_id": str(normalized.get("shop_id") or ""),
+            "affiliate_url": affiliate_url,
+            "_affiliate_url": affiliate_url,
+            "product_url": affiliate_url,
+            "_product_url": affiliate_url,
+            "shopee_url": affiliate_url,
+            "clean_product_url": clean_product_url,
+            "regular_price": regular_price,
+            "sale_price": sale_price,
+            "price": sale_price or regular_price,
+        },
+    }
+    if uploaded_images:
+        payload["featured_media"] = int(uploaded_images[0]["id"])
+    return payload, post_type, _wp_rest_collection_base(rest_base)
+
+
+def _publish_wp_post_type_via_rest(state: dict, payload: dict, post_type: str, rest_base: str) -> dict:
+    site_config = _publisher_site_config(state)
+    if not (site_config.get("username") and site_config.get("app_password")):
+        raise RuntimeError("WordPress affiliate publish requires site username and application password")
+
+    base = site_config["woo_url"].rstrip("/")
+    rest_base = _wp_rest_collection_base(rest_base)
+    candidates = [
+        (f"{base}/wp-json/wp/v2/{rest_base}", None, False),
+        (f"{base}/index.php", {"rest_route": f"/wp/v2/{rest_base}"}, True),
+    ]
+    auth = (site_config["username"], site_config["app_password"])
+    payload_variants = [
+        payload,
+        {key: value for key, value in payload.items() if key != "meta"},
+        {key: value for key, value in payload.items() if key in {"title", "content", "status", "slug", "featured_media"}},
+    ]
+
+    errors: list[str] = []
+    for url, params, local_index_route in candidates:
+        for variant_index, variant in enumerate(payload_variants, start=1):
+            try:
+                response = httpx.post(url, params=params, auth=auth, json=variant, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                return {
+                    "woo_post_id": data["id"],
+                    "woo_link": data.get("link") or data.get("permalink") or "",
+                    "published_post_type": post_type,
+                    "published_rest_base": rest_base,
+                }
+            except httpx.HTTPStatusError as exc:
+                response = exc.response
+                body = re.sub(r"\s+", " ", response.text or "").strip()[:500]
+                route = "index_rest_route" if local_index_route else "wp_json"
+                errors.append(f"{route} POST {response.status_code} variant {variant_index}: {body}")
+            except Exception as exc:
+                route = "index_rest_route" if local_index_route else "wp_json"
+                errors.append(f"{route} POST error variant {variant_index}: {exc}")
+    raise RuntimeError(
+        f"WordPress affiliate publish failed for post_type={post_type!r}, rest_base={rest_base!r}: "
+        + " | ".join(errors)
+    )
 
 
 def _faq_schema(state: dict) -> dict | None:
@@ -758,13 +999,14 @@ def run_shopee(state: dict) -> dict:
         return run(state)
 
     schema = build_schema(state)
-    payload = _build_shopee_product_payload(state)
-    _upload_shopee_images_if_needed(state, payload)
-    publish_result = _publish_via_rest(state, payload)
+    payload, post_type, rest_base = _build_shopee_affiliate_payload(state)
+    publish_result = _publish_wp_post_type_via_rest(state, payload, post_type, rest_base)
 
     return {
         "woo_post_id": publish_result["woo_post_id"],
         "woo_link": publish_result["woo_link"],
+        "published_post_type": publish_result.get("published_post_type"),
+        "published_rest_base": publish_result.get("published_rest_base"),
         "final_article": {
             "title": state["plan"]["title"],
             "html": state["linked_html"],

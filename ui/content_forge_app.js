@@ -2135,6 +2135,7 @@
             consumer_secret: "",
             username: "",
             app_password: "",
+            shopee_affiliate_query: "",
         };
     }
 
@@ -2149,6 +2150,7 @@
             consumer_secret: site.consumer_secret || "",
             username: site.username || "",
             app_password: site.app_password || "",
+            shopee_affiliate_query: site.shopee_affiliate_query || "",
         };
     }
 
@@ -2209,6 +2211,9 @@
                                                     ? `<span class="badge cyan">CONSUMER_KEY · ${escapeHtml(maskSecret(site.consumer_key))}</span>
                                                        <span class="badge cyan">CONSUMER_SECRET · ${escapeHtml(maskSecret(site.consumer_secret))}</span>`
                                                     : `<span class="text-[10px] text-hud-muted">No API keys</span>`}
+                                                ${site.shopee_affiliate_query
+                                                    ? `<span class="badge green">SHOPEE AFFILIATE</span>`
+                                                    : `<span class="text-[10px] text-hud-muted">Shopee affiliate: off</span>`}
                                             </div>
                                             <div class="mt-3 text-[10px] ${tone === "red" ? "text-hud-red" : tone === "amber" ? "text-hud-amber" : "text-hud-muted"}">${escapeHtml(site.last_test_message || "Chưa kiểm tra kết nối.")}</div>
                                         </button>
@@ -2265,6 +2270,11 @@
                                         <div class="input-wrap"><input id="site-app-password" type="text" class="hud-input w-full px-4 py-2.5 text-sm font-mono" value="${escapeHtml(form.app_password)}" placeholder="xxxx xxxx xxxx"/></div>
                                     </div>
                                 </div>
+                                <div>
+                                    <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 block">Shopee affiliate query <span class="text-hud-muted font-normal normal-case">— để trống nếu site không làm affiliate</span></label>
+                                    <div class="input-wrap"><input id="site-shopee-affiliate-query" type="text" class="hud-input w-full px-4 py-2.5 text-sm font-mono" value="${escapeHtml(form.shopee_affiliate_query)}" placeholder="utm_source=hrm&affiliate_id=..."/></div>
+                                    <div class="text-[10px] text-hud-muted mt-1">Hệ thống sẽ làm sạch link Shopee rồi gắn query này vào CTA và meta affiliate.</div>
+                                </div>
                                 <div class="flex gap-2 pt-2 border-t border-hud-cyan/10">
                                     <button id="site-save-btn" class="btn-primary flex-1 px-4 py-2.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-floppy-disk"></i> ${selectedSite ? "SAVE SITE" : "CREATE SITE"}</button>
                                     ${selectedSite ? `<button id="site-test-btn" class="btn-ghost px-4 py-2.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-flask"></i> TEST</button>` : ""}
@@ -2311,6 +2321,7 @@
                     consumer_secret: section.querySelector("#site-consumer-secret")?.value.trim() || "",
                     username: section.querySelector("#site-username")?.value.trim() || "",
                     app_password: section.querySelector("#site-app-password")?.value.trim() || "",
+                    shopee_affiliate_query: section.querySelector("#site-shopee-affiliate-query")?.value.trim().replace(/^\?+/, "") || "",
                 };
                 try {
                     if (feedback) {

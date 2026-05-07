@@ -98,6 +98,7 @@ def list_sites(search: str | None = None) -> list[dict[str, Any]]:
                 str(item.get("username") or ""),
                 str(item.get("consumer_key") or ""),
                 str(item.get("consumer_secret") or ""),
+                str(item.get("shopee_affiliate_query") or ""),
             ]
         ).lower()
         if search_lower in haystack:
@@ -130,6 +131,7 @@ def create_site(payload: dict[str, Any]) -> dict[str, Any]:
         "consumer_secret": str(payload.get("consumer_secret") or "").strip(),
         "username": str(payload.get("username") or "").strip(),
         "app_password": str(payload.get("app_password") or "").strip(),
+        "shopee_affiliate_query": str(payload.get("shopee_affiliate_query") or "").strip().lstrip("?"),
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
         "last_test_status": "untested",
@@ -168,6 +170,7 @@ def update_site(site_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         "consumer_secret": str(payload.get("consumer_secret") or current.get("consumer_secret") or "").strip(),
         "username": str(payload.get("username") or current.get("username") or "").strip(),
         "app_password": str(payload.get("app_password") or current.get("app_password") or "").strip(),
+        "shopee_affiliate_query": str(payload.get("shopee_affiliate_query") if "shopee_affiliate_query" in payload else current.get("shopee_affiliate_query") or "").strip().lstrip("?"),
         "updated_at": _now_iso(),
     }
     pg_conn = _postgres_conn()

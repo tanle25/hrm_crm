@@ -238,6 +238,7 @@ class SiteConfigBase(BaseModel):
     consumer_secret: str = ""
     username: str = ""
     app_password: str = ""
+    shopee_affiliate_query: str = ""
 
 
 class SiteConfigCreate(SiteConfigBase):

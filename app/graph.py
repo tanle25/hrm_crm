@@ -234,7 +234,11 @@ def _run_publisher(state: dict) -> dict:
         {"url": state["url"], "woo_post_id": state["woo_post_id"], "woo_link": state["woo_link"]},
     )
     if str(state.get("source_origin") or "").strip().lower() == "shopee":
-        item_id = str(((state.get("source_seed") or {}).get("normalized") or {}).get("item_id") or "").strip()
+        source_seed = state.get("source_seed") or {}
+        normalized = source_seed.get("normalized") or {}
+        item_id = str(source_seed.get("product_key") or source_seed.get("item_id") or "").strip()
+        if ":" not in item_id and normalized.get("shop_id") and normalized.get("item_id"):
+            item_id = f"{normalized.get('shop_id')}:{normalized.get('item_id')}"
         if item_id:
             delete_shopee_product(item_id)
     return state

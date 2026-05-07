@@ -198,8 +198,10 @@ def normalize_shopee_product(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _product_record(raw: dict[str, Any]) -> dict[str, Any]:
     normalized = normalize_shopee_product(raw)
+    product_key = _product_key(normalized)
     return {
-        "item_id": normalized["item_id"],
+        "item_id": product_key,
+        "product_key": product_key,
         "source": "shopee",
         "raw": raw,
         "normalized": normalized,
@@ -208,17 +210,28 @@ def _product_record(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _product_key(normalized: dict[str, Any]) -> str:
+    shop_id = str(normalized.get("shop_id") or "").strip()
+    item_id = str(normalized.get("item_id") or "").strip()
+    if shop_id and item_id:
+        return f"{shop_id}:{item_id}"
+    return item_id
+
+
 def upsert_shopee_product(raw: dict[str, Any]) -> dict[str, Any]:
     record = _product_record(raw)
-    item_id = record["item_id"]
-    if not item_id:
-        raise ValueError("Shopee product itemId is required")
+    product_key = record["item_id"]
+    if not product_key:
+        raise ValueError("Shopee product shopId and itemId are required")
 
     pg_conn = _postgres_conn()
     if pg_conn is not None:
-        existing = get_shopee_product(item_id)
+        existing = get_shopee_product(product_key)
         if existing:
             record["created_at"] = existing.get("created_at") or record["created_at"]
+            old_key = str(existing.get("product_key") or existing.get("item_id") or "").strip()
+            if old_key and old_key != product_key:
+                delete_shopee_product(old_key)
         with pg_conn, pg_conn.cursor() as cur:
             cur.execute(
                 """
@@ -228,7 +241,7 @@ def upsert_shopee_product(raw: dict[str, Any]) -> dict[str, Any]:
                     updated_at = NOW(),
                     data = EXCLUDED.data
                 """,
-                (item_id, serialize_json(record)),
+                (product_key, serialize_json(record)),
             )
         return record
 
@@ -236,7 +249,8 @@ def upsert_shopee_product(raw: dict[str, Any]) -> dict[str, Any]:
         items = _load_products()
         replaced = False
         for index, item in enumerate(items):
-            if str(item.get("item_id") or "") != item_id:
+            existing_key = str(item.get("product_key") or item.get("item_id") or "").strip()
+            if existing_key != product_key:
                 continue
             record["created_at"] = item.get("created_at") or record["created_at"]
             items[index] = record
@@ -249,15 +263,26 @@ def upsert_shopee_product(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_shopee_product(item_id: str) -> dict[str, Any] | None:
+    item_id = str(item_id or "").strip()
     pg_conn = _postgres_conn()
     if pg_conn is not None:
         with pg_conn, pg_conn.cursor() as cur:
-            cur.execute("SELECT data::text FROM shopee_products WHERE item_id = %s", (item_id,))
+            cur.execute(
+                """
+                SELECT data::text FROM shopee_products
+                WHERE item_id = %s
+                   OR data->>'product_key' = %s
+                   OR ((data->'normalized'->>'shop_id') || ':' || (data->'normalized'->>'item_id')) = %s
+                LIMIT 1
+                """,
+                (item_id, item_id, item_id),
+            )
             row = cur.fetchone()
             return json.loads(row[0]) if row else None
     with STORE_LOCK:
         for item in _load_products():
-            if str(item.get("item_id") or "") == item_id:
+            existing_key = str(item.get("product_key") or item.get("item_id") or "").strip()
+            if existing_key == item_id:
                 return item
     return None
 
@@ -269,11 +294,24 @@ def delete_shopee_product(item_id: str) -> bool:
     pg_conn = _postgres_conn()
     if pg_conn is not None:
         with pg_conn, pg_conn.cursor() as cur:
-            cur.execute("DELETE FROM shopee_products WHERE item_id = %s", (item_id,))
+            cur.execute(
+                """
+                DELETE FROM shopee_products
+                WHERE item_id = %s
+                   OR data->>'product_key' = %s
+                   OR ((data->'normalized'->>'shop_id') || ':' || (data->'normalized'->>'item_id')) = %s
+                """,
+                (item_id, item_id, item_id),
+            )
             return cur.rowcount > 0
     with STORE_LOCK:
         items = _load_products()
-        remaining = [item for item in items if str(item.get("item_id") or "") != item_id]
+        remaining = [
+            item
+            for item in items
+            if str(item.get("product_key") or item.get("item_id") or "").strip() != item_id
+            and _product_key(item.get("normalized") or {}) != item_id
+        ]
         if len(remaining) == len(items):
             return False
         _save_products(remaining)
@@ -299,27 +337,30 @@ def list_shopee_products(search: str | None = None, limit: int = 100) -> dict[st
                 str(normalized.get("product_title") or ""),
                 str(normalized.get("source_url") or ""),
                 str(record.get("item_id") or ""),
+                str(normalized.get("shop_id") or ""),
+                str(normalized.get("item_id") or ""),
             ]
         ).lower()
         if search_lower and search_lower not in haystack:
             continue
         filtered.append(record)
 
-    title_counts: dict[str, int] = {}
+    product_key_counts: dict[str, int] = {}
     for record in filtered:
         normalized = record.get("normalized") or {}
-        title_key = re.sub(r"\s+", " ", str(normalized.get("product_title") or "").strip().lower())
-        if title_key:
-            title_counts[title_key] = title_counts.get(title_key, 0) + 1
+        product_key = _product_key(normalized)
+        if product_key:
+            product_key_counts[product_key] = product_key_counts.get(product_key, 0) + 1
 
     items = []
     for record in filtered[: max(1, min(limit, 500))]:
         normalized = record.get("normalized") or {}
-        title_key = re.sub(r"\s+", " ", str(normalized.get("product_title") or "").strip().lower())
-        duplicate_count = title_counts.get(title_key, 0)
+        normalized_key = _product_key(normalized)
+        product_key = str(normalized_key or record.get("product_key") or record.get("item_id") or "").strip()
+        duplicate_count = product_key_counts.get(normalized_key, 0)
         items.append(
             {
-                "item_id": str(record.get("item_id") or ""),
+                "item_id": product_key,
                 "shop_id": str(normalized.get("shop_id") or ""),
                 "title": str(normalized.get("product_title") or ""),
                 "type": str(normalized.get("type") or "simple"),

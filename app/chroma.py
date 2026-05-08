@@ -8,10 +8,13 @@ from app.config import get_settings
 
 try:
     import chromadb
-    from chromadb.utils import embedding_functions
 except ImportError:  # pragma: no cover
     chromadb = None
-    embedding_functions = None
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:  # pragma: no cover
+    SentenceTransformer = None
 
 
 class InMemoryKnowledgeBase:
@@ -96,10 +99,23 @@ def get_collection_name() -> str:
 
 
 @lru_cache(maxsize=4)
-def get_embedding_function(model_name: str) -> Any:
-    if embedding_functions is None:
+def get_embedding_function(model_name: str, max_tokens: int | None = None) -> Any:
+    if SentenceTransformer is None:
         return None
-    return embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name)
+    model = SentenceTransformer(model_name)
+    if max_tokens and max_tokens > 0:
+        model.max_seq_length = max_tokens
+
+    class LocalSentenceTransformerEmbeddingFunction:
+        def __call__(self, input: List[str]) -> List[List[float]]:  # Chroma requires the parameter name `input`.
+            embeddings = model.encode(
+                list(input),
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            return embeddings.tolist()
+
+    return LocalSentenceTransformerEmbeddingFunction()
 
 
 def get_collection() -> Any:
@@ -108,7 +124,7 @@ def get_collection() -> Any:
         return _memory_db
     try:
         client = chromadb.PersistentClient(path=settings.chroma_path)
-        embedding_function = get_embedding_function(settings.rag_embedding_model)
+        embedding_function = get_embedding_function(settings.rag_embedding_model, settings.rag_embedding_max_tokens)
         return client.get_or_create_collection(
             get_collection_name(),
             embedding_function=embedding_function,

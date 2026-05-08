@@ -24,6 +24,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_optional_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 def _load_dotenv() -> None:
     env_path = Path(".env")
     if not env_path.exists():
@@ -78,6 +88,7 @@ class Settings:
     chroma_path: str
     rag_embedding_model: str
     rag_collection_name: Optional[str]
+    rag_embedding_max_tokens: Optional[int]
     woo_default_status: Literal["draft", "publish"]
     woo_default_price: str
     unsplash_access_key: Optional[str]
@@ -149,6 +160,7 @@ def get_settings() -> Settings:
         chroma_path=os.getenv("CHROMA_PATH", "./data/chroma"),
         rag_embedding_model=os.getenv("RAG_EMBEDDING_MODEL", "dangvantuan/vietnamese-embedding"),
         rag_collection_name=os.getenv("RAG_COLLECTION_NAME"),
+        rag_embedding_max_tokens=_env_optional_int("RAG_EMBEDDING_MAX_TOKENS") or 256,
         woo_default_status="publish" if woo_default_status == "publish" else "draft",
         woo_default_price=os.getenv("WOO_DEFAULT_PRICE", "99000"),
         unsplash_access_key=os.getenv("UNSPLASH_ACCESS_KEY"),

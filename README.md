@@ -122,6 +122,7 @@ RAG / Chroma:
 
 - `CHROMA_PATH=./data/chroma`
 - `RAG_EMBEDDING_MODEL=dangvantuan/vietnamese-embedding`
+- `RAG_EMBEDDING_MAX_TOKENS=256`
 - `RAG_COLLECTION_NAME=` để trống thì tự sinh collection riêng theo embedding model.
 - `RAG` hiện chỉ dùng khi gọi API/CLI ingest/search riêng, không tham gia publish pipeline
 

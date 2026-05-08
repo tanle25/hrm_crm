@@ -200,11 +200,49 @@ def _chunk_id(source_id: str, chunk_kind: str, index: int, text: str) -> str:
     return f"rag_{source_id}_{chunk_kind}_{index}_{digest}"
 
 
-def _paragraph_chunks(text: str, max_chars: int = 700) -> list[str]:
+def _split_long_text(text: str, max_chars: int) -> list[str]:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+    chunks: list[str] = []
+    current = ""
+    for sentence in re.split(r"(?<=[.!?。！？])\s+", text):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        if len(sentence) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            for start in range(0, len(sentence), max_chars):
+                chunks.append(sentence[start:start + max_chars].strip())
+            continue
+        if not current:
+            current = sentence
+            continue
+        if len(current) + len(sentence) + 1 <= max_chars:
+            current = f"{current} {sentence}"
+        else:
+            chunks.append(current)
+            current = sentence
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _paragraph_chunks(text: str, max_chars: int = 420) -> list[str]:
     paragraphs = [part.strip() for part in re.split(r"\n{2,}|(?<=[.!?])\s+(?=[A-ZÀ-Ỵ])", text or "") if part.strip()]
     chunks: list[str] = []
     current = ""
     for paragraph in paragraphs:
+        if len(paragraph) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(_split_long_text(paragraph, max_chars))
+            continue
         if not current:
             current = paragraph
             continue

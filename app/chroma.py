@@ -144,7 +144,11 @@ def get_documents(where: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
     collection = get_collection(use_embedding=False)
     if isinstance(collection, InMemoryKnowledgeBase):
         return collection.get(where=where)
-    result = collection.get(where=where)
+    try:
+        limit = max(int(collection.count()), 100)
+    except Exception:
+        limit = 10000
+    result = collection.get(where=where, limit=limit)
     documents = result.get("documents", [])
     metadatas = result.get("metadatas", [])
     ids = result.get("ids", [])

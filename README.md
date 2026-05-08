@@ -120,7 +120,9 @@ Quan sát và tích hợp:
 
 RAG / Chroma:
 
-- `CHROMA_DIR=./data/chroma`
+- `CHROMA_PATH=./data/chroma`
+- `RAG_EMBEDDING_MODEL=dangvantuan/vietnamese-embedding`
+- `RAG_COLLECTION_NAME=` để trống thì tự sinh collection riêng theo embedding model.
 - `RAG` hiện chỉ dùng khi gọi API/CLI ingest/search riêng, không tham gia publish pipeline
 
 ## Kiểm tra nhanh
@@ -140,6 +142,12 @@ venv/bin/python -c 'from app.schemas import PipelineState; from app.queue import
 ## RAG kiến thức
 
 Subsystem này dành cho kho tri thức riêng. Mỗi URL được fetch, extract và cắt thành nhiều knowledge units như `overview`, `fact`, `specs`, `use_case`, `objection`, `faq`, `content`, rồi lưu vào Chroma với metadata để truy vấn lại sau.
+
+Embedding mặc định dùng `dangvantuan/vietnamese-embedding` để tối ưu truy vấn tiếng Việt. Khi đổi embedding model, hãy dùng collection mới hoặc chạy migrate để re-embed dữ liệu cũ:
+
+```bash
+venv/bin/python scripts/migrate_chroma_embedding.py --source knowledge_base
+```
 
 Các loại nguồn hiện hỗ trợ:
 

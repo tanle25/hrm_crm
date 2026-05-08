@@ -76,6 +76,8 @@ class Settings:
     redis_url: str
     postgres_url: Optional[str]
     chroma_path: str
+    rag_embedding_model: str
+    rag_collection_name: Optional[str]
     woo_default_status: Literal["draft", "publish"]
     woo_default_price: str
     unsplash_access_key: Optional[str]
@@ -145,6 +147,8 @@ def get_settings() -> Settings:
         redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
         postgres_url=os.getenv("POSTGRES_URL"),
         chroma_path=os.getenv("CHROMA_PATH", "./data/chroma"),
+        rag_embedding_model=os.getenv("RAG_EMBEDDING_MODEL", "dangvantuan/vietnamese-embedding"),
+        rag_collection_name=os.getenv("RAG_COLLECTION_NAME"),
         woo_default_status="publish" if woo_default_status == "publish" else "draft",
         woo_default_price=os.getenv("WOO_DEFAULT_PRICE", "99000"),
         unsplash_access_key=os.getenv("UNSPLASH_ACCESS_KEY"),

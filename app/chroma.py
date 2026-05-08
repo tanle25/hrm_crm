@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import re
+from functools import lru_cache
 from typing import Any, Dict, List
 
 from app.config import get_settings
 
 try:
     import chromadb
+    from chromadb.utils import embedding_functions
 except ImportError:  # pragma: no cover
     chromadb = None
+    embedding_functions = None
 
 
 class InMemoryKnowledgeBase:
@@ -75,13 +79,41 @@ class InMemoryKnowledgeBase:
 _memory_db = InMemoryKnowledgeBase()
 
 
+def _safe_collection_name(name: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "_", name).strip("_")
+    normalized = re.sub(r"_{2,}", "_", normalized)
+    if len(normalized) < 3:
+        normalized = f"rag_{normalized or 'kb'}"
+    return normalized[:63]
+
+
+def get_collection_name() -> str:
+    settings = get_settings()
+    if settings.rag_collection_name:
+        return _safe_collection_name(settings.rag_collection_name)
+    model_suffix = _safe_collection_name(settings.rag_embedding_model)
+    return _safe_collection_name(f"knowledge_base_{model_suffix}")
+
+
+@lru_cache(maxsize=4)
+def get_embedding_function(model_name: str) -> Any:
+    if embedding_functions is None:
+        return None
+    return embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name)
+
+
 def get_collection() -> Any:
     settings = get_settings()
     if chromadb is None:
         return _memory_db
     try:
         client = chromadb.PersistentClient(path=settings.chroma_path)
-        return client.get_or_create_collection("knowledge_base")
+        embedding_function = get_embedding_function(settings.rag_embedding_model)
+        return client.get_or_create_collection(
+            get_collection_name(),
+            embedding_function=embedding_function,
+            metadata={"embedding_model": settings.rag_embedding_model},
+        )
     except Exception:
         return _memory_db
 

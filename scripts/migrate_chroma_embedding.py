@@ -30,7 +30,7 @@ def main() -> None:
     except Exception as error:
         raise SystemExit(f"Source collection not found: {args.source} ({error})") from error
 
-    target = get_collection()
+    target = get_collection(fallback_on_error=False)
     result = source.get(include=["documents", "metadatas"])
     ids = result.get("ids", [])
     documents = result.get("documents", [])

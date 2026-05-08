@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.agents import extractor, fetcher
-from app.chroma import add_document, delete_documents, get_documents, search_documents
+from app.chroma import add_documents, delete_documents, get_documents, search_documents
 from app.llm import call_json
 
 
@@ -590,8 +590,7 @@ def ingest_url(
         delete_documents(where={"source_id": source_id})
 
     units, taxonomy = _knowledge_units(fetched, extracted, manual_categories, manual_tags, note)
-    for unit in units:
-        add_document(unit["document"], unit["metadata"], unit["id"])
+    add_documents(units)
 
     return {
         "status": "ingested",
@@ -670,8 +669,7 @@ def ingest_text(
         delete_documents(where={"source_id": generated_source_id})
 
     units, taxonomy = _knowledge_units(fetched, extracted, manual_categories, manual_tags, note)
-    for unit in units:
-        add_document(unit["document"], unit["metadata"], unit["id"])
+    add_documents(units)
 
     return {
         "status": "ingested",

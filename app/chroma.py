@@ -118,7 +118,7 @@ def get_embedding_function(model_name: str, max_tokens: int | None = None) -> An
     return LocalSentenceTransformerEmbeddingFunction()
 
 
-def get_collection(use_embedding: bool = True) -> Any:
+def get_collection(use_embedding: bool = True, fallback_on_error: bool = True) -> Any:
     settings = get_settings()
     if chromadb is None:
         return _memory_db
@@ -129,15 +129,32 @@ def get_collection(use_embedding: bool = True) -> Any:
             kwargs["embedding_function"] = get_embedding_function(settings.rag_embedding_model, settings.rag_embedding_max_tokens)
         return client.get_or_create_collection(get_collection_name(), **kwargs)
     except Exception:
+        if not fallback_on_error:
+            raise
         return _memory_db
 
 
 def add_document(document: str, metadata: Dict[str, Any], doc_id: str) -> None:
-    collection = get_collection(use_embedding=True)
+    collection = get_collection(use_embedding=True, fallback_on_error=False)
     if isinstance(collection, InMemoryKnowledgeBase):
         collection.add(document=document, metadata=metadata, doc_id=doc_id)
     else:
         collection.add(documents=[document], metadatas=[metadata], ids=[doc_id])
+
+
+def add_documents(documents: List[Dict[str, Any]]) -> None:
+    if not documents:
+        return
+    collection = get_collection(use_embedding=True, fallback_on_error=False)
+    if isinstance(collection, InMemoryKnowledgeBase):
+        for item in documents:
+            collection.add(document=item["document"], metadata=item["metadata"], doc_id=item["id"])
+        return
+    collection.add(
+        documents=[item["document"] for item in documents],
+        metadatas=[item["metadata"] for item in documents],
+        ids=[item["id"] for item in documents],
+    )
 
 
 def get_documents(where: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
@@ -173,7 +190,7 @@ def delete_documents(where: Dict[str, Any] | None = None, ids: List[str] | None 
 
 
 def query_documents(query_text: str, n_results: int = 3, published_only: bool = False) -> List[Dict[str, Any]]:
-    collection = get_collection(use_embedding=True)
+    collection = get_collection(use_embedding=True, fallback_on_error=False)
     if isinstance(collection, InMemoryKnowledgeBase):
         return collection.query(query_text=query_text, n_results=n_results, published_only=published_only)
 
@@ -189,7 +206,7 @@ def query_documents(query_text: str, n_results: int = 3, published_only: bool = 
 
 
 def search_documents(query_text: str, n_results: int = 5, where: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
-    collection = get_collection(use_embedding=True)
+    collection = get_collection(use_embedding=True, fallback_on_error=False)
     if isinstance(collection, InMemoryKnowledgeBase):
         candidates = collection.query(query_text=query_text, n_results=max(20, n_results), published_only=False)
         if where:

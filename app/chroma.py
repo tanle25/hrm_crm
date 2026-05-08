@@ -108,7 +108,7 @@ def get_embedding_function(model_name: str, max_tokens: int | None = None) -> An
 
     class LocalSentenceTransformerEmbeddingFunction:
         def name(self) -> str:
-            return model_name
+            return "sentence_transformer"
 
         def __call__(self, input: List[str]) -> List[List[float]]:  # Chroma requires the parameter name `input`.
             embeddings = model.encode(

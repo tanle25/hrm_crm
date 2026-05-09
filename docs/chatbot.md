@@ -134,7 +134,7 @@ Trường chính:
 - `updated_at`
 - `data jsonb`
 
-Không lưu số lượng tồn kho ở MVP. Khi hết hàng, người dùng bật/tắt sản phẩm bằng `is_active`.
+Không lưu số lượng tồn kho ở MVP. Khi hết hàng, người dùng bật/tắt sản phẩm bằng `is_active`, nhưng trạng thái này chỉ là tín hiệu tư vấn cho chatbot. Sản phẩm vẫn được index vào RAG để AI biết catalog đầy đủ và có thể nói rõ sản phẩm đang tạm hết hàng/ngừng bán.
 
 ### `product_variants`
 
@@ -157,7 +157,7 @@ Trường chính:
 - `updated_at`
 - `data jsonb`
 
-Không lưu số lượng tồn kho. Khi hết hàng, tắt biến thể bằng `is_active=false`. Nếu tất cả biến thể tắt, sản phẩm coi như không khả dụng với chatbot.
+Không lưu số lượng tồn kho. Khi hết hàng, tắt biến thể bằng `is_active=false`. Biến thể vẫn được index vào RAG với trạng thái `availability_status=unavailable`; chatbot không được nói là còn hàng, nhưng vẫn có thể dùng thông tin đó để giải thích và gợi ý biến thể thay thế.
 
 ### `chatbot_sessions`
 
@@ -218,7 +218,7 @@ Lý do tách:
 - Có thể reindex catalog mà không ảnh hưởng RAG bài viết.
 - Search sản phẩm cần filter theo site/category/status.
 
-Mỗi sản phẩm active được index thành ít nhất 1 document tổng quan. Mỗi biến thể active nên được index thành document riêng để bot hiểu đúng màu/size/mẫu/giá.
+Mỗi sản phẩm được index thành ít nhất 1 document tổng quan, bao gồm cả sản phẩm đang tắt/hết hàng. Mỗi biến thể nên được index thành document riêng để bot hiểu đúng màu/size/mẫu/giá và trạng thái còn/hết hàng.
 
 Document sản phẩm nên index theo format:
 
@@ -232,7 +232,7 @@ Mô tả chi tiết: ...
 Nhãn: ...
 Ảnh: ...
 Thuộc tính: ...
-Biến thể còn bán: ...
+Biến thể và trạng thái: ...
 Tình huống phù hợp: ...
 Từ khóa: ...
 ```
@@ -246,7 +246,7 @@ Giá biến thể: ...
 Thuộc tính biến thể: ...
 Nhãn: ...
 Ảnh biến thể: ...
-Trạng thái: còn bán
+Trạng thái: còn hàng | tạm hết hàng | ngừng bán
 ```
 
 Metadata:
@@ -263,12 +263,13 @@ Metadata:
   "labels": "basic, cotton, mùa hè",
   "image_urls": "https://.../1.jpg, https://.../2.jpg",
   "product_url": "https://...",
-  "status": "active",
+  "is_active": true,
+  "availability_status": "available",
   "doc_type": "variant"
 }
 ```
 
-Chỉ index item `is_active=true`. Product/variant bị tắt không xuất hiện trong kết quả tư vấn.
+Index tất cả product/variant, không loại khỏi RAG chỉ vì `is_active=false`. Retriever có thể ưu tiên item `availability_status=available`, nhưng prompt bắt buộc AI phải đọc trạng thái và tư vấn đúng: item hết hàng thì báo hết hàng, không hứa có thể mua, đồng thời gợi ý sản phẩm/biến thể còn hàng phù hợp.
 
 ## 7. LLM router
 
@@ -297,6 +298,8 @@ Bạn là tư vấn viên bán hàng tiếng Việt.
 Quy tắc:
 - Chỉ tư vấn dựa trên sản phẩm và chính sách được cung cấp.
 - Không bịa giá, tồn kho, khuyến mãi.
+- Luôn đọc `availability_status` của sản phẩm/biến thể trước khi tư vấn.
+- Nếu sản phẩm/biến thể đang hết hàng hoặc ngừng bán, nói rõ trạng thái và gợi ý lựa chọn còn hàng gần nhất.
 - Nếu thiếu thông tin, hỏi lại ngắn gọn.
 - Trả lời tự nhiên, thân thiện, không dài dòng.
 - Ưu tiên chốt nhu cầu: ngân sách, kích thước, mẫu mã, mục đích sử dụng.
@@ -445,7 +448,8 @@ Quy tắc dữ liệu:
 - Sản phẩm và biến thể có `labels` để tăng khả năng search/tư vấn.
 - Không dùng số lượng tồn kho trong MVP.
 - Hết hàng thì tắt sản phẩm hoặc tắt biến thể bằng toggle.
-- Chatbot chỉ tư vấn sản phẩm/biến thể đang bật.
+- Toggle không quyết định có đưa vào RAG hay không; nó chỉ cập nhật `availability_status`.
+- Chatbot vẫn biết sản phẩm/biến thể đang tắt, nhưng phải nói rõ trạng thái và ưu tiên gợi ý item còn hàng.
 
 Reindex/RAG catalog:
 
@@ -455,7 +459,8 @@ product/category updated
 → user bấm reindex hoặc job tự chạy nền
 → build documents từ product + variants
 → upsert vào collection chatbot_products_*
-→ delete vectors của product/variant bị tắt hoặc bị xóa
+→ update vectors khi trạng thái còn/hết hàng thay đổi
+→ chỉ delete vectors khi product/variant bị xóa hẳn
 ```
 
 Khi sinh câu trả lời, bot lấy dữ liệu từ Chroma để chọn ứng viên, sau đó hydrate lại từ Postgres để đảm bảo giá, ảnh, trạng thái mới nhất.
@@ -552,7 +557,7 @@ Thời gian ước tính: 2-4 ngày.
 - Zalo OA API có thể yêu cầu review/quyền trước khi gửi/nhận đủ event.
 - Token Zalo dễ lỗi nếu refresh flow không chuẩn.
 - Product data kém thì bot tư vấn sai.
-- Toggle active không đồng bộ với Chroma thì bot có thể tư vấn sản phẩm/biến thể đã hết hàng.
+- Toggle active không đồng bộ với Chroma thì bot có thể báo sai trạng thái còn/hết hàng.
 - LLM có thể bịa nếu prompt không ép chỉ dùng context.
 - Vision ảnh sản phẩm có thể sai nếu ảnh mờ hoặc nhiều vật thể.
 - Chroma embedding model cần được giữ ổn định; đổi model phải reindex collection.
@@ -564,6 +569,7 @@ Thời gian ước tính: 2-4 ngày.
 - Dùng Redis hiện tại.
 - Dùng catalog sản phẩm/danh mục hiện có trong UI làm nguồn sự thật.
 - Dùng toggle `is_active` cho sản phẩm/biến thể thay cho số lượng tồn kho.
+- RAG index toàn bộ catalog; trạng thái `is_active/availability_status` chỉ dùng để AI tư vấn đúng và ưu tiên item còn hàng.
 - Dùng Chroma hiện tại nhưng collection riêng cho catalog sản phẩm chatbot.
 - Dùng LLM router hiện tại, không gọi OpenAI trực tiếp.
 - MVP ưu tiên text trước, ảnh sau.

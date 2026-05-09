@@ -17,12 +17,16 @@ from fastapi.staticfiles import StaticFiles
 from app.api_tokens import create_api_token, delete_api_token, list_api_tokens, verify_api_token
 from app.auth import authenticate_credentials, create_session_token, verify_session_token
 from app.chatbot_products import (
+    catalog_rag_status as chatbot_catalog_rag_status,
     delete_category as delete_chatbot_product_category,
+    delete_catalog_product_vectors as delete_chatbot_catalog_product_vectors,
     delete_product as delete_chatbot_product,
     get_product as get_chatbot_product,
     list_labels as list_chatbot_product_labels,
     list_categories as list_chatbot_product_categories,
     list_products as list_chatbot_products,
+    reindex_catalog as reindex_chatbot_catalog,
+    search_catalog as search_chatbot_catalog,
     toggle_product as toggle_chatbot_product,
     toggle_variant as toggle_chatbot_product_variant,
     upsert_category as upsert_chatbot_product_category,
@@ -1308,6 +1312,29 @@ async def chatbot_product_labels(search: str | None = None, limit: int = 100) ->
     return await asyncio.to_thread(list_chatbot_product_labels, search, max(1, min(limit, 300)))
 
 
+@app.get(f"{settings.api_prefix}/chatbot/products/rag/status")
+async def chatbot_products_rag_status() -> dict:
+    return await asyncio.to_thread(chatbot_catalog_rag_status)
+
+
+@app.post(f"{settings.api_prefix}/chatbot/products/reindex")
+async def chatbot_products_reindex(request: Request) -> dict:
+    content_type = str(request.headers.get("content-type") or "").lower()
+    payload = await request.json() if content_type.startswith("application/json") else {}
+    return await asyncio.to_thread(
+        reindex_chatbot_catalog,
+        str(payload.get("product_id") or "").strip() or None,
+        bool(payload.get("dirty_only", False)),
+    )
+
+
+@app.get(f"{settings.api_prefix}/chatbot/products/search")
+async def chatbot_products_search(q: str, limit: int = 8, available_only: bool = False) -> dict:
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Search query is required")
+    return await asyncio.to_thread(search_chatbot_catalog, q, max(1, min(limit, 30)), available_only)
+
+
 @app.post(f"{settings.api_prefix}/chatbot/uploads/images")
 async def chatbot_product_image_upload(request: Request, files: list[UploadFile] = File(default=[])) -> dict:
     if not files:
@@ -1332,12 +1359,13 @@ async def chatbot_product_image_upload(request: Request, files: list[UploadFile]
 
 
 @app.post(f"{settings.api_prefix}/chatbot/products")
-async def chatbot_product_create(request: Request) -> dict:
+async def chatbot_product_create(request: Request, background_tasks: BackgroundTasks) -> dict:
     payload = await request.json()
     try:
         product = await asyncio.to_thread(upsert_chatbot_product, payload)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    background_tasks.add_task(reindex_chatbot_catalog, product["product_id"], False)
     return product
 
 
@@ -1350,38 +1378,45 @@ async def chatbot_product_detail(product_id: str) -> dict:
 
 
 @app.put(f"{settings.api_prefix}/chatbot/products/{{product_id}}")
-async def chatbot_product_update(product_id: str, request: Request) -> dict:
+async def chatbot_product_update(product_id: str, request: Request, background_tasks: BackgroundTasks) -> dict:
     payload = await request.json()
     try:
-        return await asyncio.to_thread(upsert_chatbot_product, payload, product_id)
+        product = await asyncio.to_thread(upsert_chatbot_product, payload, product_id)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    background_tasks.add_task(reindex_chatbot_catalog, product["product_id"], False)
+    return product
 
 
 @app.delete(f"{settings.api_prefix}/chatbot/products/{{product_id}}")
-async def chatbot_product_delete(product_id: str) -> dict:
+async def chatbot_product_delete(product_id: str, background_tasks: BackgroundTasks) -> dict:
     deleted = await asyncio.to_thread(delete_chatbot_product, product_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Product not found")
+    background_tasks.add_task(delete_chatbot_catalog_product_vectors, product_id)
     return {"ok": True, "product_id": product_id}
 
 
 @app.post(f"{settings.api_prefix}/chatbot/products/{{product_id}}/toggle")
-async def chatbot_product_toggle(product_id: str, request: Request) -> dict:
+async def chatbot_product_toggle(product_id: str, request: Request, background_tasks: BackgroundTasks) -> dict:
     payload = await request.json()
     try:
-        return await asyncio.to_thread(toggle_chatbot_product, product_id, bool(payload.get("is_active")))
+        product = await asyncio.to_thread(toggle_chatbot_product, product_id, bool(payload.get("is_active")))
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    background_tasks.add_task(reindex_chatbot_catalog, product["product_id"], False)
+    return product
 
 
 @app.post(f"{settings.api_prefix}/chatbot/products/{{product_id}}/variants/{{variant_id}}/toggle")
-async def chatbot_product_variant_toggle(product_id: str, variant_id: str, request: Request) -> dict:
+async def chatbot_product_variant_toggle(product_id: str, variant_id: str, request: Request, background_tasks: BackgroundTasks) -> dict:
     payload = await request.json()
     try:
-        return await asyncio.to_thread(toggle_chatbot_product_variant, product_id, variant_id, bool(payload.get("is_active")))
+        product = await asyncio.to_thread(toggle_chatbot_product_variant, product_id, variant_id, bool(payload.get("is_active")))
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    background_tasks.add_task(reindex_chatbot_catalog, product["product_id"], False)
+    return product
 
 
 @app.get(f"{settings.api_prefix}/chatbot/categories")

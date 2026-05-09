@@ -98,6 +98,12 @@ def get_collection_name() -> str:
     return _safe_collection_name(f"knowledge_base_{model_suffix}")
 
 
+def get_named_collection_name(prefix: str) -> str:
+    settings = get_settings()
+    model_suffix = _safe_collection_name(settings.rag_embedding_model)
+    return _safe_collection_name(f"{prefix}_{model_suffix}")
+
+
 @lru_cache(maxsize=4)
 def get_embedding_function(model_name: str, max_tokens: int | None = None) -> Any:
     if SentenceTransformer is None:
@@ -121,7 +127,7 @@ def get_embedding_function(model_name: str, max_tokens: int | None = None) -> An
     return LocalSentenceTransformerEmbeddingFunction()
 
 
-def get_collection(use_embedding: bool = True, fallback_on_error: bool = True) -> Any:
+def get_collection(use_embedding: bool = True, fallback_on_error: bool = True, collection_name: str | None = None) -> Any:
     settings = get_settings()
     if chromadb is None:
         return _memory_db
@@ -130,25 +136,25 @@ def get_collection(use_embedding: bool = True, fallback_on_error: bool = True) -
         kwargs: Dict[str, Any] = {"metadata": {"embedding_model": settings.rag_embedding_model}}
         if use_embedding:
             kwargs["embedding_function"] = get_embedding_function(settings.rag_embedding_model, settings.rag_embedding_max_tokens)
-        return client.get_or_create_collection(get_collection_name(), **kwargs)
+        return client.get_or_create_collection(_safe_collection_name(collection_name) if collection_name else get_collection_name(), **kwargs)
     except Exception:
         if not fallback_on_error:
             raise
         return _memory_db
 
 
-def add_document(document: str, metadata: Dict[str, Any], doc_id: str) -> None:
-    collection = get_collection(use_embedding=True, fallback_on_error=False)
+def add_document(document: str, metadata: Dict[str, Any], doc_id: str, collection_name: str | None = None) -> None:
+    collection = get_collection(use_embedding=True, fallback_on_error=False, collection_name=collection_name)
     if isinstance(collection, InMemoryKnowledgeBase):
         collection.add(document=document, metadata=metadata, doc_id=doc_id)
     else:
         collection.add(documents=[document], metadatas=[metadata], ids=[doc_id])
 
 
-def add_documents(documents: List[Dict[str, Any]]) -> None:
+def add_documents(documents: List[Dict[str, Any]], collection_name: str | None = None) -> None:
     if not documents:
         return
-    collection = get_collection(use_embedding=True, fallback_on_error=False)
+    collection = get_collection(use_embedding=True, fallback_on_error=False, collection_name=collection_name)
     if isinstance(collection, InMemoryKnowledgeBase):
         for item in documents:
             collection.add(document=item["document"], metadata=item["metadata"], doc_id=item["id"])
@@ -160,8 +166,8 @@ def add_documents(documents: List[Dict[str, Any]]) -> None:
     )
 
 
-def get_documents(where: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
-    collection = get_collection(use_embedding=False)
+def get_documents(where: Dict[str, Any] | None = None, collection_name: str | None = None) -> List[Dict[str, Any]]:
+    collection = get_collection(use_embedding=False, collection_name=collection_name)
     if isinstance(collection, InMemoryKnowledgeBase):
         return collection.get(where=where)
     try:
@@ -178,11 +184,11 @@ def get_documents(where: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
     ]
 
 
-def delete_documents(where: Dict[str, Any] | None = None, ids: List[str] | None = None) -> int:
-    collection = get_collection(use_embedding=False)
+def delete_documents(where: Dict[str, Any] | None = None, ids: List[str] | None = None, collection_name: str | None = None) -> int:
+    collection = get_collection(use_embedding=False, collection_name=collection_name)
     if isinstance(collection, InMemoryKnowledgeBase):
         return collection.delete(where=where, ids=ids)
-    before = len(get_documents(where=where)) if where else (len(ids) if ids else 0)
+    before = len(get_documents(where=where, collection_name=collection_name)) if where else (len(ids) if ids else 0)
     if ids:
         collection.delete(ids=ids)
     elif where:
@@ -192,8 +198,8 @@ def delete_documents(where: Dict[str, Any] | None = None, ids: List[str] | None 
     return before
 
 
-def query_documents(query_text: str, n_results: int = 3, published_only: bool = False) -> List[Dict[str, Any]]:
-    collection = get_collection(use_embedding=True, fallback_on_error=False)
+def query_documents(query_text: str, n_results: int = 3, published_only: bool = False, collection_name: str | None = None) -> List[Dict[str, Any]]:
+    collection = get_collection(use_embedding=True, fallback_on_error=False, collection_name=collection_name)
     if isinstance(collection, InMemoryKnowledgeBase):
         return collection.query(query_text=query_text, n_results=n_results, published_only=published_only)
 
@@ -208,8 +214,8 @@ def query_documents(query_text: str, n_results: int = 3, published_only: bool = 
     ]
 
 
-def search_documents(query_text: str, n_results: int = 5, where: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
-    collection = get_collection(use_embedding=True, fallback_on_error=False)
+def search_documents(query_text: str, n_results: int = 5, where: Dict[str, Any] | None = None, collection_name: str | None = None) -> List[Dict[str, Any]]:
+    collection = get_collection(use_embedding=True, fallback_on_error=False, collection_name=collection_name)
     if isinstance(collection, InMemoryKnowledgeBase):
         candidates = collection.query(query_text=query_text, n_results=max(20, n_results), published_only=False)
         if where:

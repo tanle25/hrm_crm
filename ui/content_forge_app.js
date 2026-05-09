@@ -1624,10 +1624,11 @@
             if (state.productCategoryFilter) params.set("category_id", state.productCategoryFilter);
             if (state.productStatusFilter) params.set("status", state.productStatusFilter);
             params.set("limit", "200");
-            const [productsPayload, categoriesPayload, labelsPayload] = await Promise.all([
+            const [productsPayload, categoriesPayload, labelsPayload, ragPayload] = await Promise.all([
                 fetchJSON(`/chatbot/products?${params.toString()}`),
                 fetchJSON("/chatbot/categories"),
                 fetchJSON("/chatbot/labels?limit=100"),
+                fetchJSON("/chatbot/products/rag/status").catch(() => ({ document_count: 0 })),
             ]);
             const items = productsPayload.items || [];
             const stats = productsPayload.stats || {};
@@ -1636,12 +1637,13 @@
             const categoryMap = new Map(categories.map((item) => [item.category_id, item]));
             section.innerHTML = `
                 <div class="max-w-7xl mx-auto overflow-x-hidden">
-                    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-5">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4 mb-5">
                         <div class="hud-card amber p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-amber uppercase-widest mb-1">TỔNG SP</div><div class="metric-num text-2xl text-white">${formatNumber(stats.total || 0)}</div></div>
                         <div class="hud-card p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-cyan uppercase-widest mb-1">DANH MỤC</div><div class="metric-num text-2xl text-white">${formatNumber(categories.length)}</div></div>
                         <div class="hud-card green p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-green uppercase-widest mb-1">CÒN HÀNG</div><div class="metric-num text-2xl text-hud-green">${formatNumber(stats.active || 0)}</div></div>
                         <div class="hud-card danger p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-red uppercase-widest mb-1">HẾT HÀNG</div><div class="metric-num text-2xl text-hud-red">${formatNumber(stats.unavailable || 0)}</div></div>
                         <div class="hud-card p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-cyan uppercase-widest mb-1">RAG DIRTY</div><div class="metric-num text-2xl text-white">${formatNumber(stats.rag_dirty || 0)}</div></div>
+                        <div class="hud-card p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-cyan uppercase-widest mb-1">RAG DOCS</div><div class="metric-num text-2xl text-white">${formatNumber(ragPayload.document_count || 0)}</div></div>
                     </div>
                     <div class="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-5">
                         <div class="hud-card amber overflow-hidden">
@@ -1677,6 +1679,7 @@
                                     <option value="unavailable" ${state.productStatusFilter === "unavailable" ? "selected" : ""}>HẾT HÀNG</option>
                                 </select>
                                 <button id="product-open-dialog" class="btn-primary px-4 py-2 text-xs uppercase-wide font-bold" style="background:#ffaa00;border-color:#ffaa00;color:#000;"><i class="fa-solid fa-plus"></i> THÊM SP</button>
+                                <button id="product-reindex-rag" class="btn-ghost px-4 py-2 text-xs uppercase-wide font-bold" style="border-color: rgba(255,170,0,.45); color:#ffaa00;"><i class="fa-solid fa-database"></i> INDEX RAG</button>
                                 <button id="product-refresh" class="btn-ghost px-4 py-2 text-xs uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> REFRESH</button>
                             </div>
                             <div class="hud-card amber overflow-hidden">
@@ -1801,6 +1804,20 @@
             }));
             section.querySelector(".product-go-categories")?.addEventListener("click", () => window.switchPage?.("product-categories"));
             section.querySelector("#product-refresh")?.addEventListener("click", () => renderProductsPage());
+            section.querySelector("#product-reindex-rag")?.addEventListener("click", async (event) => {
+                const button = event.currentTarget;
+                const original = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> INDEXING`;
+                try {
+                    await fetchJSON("/chatbot/products/reindex", { method: "POST", body: JSON.stringify({ dirty_only: false }) });
+                    await renderProductsPage();
+                } catch (error) {
+                    alert(`Reindex RAG thất bại: ${error.message}`);
+                    button.disabled = false;
+                    button.innerHTML = original;
+                }
+            });
             section.querySelector("#product-search")?.addEventListener("input", (event) => {
                 state.productSearch = event.target.value || "";
                 clearTimeout(state.productSearchTimer);

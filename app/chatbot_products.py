@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from app.chroma import add_documents, delete_documents, get_documents, get_named_collection_name, search_documents
 from app.postgres import get_connection as _pg_connection, init_schema as _init_postgres_schema, postgres_available, serialize_json
 
 
@@ -145,6 +146,107 @@ def list_labels(search: str | None = None, limit: int = 100) -> dict[str, Any]:
 
 def _availability(is_active: bool) -> str:
     return "available" if is_active else "unavailable"
+
+
+def _catalog_collection_name() -> str:
+    return get_named_collection_name("chatbot_products")
+
+
+def _metadata_csv(values: Any) -> str:
+    if isinstance(values, dict):
+        return ", ".join(f"{key}: {val}" for key, val in values.items() if str(val).strip())
+    return ", ".join(_clean_list(values))
+
+
+def _product_document(product: dict[str, Any]) -> str:
+    variants = product.get("variants") or []
+    variant_lines = []
+    for variant in variants:
+        status = "còn hàng" if variant.get("is_active", True) else "hết hàng"
+        attrs = _metadata_csv(variant.get("attributes") or {})
+        variant_lines.append(f"- {variant.get('name')}: {variant.get('price')} {variant.get('currency') or product.get('currency')}; {attrs}; trạng thái {status}")
+    status = "còn hàng" if product.get("is_active", True) else "hết hàng"
+    lines = [
+        f"Tên sản phẩm: {product.get('title')}",
+        f"Trạng thái tư vấn: {status}",
+        f"Giá: {product.get('price')} {product.get('currency')}",
+        f"Danh mục: {product.get('category_name')}",
+        f"Thương hiệu: {product.get('brand')}",
+        f"Nhãn: {', '.join(product.get('labels') or [])}",
+        f"Mô tả ngắn: {product.get('short_description')}",
+        f"Mô tả chi tiết: {product.get('description')}",
+        f"Thuộc tính: {_metadata_csv(product.get('attributes') or {})}",
+        f"Ảnh: {', '.join(product.get('images') or [])}",
+        "Biến thể và trạng thái:",
+        "\n".join(variant_lines),
+    ]
+    return "\n".join(str(line or "").strip() for line in lines if str(line or "").strip())
+
+
+def _variant_document(product: dict[str, Any], variant: dict[str, Any]) -> str:
+    status = "còn hàng" if variant.get("is_active", True) else "hết hàng"
+    lines = [
+        f"Sản phẩm: {product.get('title')}",
+        f"Biến thể: {variant.get('name')}",
+        f"Trạng thái tư vấn: {status}",
+        f"Giá biến thể: {variant.get('price')} {variant.get('currency') or product.get('currency')}",
+        f"Danh mục: {product.get('category_name')}",
+        f"Nhãn sản phẩm: {', '.join(product.get('labels') or [])}",
+        f"Nhãn biến thể: {', '.join(variant.get('labels') or [])}",
+        f"Thuộc tính biến thể: {_metadata_csv(variant.get('attributes') or {})}",
+        f"Ảnh biến thể: {variant.get('image_url')}",
+        f"Mô tả sản phẩm: {product.get('short_description') or product.get('description')}",
+    ]
+    return "\n".join(str(line or "").strip() for line in lines if str(line or "").strip())
+
+
+def _product_documents(product: dict[str, Any]) -> list[dict[str, Any]]:
+    product_id = str(product.get("product_id") or "").strip()
+    if not product_id:
+        return []
+    base_metadata = {
+        "source": "chatbot_catalog",
+        "product_id": product_id,
+        "title": str(product.get("title") or ""),
+        "category_id": str(product.get("category_id") or ""),
+        "category_name": str(product.get("category_name") or ""),
+        "brand": str(product.get("brand") or ""),
+        "labels": ", ".join(product.get("labels") or []),
+        "currency": str(product.get("currency") or "VND"),
+        "availability_status": str(product.get("availability_status") or _availability(product.get("is_active", True))),
+        "is_active": bool(product.get("is_active", True)),
+        "product_url": str(product.get("product_url") or ""),
+        "updated_at": str(product.get("updated_at") or ""),
+    }
+    docs = [
+        {
+            "id": f"chatbot_product_{product_id}",
+            "document": _product_document(product),
+            "metadata": {**base_metadata, "doc_type": "product", "variant_id": "", "price": int(product.get("price") or 0)},
+        }
+    ]
+    for variant in product.get("variants") or []:
+        variant_id = str(variant.get("variant_id") or "").strip()
+        if not variant_id:
+            continue
+        docs.append(
+            {
+                "id": f"chatbot_variant_{product_id}_{variant_id}",
+                "document": _variant_document(product, variant),
+                "metadata": {
+                    **base_metadata,
+                    "doc_type": "variant",
+                    "variant_id": variant_id,
+                    "variant_name": str(variant.get("name") or ""),
+                    "price": int(variant.get("price") or 0),
+                    "availability_status": str(variant.get("availability_status") or _availability(variant.get("is_active", True))),
+                    "is_active": bool(variant.get("is_active", True)),
+                    "attributes": _metadata_csv(variant.get("attributes") or {}),
+                    "image_url": str(variant.get("image_url") or ""),
+                },
+            }
+        )
+    return docs
 
 
 def _normalize_category(payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -459,3 +561,72 @@ def toggle_variant(product_id: str, variant_id: str, is_active: bool) -> dict[st
         raise KeyError("Variant not found")
     item["rag_dirty"] = True
     return upsert_product(item, product_id)
+
+
+def mark_product_rag_clean(product: dict[str, Any]) -> None:
+    product["rag_dirty"] = False
+    upsert_product(product, str(product.get("product_id") or ""))
+
+
+def reindex_catalog(product_id: str | None = None, dirty_only: bool = False) -> dict[str, Any]:
+    collection_name = _catalog_collection_name()
+    if product_id:
+        products = [get_product(product_id)]
+        products = [item for item in products if item]
+    else:
+        products = list_products(limit=10000).get("items", [])
+    if dirty_only:
+        products = [item for item in products if item.get("rag_dirty")]
+
+    indexed_products = 0
+    indexed_documents = 0
+    deleted_documents = 0
+    errors: list[str] = []
+    for product in products:
+        try:
+            pid = str(product.get("product_id") or "")
+            deleted_documents += delete_documents(where={"product_id": pid}, collection_name=collection_name)
+            docs = _product_documents(product)
+            add_documents(docs, collection_name=collection_name)
+            product["rag_dirty"] = False
+            mark_product_rag_clean(product)
+            indexed_products += 1
+            indexed_documents += len(docs)
+        except Exception as error:  # pragma: no cover - surfaced in API response
+            errors.append(f"{product.get('product_id')}: {error}")
+
+    return {
+        "collection": collection_name,
+        "indexed_products": indexed_products,
+        "indexed_documents": indexed_documents,
+        "deleted_documents": deleted_documents,
+        "errors": errors,
+        "total": len(products),
+    }
+
+
+def delete_catalog_product_vectors(product_id: str) -> dict[str, Any]:
+    collection_name = _catalog_collection_name()
+    return {
+        "collection": collection_name,
+        "product_id": product_id,
+        "deleted_documents": delete_documents(where={"product_id": str(product_id)}, collection_name=collection_name),
+    }
+
+
+def search_catalog(query: str, limit: int = 8, available_only: bool = False) -> dict[str, Any]:
+    where = {"availability_status": "available"} if available_only else None
+    results = search_documents(query, n_results=max(1, min(limit, 30)), where=where, collection_name=_catalog_collection_name())
+    return {"query": query, "total": len(results), "results": results}
+
+
+def catalog_rag_status() -> dict[str, Any]:
+    collection_name = _catalog_collection_name()
+    docs = get_documents(collection_name=collection_name)
+    products = list_products(limit=10000).get("items", [])
+    return {
+        "collection": collection_name,
+        "document_count": len(docs),
+        "product_count": len(products),
+        "rag_dirty": sum(1 for item in products if item.get("rag_dirty")),
+    }

@@ -13,6 +13,7 @@ Không dựng project `/opt/chatbot` riêng. Chatbot nên là một module trong
 - RAG tiếng Việt với `dangvantuan/vietnamese-embedding`.
 - LLM router qua `ROUTER_BASE`/Cliproxy, có quota tracking.
 - Webhook/realtime pattern đã chạy ổn với Facebook.
+- UI đã có khu vực danh sách sản phẩm và danh mục sản phẩm nhưng đang trống; đây sẽ là catalog chính cho chatbot.
 
 Tài liệu này thay thế hướng cũ “tạo chatbot-api riêng” bằng hướng tích hợp trực tiếp vào app hiện tại.
 
@@ -49,7 +50,7 @@ Không làm ngay:
 [Content Forge FastAPI]
    ├─ app/chatbot/*
    ├─ app/zalo/*
-   ├─ Postgres: products, sessions, messages, logs
+   ├─ Postgres: catalog products, categories, variants, sessions, messages
    ├─ Redis: short-term conversation state
    ├─ Chroma: chatbot_products + knowledge_base_*
    └─ LLM Router: ROUTER_BASE=http://cliproxy:8317/v1
@@ -66,8 +67,10 @@ app/
 ├── chatbot/
 │   ├── __init__.py
 │   ├── models.py              # Pydantic request/response + domain models
-│   ├── store.py               # Postgres CRUD
+│   ├── catalog_store.py       # CRUD sản phẩm/danh mục/biến thể
+│   ├── store.py               # CRUD session/message/settings
 │   ├── retriever.py           # search Chroma products + knowledge
+│   ├── indexer.py             # RAG/index catalog vào Chroma
 │   ├── generator.py           # gọi LLM router
 │   ├── orchestrator.py        # xử lý 1 lượt chat
 │   ├── image_understanding.py # phase 2: vision
@@ -86,26 +89,75 @@ Không đưa logic chatbot vào `app/main.py` để tránh file chính tiếp t�
 
 Thêm migration trong `app/postgres.py`.
 
-### `chatbot_products`
+Catalog sản phẩm/danh mục hiện đang để trống trong UI sẽ được dùng làm nguồn dữ liệu chính cho chatbot. Không tạo một catalog tách rời chỉ để bot trả lời. Chatbot đọc từ catalog này, sau đó index sang Chroma để truy vấn ngữ nghĩa.
 
-Lưu catalog phục vụ tư vấn.
+### `product_categories`
+
+Danh mục sản phẩm dùng cho UI và chatbot.
+
+Trường chính:
+
+- `category_id`
+- `name`
+- `slug`
+- `description`
+- `parent_id`
+- `status` = `active | inactive`
+- `sort_order`
+- `data jsonb`
+- `updated_at`
+
+### `products`
+
+Sản phẩm phục vụ quản lý catalog và tư vấn.
 
 Trường chính:
 
 - `product_id`
-- `site_id` hoặc `channel`
 - `title`
+- `slug`
 - `description`
+- `short_description`
 - `price`
+- `compare_at_price`
 - `currency`
-- `image_url`
-- `product_url`
-- `category`
+- `category_id`
 - `brand`
+- `labels text[]`
+- `images jsonb`
 - `attributes jsonb`
-- `status`
+- `variants jsonb`
+- `is_active boolean`
+- `product_url`
+- `source`
+- `source_id`
 - `updated_at`
 - `data jsonb`
+
+Không lưu số lượng tồn kho ở MVP. Khi hết hàng, người dùng bật/tắt sản phẩm bằng `is_active`.
+
+### `product_variants`
+
+Biến thể sản phẩm. Có thể lưu bảng riêng để dễ bật/tắt từng biến thể, hoặc lưu trong `products.variants` nếu muốn MVP nhanh. Nếu đã xác định chatbot cần tư vấn theo biến thể thì nên dùng bảng riêng.
+
+Trường chính:
+
+- `variant_id`
+- `product_id`
+- `name`
+- `sku`
+- `price`
+- `compare_at_price`
+- `currency`
+- `image_url`
+- `attributes jsonb`
+- `labels text[]`
+- `is_active boolean`
+- `sort_order`
+- `updated_at`
+- `data jsonb`
+
+Không lưu số lượng tồn kho. Khi hết hàng, tắt biến thể bằng `is_active=false`. Nếu tất cả biến thể tắt, sản phẩm coi như không khả dụng với chatbot.
 
 ### `chatbot_sessions`
 
@@ -154,7 +206,7 @@ Giữ RAG kiến thức hiện tại cho bài viết và kiến thức chung:
 knowledge_base_dangvantuan_vietnamese-embedding
 ```
 
-Thêm collection riêng cho sản phẩm chatbot:
+Thêm collection riêng cho catalog sản phẩm:
 
 ```text
 chatbot_products_dangvantuan_vietnamese-embedding
@@ -166,7 +218,9 @@ Lý do tách:
 - Có thể reindex catalog mà không ảnh hưởng RAG bài viết.
 - Search sản phẩm cần filter theo site/category/status.
 
-Document nên index theo format:
+Mỗi sản phẩm active được index thành ít nhất 1 document tổng quan. Mỗi biến thể active nên được index thành document riêng để bot hiểu đúng màu/size/mẫu/giá.
+
+Document sản phẩm nên index theo format:
 
 ```text
 Tên: ...
@@ -174,9 +228,25 @@ Giá: ...
 Danh mục: ...
 Thương hiệu: ...
 Mô tả ngắn: ...
+Mô tả chi tiết: ...
+Nhãn: ...
+Ảnh: ...
 Thuộc tính: ...
+Biến thể còn bán: ...
 Tình huống phù hợp: ...
 Từ khóa: ...
+```
+
+Document biến thể:
+
+```text
+Sản phẩm: ...
+Biến thể: ...
+Giá biến thể: ...
+Thuộc tính biến thể: ...
+Nhãn: ...
+Ảnh biến thể: ...
+Trạng thái: còn bán
 ```
 
 Metadata:
@@ -184,15 +254,21 @@ Metadata:
 ```json
 {
   "product_id": "SP001",
+  "variant_id": "SP001-BLACK-M",
   "title": "Áo thun nam cotton premium",
   "price": 299000,
+  "currency": "VND",
   "category": "ao-thun-nam",
   "brand": "Example",
-  "image_url": "https://...",
+  "labels": "basic, cotton, mùa hè",
+  "image_urls": "https://.../1.jpg, https://.../2.jpg",
   "product_url": "https://...",
-  "status": "active"
+  "status": "active",
+  "doc_type": "variant"
 }
 ```
+
+Chỉ index item `is_active=true`. Product/variant bị tắt không xuất hiện trong kết quả tư vấn.
 
 ## 7. LLM router
 
@@ -333,8 +409,10 @@ MVP UI:
 
 - Zalo connection status.
 - Cấu hình OA: app id, secret, refresh token, webhook URL.
-- Danh sách sản phẩm chatbot.
-- Button reindex products.
+- Danh sách danh mục sản phẩm.
+- Danh sách sản phẩm: ảnh, giá, mô tả, nhãn, trạng thái bật/tắt.
+- Chi tiết sản phẩm: nhiều ảnh, nhiều biến thể, toggle từng biến thể.
+- Button reindex/RAG products vào Chroma.
 - Log hội thoại gần đây.
 - Bật/tắt bot theo session.
 - Prompt settings.
@@ -347,22 +425,56 @@ Phase 2 UI:
 - Import sản phẩm từ Shopee/Woo/site hiện có.
 - Gán knowledge category cho chatbot.
 
-## 13. Product source
+## 13. Catalog sản phẩm và RAG
 
-Có 3 nguồn sản phẩm có thể dùng lại:
+Catalog sản phẩm trong Content Forge là nguồn sự thật cho chatbot. Các nguồn khác chỉ là nguồn nhập/sync vào catalog này.
 
-1. Shopee affiliate products đã lưu trong `shopee_products`.
-2. Website/Woo product pipeline hiện có.
-3. Upload CSV/JSON riêng cho chatbot.
+Nguồn nhập có thể gồm:
 
-MVP nên dùng bảng `chatbot_products` riêng và có job sync từ nguồn khác vào. Không query trực tiếp `shopee_products` khi trả lời khách, vì dữ liệu Shopee có thể nhiều field nhiễu.
+1. Nhập thủ công trong UI.
+2. Shopee affiliate products đã lưu trong `shopee_products`.
+3. Website/Woo product pipeline hiện có.
+4. Upload CSV/JSON riêng.
+
+Quy tắc dữ liệu:
+
+- Sản phẩm có nhiều hình ảnh `images`.
+- Sản phẩm có giá chính `price`.
+- Sản phẩm có nhiều biến thể `variants`.
+- Mỗi biến thể có thể có giá riêng, ảnh riêng, thuộc tính riêng.
+- Sản phẩm và biến thể có `labels` để tăng khả năng search/tư vấn.
+- Không dùng số lượng tồn kho trong MVP.
+- Hết hàng thì tắt sản phẩm hoặc tắt biến thể bằng toggle.
+- Chatbot chỉ tư vấn sản phẩm/biến thể đang bật.
+
+Reindex/RAG catalog:
+
+```text
+product/category updated
+→ mark catalog dirty
+→ user bấm reindex hoặc job tự chạy nền
+→ build documents từ product + variants
+→ upsert vào collection chatbot_products_*
+→ delete vectors của product/variant bị tắt hoặc bị xóa
+```
+
+Khi sinh câu trả lời, bot lấy dữ liệu từ Chroma để chọn ứng viên, sau đó hydrate lại từ Postgres để đảm bảo giá, ảnh, trạng thái mới nhất.
 
 ## 14. API nội bộ đề xuất
 
 ```text
 GET  /api/chatbot/products
 POST /api/chatbot/products/import
+GET  /api/chatbot/products/{product_id}
+POST /api/chatbot/products
+PUT  /api/chatbot/products/{product_id}
+DELETE /api/chatbot/products/{product_id}
+POST /api/chatbot/products/{product_id}/toggle
+POST /api/chatbot/products/{product_id}/variants/{variant_id}/toggle
 POST /api/chatbot/products/reindex
+GET  /api/chatbot/categories
+POST /api/chatbot/categories
+PUT  /api/chatbot/categories/{category_id}
 GET  /api/chatbot/sessions
 GET  /api/chatbot/sessions/{session_id}
 POST /api/chatbot/sessions/{session_id}/handoff
@@ -396,6 +508,9 @@ docker compose -f ../docker-compose.yml exec -T postgres psql -U content_forge -
 ### Phase 1: Zalo text MVP
 
 - DB tables.
+- Product/category catalog UI nền tảng.
+- Product/variant active toggles.
+- Product RAG indexer.
 - Zalo token manager.
 - Webhook receive.
 - Text reply.
@@ -437,6 +552,7 @@ Thời gian ước tính: 2-4 ngày.
 - Zalo OA API có thể yêu cầu review/quyền trước khi gửi/nhận đủ event.
 - Token Zalo dễ lỗi nếu refresh flow không chuẩn.
 - Product data kém thì bot tư vấn sai.
+- Toggle active không đồng bộ với Chroma thì bot có thể tư vấn sản phẩm/biến thể đã hết hàng.
 - LLM có thể bịa nếu prompt không ép chỉ dùng context.
 - Vision ảnh sản phẩm có thể sai nếu ảnh mờ hoặc nhiều vật thể.
 - Chroma embedding model cần được giữ ổn định; đổi model phải reindex collection.
@@ -446,8 +562,9 @@ Thời gian ước tính: 2-4 ngày.
 - Tích hợp vào Content Forge, không tạo repo/service riêng.
 - Dùng Postgres hiện tại, không MariaDB.
 - Dùng Redis hiện tại.
-- Dùng Chroma hiện tại nhưng collection riêng cho sản phẩm chatbot.
+- Dùng catalog sản phẩm/danh mục hiện có trong UI làm nguồn sự thật.
+- Dùng toggle `is_active` cho sản phẩm/biến thể thay cho số lượng tồn kho.
+- Dùng Chroma hiện tại nhưng collection riêng cho catalog sản phẩm chatbot.
 - Dùng LLM router hiện tại, không gọi OpenAI trực tiếp.
 - MVP ưu tiên text trước, ảnh sau.
 - Mọi logic nằm trong module riêng `app/chatbot` và `app/zalo`.
-

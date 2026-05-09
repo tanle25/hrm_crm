@@ -1456,29 +1456,6 @@
             : `<span class="badge red"><i class="fa-solid fa-xmark text-[9px]"></i> HẾT</span>`;
     }
 
-    function parseProductVariants(value) {
-        return String(value || "")
-            .split("\n")
-            .map((line) => line.trim())
-            .filter(Boolean)
-            .map((line, index) => {
-                const [name, price, attributesText, statusText] = line.split("|").map((part) => String(part || "").trim());
-                const isActive = !["0", "false", "het", "hết", "off", "unavailable"].includes(String(statusText || "").toLowerCase());
-                const attributes = {};
-                String(attributesText || "").split(",").map((part) => part.trim()).filter(Boolean).forEach((part) => {
-                    const [key, val] = part.split("=").map((item) => String(item || "").trim());
-                    if (key && val) attributes[key] = val;
-                });
-                return {
-                    name: name || `Biến thể ${index + 1}`,
-                    price: Number(price || 0) || 0,
-                    attributes,
-                    is_active: isActive,
-                    sort_order: index,
-                };
-            });
-    }
-
     async function uploadProductImages(files) {
         const selected = Array.from(files || []).filter(Boolean);
         if (!selected.length) return [];
@@ -1504,6 +1481,105 @@
 
     function getProductLabelChips(container) {
         return Array.from(container?.querySelectorAll(".product-label-chip") || []).map((chip) => chip.dataset.label || "").filter(Boolean);
+    }
+
+    function productVariantRowHtml(index) {
+        return `
+            <div class="product-variant-row border border-hud-amber/20 bg-black/20 p-3" data-index="${index}">
+                <div class="grid grid-cols-1 md:grid-cols-[96px_1fr_120px_1fr_1fr_92px_32px] gap-3 items-end">
+                    <div>
+                        <label class="text-[8px] text-hud-muted uppercase-widest font-bold">Ảnh</label>
+                        <label class="mt-1 w-20 h-20 border border-hud-amber/25 bg-black/30 flex items-center justify-center overflow-hidden cursor-pointer">
+                            <img class="variant-image-preview hidden w-full h-full object-cover" alt="variant preview"/>
+                            <i class="variant-image-empty fa-solid fa-image text-hud-amber/50"></i>
+                            <input type="file" accept="image/*" class="variant-image-input hidden"/>
+                        </label>
+                    </div>
+                    <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Tên biến thể</label><input class="variant-name hud-input w-full px-3 py-2 text-xs mt-1" placeholder="VD: Đỏ / Size M"/></div>
+                    <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Giá</label><input class="variant-price hud-input w-full px-3 py-2 text-xs mt-1" type="number" min="0"/></div>
+                    <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Thuộc tính 1</label><input class="variant-attr-1 hud-input w-full px-3 py-2 text-xs mt-1" placeholder="Màu sắc=Đỏ"/></div>
+                    <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Thuộc tính 2</label><input class="variant-attr-2 hud-input w-full px-3 py-2 text-xs mt-1" placeholder="Kích thước=M"/></div>
+                    <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Trạng thái</label><select class="variant-active hud-select w-full px-2 py-2 text-xs mt-1"><option value="true">Còn</option><option value="false">Hết</option></select></div>
+                    <button type="button" class="variant-remove text-hud-red hover:text-white pb-2"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            </div>
+        `;
+    }
+
+    function parseVariantAttribute(value) {
+        const text = String(value || "").trim();
+        if (!text) return null;
+        const [rawKey, ...rest] = text.split("=");
+        const key = String(rawKey || "").trim();
+        const val = rest.join("=").trim();
+        if (!key || !val) return null;
+        return [key, val];
+    }
+
+    async function collectProductVariantRows(form) {
+        const rows = Array.from(form.querySelectorAll(".product-variant-row"));
+        const output = [];
+        for (const [index, row] of rows.entries()) {
+            const name = row.querySelector(".variant-name")?.value?.trim() || "";
+            const price = Number(row.querySelector(".variant-price")?.value || 0) || 0;
+            const file = row.querySelector(".variant-image-input")?.files?.[0];
+            const attributes = {};
+            [parseVariantAttribute(row.querySelector(".variant-attr-1")?.value), parseVariantAttribute(row.querySelector(".variant-attr-2")?.value)]
+                .filter(Boolean)
+                .forEach(([key, val]) => {
+                    attributes[key] = val;
+                });
+            if (!name && !price && !Object.keys(attributes).length && !file) continue;
+            const uploaded = file ? await uploadProductImages([file]) : [];
+            output.push({
+                name: name || `Biến thể ${index + 1}`,
+                price,
+                attributes,
+                image_url: uploaded[0] || "",
+                is_active: row.querySelector(".variant-active")?.value !== "false",
+                sort_order: index,
+            });
+        }
+        return output;
+    }
+
+    function bindProductVariantBuilder(section) {
+        const list = section.querySelector("#product-variant-list");
+        const addButton = section.querySelector("#product-variant-add");
+        if (!list || !addButton) return;
+        const syncRemoveState = () => {
+            const rows = Array.from(list.querySelectorAll(".product-variant-row"));
+            rows.forEach((row) => {
+                row.querySelector(".variant-remove").disabled = rows.length <= 1;
+                row.querySelector(".variant-remove").classList.toggle("opacity-30", rows.length <= 1);
+            });
+        };
+        const bindRow = (row) => {
+            row.querySelector(".variant-remove")?.addEventListener("click", () => {
+                if (list.querySelectorAll(".product-variant-row").length <= 1) return;
+                row.remove();
+                syncRemoveState();
+            });
+            row.querySelector(".variant-image-input")?.addEventListener("change", (event) => {
+                const file = event.target.files?.[0];
+                const preview = row.querySelector(".variant-image-preview");
+                const empty = row.querySelector(".variant-image-empty");
+                if (!file || !preview || !empty) return;
+                preview.src = URL.createObjectURL(file);
+                preview.classList.remove("hidden");
+                empty.classList.add("hidden");
+            });
+        };
+        const addRow = () => {
+            if (list.querySelectorAll(".product-variant-row").length >= 40) return;
+            list.insertAdjacentHTML("beforeend", productVariantRowHtml(list.querySelectorAll(".product-variant-row").length));
+            bindRow(list.lastElementChild);
+            syncRemoveState();
+        };
+        addButton.addEventListener("click", addRow);
+        if (!list.querySelector(".product-variant-row")) addRow();
+        list.querySelectorAll(".product-variant-row").forEach(bindRow);
+        syncRemoveState();
     }
 
     async function renderProductsPage() {
@@ -1637,14 +1713,19 @@
                                 <input name="image_files" type="file" multiple accept="image/*" class="hud-input w-full px-3 py-2 text-xs mt-1"/>
                                 <textarea name="images" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-2" placeholder="Hoặc dán URL ảnh, mỗi dòng một ảnh"></textarea>
                             </div>
-                            <div>
-                                <label class="text-[9px] text-hud-amber uppercase-widest font-bold">Upload ảnh biến thể</label>
-                                <input name="variant_image_files" type="file" multiple accept="image/*" class="hud-input w-full px-3 py-2 text-xs mt-1"/>
-                                <div class="text-[10px] text-hud-muted mt-2">Ảnh biến thể được gán theo thứ tự từng dòng biến thể.</div>
+                            <div class="border border-hud-amber/15 bg-black/10 p-3">
+                                <div class="text-[9px] text-hud-amber uppercase-widest font-bold">Quy tắc biến thể</div>
+                                <div class="text-[10px] text-hud-muted mt-2 leading-5">Mỗi biến thể là một dòng riêng. Mỗi dòng hỗ trợ tối đa 2 thuộc tính, ví dụ <span class="text-white">Màu sắc=Đỏ</span> và <span class="text-white">Kích thước=M</span>. Ảnh được preview trước khi lưu.</div>
                             </div>
                             <div class="md:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Mô tả ngắn</label><textarea name="short_description" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-1"></textarea></div>
                             <div class="md:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Mô tả chi tiết</label><textarea name="description" rows="4" class="hud-input w-full px-3 py-2 text-xs mt-1"></textarea></div>
-                            <div class="md:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Biến thể: tên | giá | key=value | còn/hết</label><textarea name="variants" rows="4" class="hud-input w-full px-3 py-2 text-xs mt-1" placeholder="100g | 99000 | size=100g | còn&#10;200g | 179000 | size=200g | hết"></textarea></div>
+                            <div class="md:col-span-2">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <label class="text-[9px] text-hud-amber uppercase-widest font-bold">Biến thể sản phẩm</label>
+                                    <button id="product-variant-add" type="button" class="ml-auto btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-plus"></i> THÊM BIẾN THỂ</button>
+                                </div>
+                                <div id="product-variant-list" class="space-y-3"></div>
+                            </div>
                             <div id="product-create-feedback" class="md:col-span-2 text-[11px] text-hud-muted"></div>
                             <div class="md:col-span-2 flex justify-end gap-3 border-t border-hud-amber/15 pt-4">
                                 <button id="product-dialog-cancel" type="button" class="btn-ghost px-4 py-2 text-xs uppercase-wide font-bold">HỦY</button>
@@ -1699,6 +1780,7 @@
             section.querySelectorAll(".product-label-suggestion").forEach((button) => button.addEventListener("click", () => {
                 addProductLabelChip(labelChips, button.dataset.label || "");
             }));
+            bindProductVariantBuilder(section);
             section.querySelector("#product-create-form")?.addEventListener("submit", async (event) => {
                 event.preventDefault();
                 const form = event.currentTarget;
@@ -1709,11 +1791,7 @@
                 try {
                     if (feedback) feedback.textContent = "Đang upload ảnh và thêm sản phẩm...";
                     const productImageUrls = await uploadProductImages(form.querySelector('input[name="image_files"]')?.files);
-                    const variantImageUrls = await uploadProductImages(form.querySelector('input[name="variant_image_files"]')?.files);
-                    const variants = parseProductVariants(formData.get("variants")).map((variant, index) => ({
-                        ...variant,
-                        image_url: variantImageUrls[index] || variant.image_url || "",
-                    }));
+                    const variants = await collectProductVariantRows(form);
                     await fetchJSON("/chatbot/products", {
                         method: "POST",
                         body: JSON.stringify({
@@ -1731,6 +1809,8 @@
                     });
                     form.reset();
                     if (labelChips) labelChips.innerHTML = "";
+                    const variantList = section.querySelector("#product-variant-list");
+                    if (variantList) variantList.innerHTML = "";
                     closeProductDialog();
                     await renderProductsPage();
                 } catch (error) {

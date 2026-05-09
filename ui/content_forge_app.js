@@ -106,6 +106,9 @@
         flowkitPinnedJobId: "",
         cliproxyQuota: null,
         cliproxyQuotaTimer: null,
+        productSearch: "",
+        productCategoryFilter: "",
+        productStatusFilter: "",
     };
 
     function escapeHtml(value) {
@@ -1444,6 +1447,292 @@
             }
         } catch (error) {
             section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load Shopee products: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    function productStatusBadge(item) {
+        return item?.is_active
+            ? `<span class="badge green"><i class="fa-solid fa-check text-[9px]"></i> CÒN</span>`
+            : `<span class="badge red"><i class="fa-solid fa-xmark text-[9px]"></i> HẾT</span>`;
+    }
+
+    function parseProductVariants(value) {
+        return String(value || "")
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((line, index) => {
+                const [name, price, attributesText, statusText] = line.split("|").map((part) => String(part || "").trim());
+                const isActive = !["0", "false", "het", "hết", "off", "unavailable"].includes(String(statusText || "").toLowerCase());
+                const attributes = {};
+                String(attributesText || "").split(",").map((part) => part.trim()).filter(Boolean).forEach((part) => {
+                    const [key, val] = part.split("=").map((item) => String(item || "").trim());
+                    if (key && val) attributes[key] = val;
+                });
+                return {
+                    name: name || `Biến thể ${index + 1}`,
+                    price: Number(price || 0) || 0,
+                    attributes,
+                    is_active: isActive,
+                    sort_order: index,
+                };
+            });
+    }
+
+    async function renderProductsPage() {
+        const section = document.getElementById("page-products");
+        if (!section) return;
+        section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-muted text-sm">Loading product catalog...</div>`;
+        try {
+            const params = new URLSearchParams();
+            if (state.productSearch) params.set("search", state.productSearch);
+            if (state.productCategoryFilter) params.set("category_id", state.productCategoryFilter);
+            if (state.productStatusFilter) params.set("status", state.productStatusFilter);
+            params.set("limit", "200");
+            const [productsPayload, categoriesPayload] = await Promise.all([
+                fetchJSON(`/chatbot/products?${params.toString()}`),
+                fetchJSON("/chatbot/categories"),
+            ]);
+            const items = productsPayload.items || [];
+            const stats = productsPayload.stats || {};
+            const categories = categoriesPayload.categories || [];
+            const categoryMap = new Map(categories.map((item) => [item.category_id, item]));
+            section.innerHTML = `
+                <div class="max-w-7xl mx-auto overflow-x-hidden">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-5">
+                        <div class="hud-card amber p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-amber uppercase-widest mb-1">TỔNG SP</div><div class="metric-num text-2xl text-white">${formatNumber(stats.total || 0)}</div></div>
+                        <div class="hud-card p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-cyan uppercase-widest mb-1">DANH MỤC</div><div class="metric-num text-2xl text-white">${formatNumber(categories.length)}</div></div>
+                        <div class="hud-card green p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-green uppercase-widest mb-1">CÒN HÀNG</div><div class="metric-num text-2xl text-hud-green">${formatNumber(stats.active || 0)}</div></div>
+                        <div class="hud-card danger p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-red uppercase-widest mb-1">HẾT HÀNG</div><div class="metric-num text-2xl text-hud-red">${formatNumber(stats.unavailable || 0)}</div></div>
+                        <div class="hud-card p-4"><span class="c-tl"></span><span class="c-br"></span><div class="text-[9px] text-hud-cyan uppercase-widest mb-1">RAG DIRTY</div><div class="metric-num text-2xl text-white">${formatNumber(stats.rag_dirty || 0)}</div></div>
+                    </div>
+                    <div class="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-5">
+                        <div class="hud-card amber overflow-hidden">
+                            <span class="c-tl"></span><span class="c-br"></span>
+                            <div class="header-strip px-4 py-3 flex items-center gap-2">
+                                <i class="fa-solid fa-layer-group text-hud-amber"></i>
+                                <span class="font-display font-black text-[10px] text-white uppercase-widest">DANH MỤC</span>
+                            </div>
+                            <div class="p-2 space-y-1">
+                                <button class="product-category-filter w-full flex items-center justify-between px-3 py-2 text-[11px] uppercase-wide font-bold ${state.productCategoryFilter ? "text-hud-muted" : "text-hud-amber bg-hud-amber/10"}" data-category-id="">
+                                    <span><i class="fa-solid fa-layer-group w-4"></i> TẤT CẢ</span>
+                                    <span class="text-[9px]">${formatNumber(stats.total || 0)}</span>
+                                </button>
+                                ${categories.map((category) => `
+                                    <button class="product-category-filter w-full flex items-center justify-between px-3 py-2 text-[11px] uppercase-wide ${state.productCategoryFilter === category.category_id ? "text-hud-amber bg-hud-amber/10 font-bold" : "text-hud-muted hover:text-white hover:bg-hud-amber/5"}" data-category-id="${escapeHtml(category.category_id)}">
+                                        <span><i class="fa-solid ${escapeHtml(category.icon || "fa-tag")} w-4"></i> ${escapeHtml(category.name)}</span>
+                                        <span class="text-[9px]">${formatNumber(category.product_count || 0)}</span>
+                                    </button>
+                                `).join("") || `<div class="text-[11px] text-hud-muted px-3 py-4">Chưa có danh mục.</div>`}
+                            </div>
+                            <div class="border-t border-hud-amber/15 p-3">
+                                <button class="product-go-categories btn-ghost w-full px-3 py-2 text-[10px] uppercase-wide font-bold flex items-center justify-center gap-2" style="border-color: rgba(255, 170, 0, 0.4); color: #ffaa00;">
+                                    <i class="fa-solid fa-plus"></i> TẠO DANH MỤC
+                                </button>
+                            </div>
+                        </div>
+                        <div class="space-y-4">
+                            <div class="hud-card amber p-4">
+                                <span class="c-tl"></span><span class="c-br"></span>
+                                <form id="product-create-form" class="grid grid-cols-1 lg:grid-cols-6 gap-3">
+                                    <div class="lg:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Tên sản phẩm</label><input name="title" class="hud-input w-full px-3 py-2 text-xs mt-1" required placeholder="VD: Trà Shan Tuyết Hà Giang"/></div>
+                                    <div><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Danh mục</label><select name="category_id" class="hud-select w-full px-3 py-2 text-xs mt-1"><option value="">Chưa phân loại</option>${categories.map((cat) => `<option value="${escapeHtml(cat.category_id)}">${escapeHtml(cat.name)}</option>`).join("")}</select></div>
+                                    <div><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Giá</label><input name="price" type="number" min="0" class="hud-input w-full px-3 py-2 text-xs mt-1" placeholder="99000"/></div>
+                                    <div><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Nhãn</label><input name="labels" class="hud-input w-full px-3 py-2 text-xs mt-1" placeholder="trà xanh, quà tặng"/></div>
+                                    <div class="flex items-end"><button class="btn-primary w-full px-3 py-2 text-[10px] uppercase-wide font-bold" style="background:#ffaa00;border-color:#ffaa00;color:#000;"><i class="fa-solid fa-plus"></i> THÊM</button></div>
+                                    <div class="lg:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Ảnh, mỗi dòng một URL</label><textarea name="images" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-1"></textarea></div>
+                                    <div class="lg:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Mô tả ngắn</label><textarea name="short_description" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-1"></textarea></div>
+                                    <div class="lg:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Biến thể: tên | giá | key=value | còn/hết</label><textarea name="variants" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-1" placeholder="100g | 99000 | size=100g | còn"></textarea></div>
+                                </form>
+                                <div id="product-create-feedback" class="text-[11px] text-hud-muted mt-3"></div>
+                            </div>
+                            <div class="hud-card amber p-3 flex flex-col lg:flex-row gap-3">
+                                <input id="product-search" class="hud-input flex-1 px-3 py-2 text-xs" placeholder="Tìm sản phẩm, SKU, nhãn..." value="${escapeHtml(state.productSearch)}"/>
+                                <select id="product-status-filter" class="hud-select px-3 py-2 text-xs">
+                                    <option value="">TẤT CẢ TRẠNG THÁI</option>
+                                    <option value="available" ${state.productStatusFilter === "available" ? "selected" : ""}>CÒN HÀNG</option>
+                                    <option value="unavailable" ${state.productStatusFilter === "unavailable" ? "selected" : ""}>HẾT HÀNG</option>
+                                </select>
+                                <button id="product-refresh" class="btn-ghost px-4 py-2 text-xs uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> REFRESH</button>
+                            </div>
+                            <div class="hud-card amber overflow-hidden">
+                                <span class="c-tl"></span><span class="c-br"></span>
+                                <div class="header-strip px-5 py-3 flex items-center gap-2">
+                                    <i class="fa-solid fa-box text-hud-amber"></i>
+                                    <span class="font-display font-black text-xs text-white uppercase-widest">DANH SÁCH SẢN PHẨM</span>
+                                    <span class="badge amber ml-auto">${formatNumber(items.length)} ITEMS</span>
+                                </div>
+                                <div class="overflow-x-auto">
+                                    <table class="hud-table min-w-[940px]">
+                                        <thead><tr><th class="w-[76px]">ẢNH</th><th>TÊN SẢN PHẨM</th><th class="w-[150px]">DANH MỤC</th><th class="w-[120px] text-right">GIÁ</th><th class="w-[100px]">RAG</th><th class="w-[110px]">STATUS</th><th class="w-[110px]"></th></tr></thead>
+                                        <tbody>
+                                            ${items.map((item) => {
+                                                const image = (item.images || [])[0] || "";
+                                                const category = categoryMap.get(item.category_id) || {};
+                                                const variants = item.variants || [];
+                                                return `
+                                                    <tr class="${item.is_active ? "" : "opacity-70"}">
+                                                        <td><div class="w-12 h-12 border border-hud-amber/25 bg-black/30 overflow-hidden flex items-center justify-center">${image ? `<img src="${escapeHtml(image)}" class="w-full h-full object-cover" alt="${escapeHtml(item.title)}"/>` : `<i class="fa-solid fa-image text-hud-amber/50"></i>`}</div></td>
+                                                        <td>
+                                                            <div class="text-white font-bold">${escapeHtml(item.title)}</div>
+                                                            <div class="text-[10px] text-hud-muted mt-1">${escapeHtml(item.sku || item.product_id)} · ${formatNumber(variants.length)} biến thể · ${escapeHtml((item.labels || []).join(", "))}</div>
+                                                            ${variants.length ? `<div class="mt-2 flex flex-wrap gap-1">${variants.slice(0, 4).map((variant) => `<button class="product-variant-toggle badge ${variant.is_active ? "green" : "red"}" data-product-id="${escapeHtml(item.product_id)}" data-variant-id="${escapeHtml(variant.variant_id)}" data-next-active="${variant.is_active ? "false" : "true"}">${escapeHtml(variant.name)} · ${variant.is_active ? "còn" : "hết"}</button>`).join("")}</div>` : ""}
+                                                        </td>
+                                                        <td><span class="badge amber">${escapeHtml(category.name || item.category_name || "Chưa phân loại")}</span></td>
+                                                        <td class="text-right font-mono text-hud-amber font-bold">${escapeHtml(shopeePrice(item.price, item.currency || "VND"))}</td>
+                                                        <td>${item.rag_dirty ? `<span class="badge amber">DIRTY</span>` : `<span class="badge green">SYNCED</span>`}</td>
+                                                        <td>${productStatusBadge(item)}</td>
+                                                        <td><div class="flex gap-2 justify-end"><button class="product-toggle btn-ghost px-2 py-1 text-[10px]" data-product-id="${escapeHtml(item.product_id)}" data-next-active="${item.is_active ? "false" : "true"}">${item.is_active ? "TẮT" : "BẬT"}</button><button class="product-delete text-hud-red hover:text-white text-xs" data-product-id="${escapeHtml(item.product_id)}"><i class="fa-solid fa-trash"></i></button></div></td>
+                                                    </tr>
+                                                `;
+                                            }).join("") || `<tr><td colspan="7" class="text-center text-hud-muted py-8">Chưa có sản phẩm. Thêm sản phẩm đầu tiên để chatbot có catalog tư vấn.</td></tr>`}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            section.querySelectorAll(".product-category-filter").forEach((button) => button.addEventListener("click", async () => {
+                state.productCategoryFilter = button.dataset.categoryId || "";
+                await renderProductsPage();
+            }));
+            section.querySelector(".product-go-categories")?.addEventListener("click", () => window.switchPage?.("product-categories"));
+            section.querySelector("#product-refresh")?.addEventListener("click", () => renderProductsPage());
+            section.querySelector("#product-search")?.addEventListener("input", (event) => {
+                state.productSearch = event.target.value || "";
+                clearTimeout(state.productSearchTimer);
+                state.productSearchTimer = setTimeout(renderProductsPage, 350);
+            });
+            section.querySelector("#product-status-filter")?.addEventListener("change", async (event) => {
+                state.productStatusFilter = event.target.value || "";
+                await renderProductsPage();
+            });
+            section.querySelector("#product-create-form")?.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                const form = event.currentTarget;
+                const feedback = section.querySelector("#product-create-feedback");
+                const formData = new FormData(form);
+                const categoryId = String(formData.get("category_id") || "");
+                const category = categoryMap.get(categoryId) || {};
+                try {
+                    if (feedback) feedback.textContent = "Đang thêm sản phẩm...";
+                    await fetchJSON("/chatbot/products", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            title: formData.get("title"),
+                            category_id: categoryId,
+                            category_name: category.name || "",
+                            price: Number(formData.get("price") || 0) || 0,
+                            labels: formData.get("labels"),
+                            images: formData.get("images"),
+                            short_description: formData.get("short_description"),
+                            variants: parseProductVariants(formData.get("variants")),
+                        }),
+                    });
+                    form.reset();
+                    await renderProductsPage();
+                } catch (error) {
+                    if (feedback) feedback.textContent = `Thêm thất bại: ${error.message}`;
+                }
+            });
+            section.querySelectorAll(".product-toggle").forEach((button) => button.addEventListener("click", async () => {
+                await fetchJSON(`/chatbot/products/${encodeURIComponent(button.dataset.productId || "")}/toggle`, { method: "POST", body: JSON.stringify({ is_active: button.dataset.nextActive === "true" }) });
+                await renderProductsPage();
+            }));
+            section.querySelectorAll(".product-variant-toggle").forEach((button) => button.addEventListener("click", async () => {
+                await fetchJSON(`/chatbot/products/${encodeURIComponent(button.dataset.productId || "")}/variants/${encodeURIComponent(button.dataset.variantId || "")}/toggle`, { method: "POST", body: JSON.stringify({ is_active: button.dataset.nextActive === "true" }) });
+                await renderProductsPage();
+            }));
+            section.querySelectorAll(".product-delete").forEach((button) => button.addEventListener("click", async () => {
+                if (!window.confirm("Xóa sản phẩm này khỏi catalog chatbot?")) return;
+                await fetchJSON(`/chatbot/products/${encodeURIComponent(button.dataset.productId || "")}`, { method: "DELETE" });
+                await renderProductsPage();
+            }));
+        } catch (error) {
+            section.innerHTML = `<div class="max-w-7xl mx-auto text-hud-red text-sm">Failed to load products: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    async function renderProductCategoriesPage() {
+        const section = document.getElementById("page-product-categories");
+        if (!section) return;
+        section.innerHTML = `<div class="max-w-5xl mx-auto text-hud-muted text-sm">Loading product categories...</div>`;
+        try {
+            const payload = await fetchJSON("/chatbot/categories");
+            const categories = payload.categories || [];
+            section.innerHTML = `
+                <div class="max-w-5xl mx-auto">
+                    <div class="hud-card amber p-5 mb-6">
+                        <span class="c-tl"></span><span class="c-br"></span>
+                        <div class="header-strip -mx-5 -mt-5 mb-5 px-5 py-3 flex items-center gap-2">
+                            <i class="fa-solid fa-plus text-hud-amber"></i>
+                            <span class="font-display font-black text-xs text-white uppercase-widest">TẠO DANH MỤC MỚI</span>
+                        </div>
+                        <form id="category-create-form" class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                            <div class="md:col-span-2"><label class="text-[10px] font-bold text-hud-amber uppercase-widest mb-2 block">Tên danh mục</label><input name="name" class="hud-input w-full px-4 py-2.5 text-sm" required placeholder="VD: Trà xanh"/></div>
+                            <div><label class="text-[10px] font-bold text-hud-amber uppercase-widest mb-2 block">Slug</label><input name="slug" class="hud-input w-full px-4 py-2.5 text-sm font-mono" placeholder="tra-xanh"/></div>
+                            <div><label class="text-[10px] font-bold text-hud-amber uppercase-widest mb-2 block">Icon FontAwesome</label><input name="icon" class="hud-input w-full px-4 py-2.5 text-sm" placeholder="fa-leaf"/></div>
+                            <div class="flex items-end"><button class="btn-primary w-full py-2.5 text-xs uppercase-wide font-bold" style="background:#ffaa00;border-color:#ffaa00;color:#000;"><i class="fa-solid fa-plus"></i> TẠO</button></div>
+                            <div class="md:col-span-5"><label class="text-[10px] font-bold text-hud-amber uppercase-widest mb-2 block">Mô tả</label><textarea name="description" rows="2" class="hud-input w-full px-4 py-2.5 text-sm"></textarea></div>
+                        </form>
+                        <div id="category-create-feedback" class="text-[11px] text-hud-muted mt-3"></div>
+                    </div>
+                    <div class="hud-card amber overflow-hidden">
+                        <span class="c-tl"></span><span class="c-br"></span>
+                        <div class="header-strip px-5 py-3 flex items-center gap-2">
+                            <i class="fa-solid fa-layer-group text-hud-amber"></i>
+                            <span class="font-display font-black text-xs text-white uppercase-widest">DANH MỤC SẢN PHẨM</span>
+                            <span class="badge amber ml-auto">${formatNumber(categories.length)} ITEMS</span>
+                        </div>
+                        <table class="hud-table">
+                            <thead><tr><th>TÊN</th><th>SLUG</th><th>MÔ TẢ</th><th class="w-[100px] text-center">SẢN PHẨM</th><th class="w-[90px]">STATUS</th><th class="w-[60px]"></th></tr></thead>
+                            <tbody>
+                                ${categories.map((category) => `
+                                    <tr>
+                                        <td><div class="flex items-center gap-2"><i class="fa-solid ${escapeHtml(category.icon || "fa-tag")} text-hud-amber"></i><span class="text-white font-bold">${escapeHtml(category.name)}</span></div></td>
+                                        <td class="font-mono text-hud-muted">${escapeHtml(category.slug || "")}</td>
+                                        <td class="text-hud-muted">${escapeHtml(truncate(category.description || "", 120))}</td>
+                                        <td class="text-center font-mono text-hud-amber">${formatNumber(category.product_count || 0)}</td>
+                                        <td>${category.is_active ? `<span class="badge green">ACTIVE</span>` : `<span class="badge red">OFF</span>`}</td>
+                                        <td><button class="category-delete text-hud-red hover:text-white text-xs" data-category-id="${escapeHtml(category.category_id)}"><i class="fa-solid fa-trash"></i></button></td>
+                                    </tr>
+                                `).join("") || `<tr><td colspan="6" class="text-center text-hud-muted py-8">Chưa có danh mục.</td></tr>`}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            section.querySelector("#category-create-form")?.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                const form = event.currentTarget;
+                const feedback = section.querySelector("#category-create-feedback");
+                const formData = new FormData(form);
+                try {
+                    if (feedback) feedback.textContent = "Đang tạo danh mục...";
+                    await fetchJSON("/chatbot/categories", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            name: formData.get("name"),
+                            slug: formData.get("slug"),
+                            icon: formData.get("icon"),
+                            description: formData.get("description"),
+                        }),
+                    });
+                    form.reset();
+                    await renderProductCategoriesPage();
+                } catch (error) {
+                    if (feedback) feedback.textContent = `Tạo thất bại: ${error.message}`;
+                }
+            });
+            section.querySelectorAll(".category-delete").forEach((button) => button.addEventListener("click", async () => {
+                if (!window.confirm("Xóa danh mục này? Sản phẩm sẽ vẫn còn nhưng mất nhãn danh mục.")) return;
+                await fetchJSON(`/chatbot/categories/${encodeURIComponent(button.dataset.categoryId || "")}`, { method: "DELETE" });
+                await renderProductCategoriesPage();
+            }));
+        } catch (error) {
+            section.innerHTML = `<div class="max-w-5xl mx-auto text-hud-red text-sm">Failed to load categories: ${escapeHtml(error.message)}</div>`;
         }
     }
 
@@ -6824,6 +7113,8 @@
         if (pageKey === "dlq") await renderDlqPage();
         if (pageKey === "knowledge") await renderKnowledgePage();
         if (pageKey === "shopee") await renderShopeePage();
+        if (pageKey === "products") await renderProductsPage();
+        if (pageKey === "product-categories") await renderProductCategoriesPage();
         if (pageKey === "website-manage") await renderWebsiteManagePage();
         if (pageKey === "fb-pages") await renderFacebookPagesPage();
         if (pageKey === "fb-stats") await renderFacebookStatsPage();

@@ -16,6 +16,17 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api_tokens import create_api_token, delete_api_token, list_api_tokens, verify_api_token
 from app.auth import authenticate_credentials, create_session_token, verify_session_token
+from app.chatbot_products import (
+    delete_category as delete_chatbot_product_category,
+    delete_product as delete_chatbot_product,
+    get_product as get_chatbot_product,
+    list_categories as list_chatbot_product_categories,
+    list_products as list_chatbot_products,
+    toggle_product as toggle_chatbot_product,
+    toggle_variant as toggle_chatbot_product_variant,
+    upsert_category as upsert_chatbot_product_category,
+    upsert_product as upsert_chatbot_product,
+)
 from app.config import get_settings
 from app.dlq import publish_anyway
 from app.facebook_content import router as facebook_content_router
@@ -1279,6 +1290,95 @@ async def shopee_enqueue(item_id: str, request: ShopeeEnqueueRequest) -> SubmitB
         source_origin="shopee",
         source_seed=payload,
     )
+
+
+@app.get(f"{settings.api_prefix}/chatbot/products")
+async def chatbot_products(search: str | None = None, category_id: str = "", status: str = "", limit: int = 100) -> dict:
+    return await asyncio.to_thread(list_chatbot_products, search, category_id, status, max(1, min(limit, 500)))
+
+
+@app.post(f"{settings.api_prefix}/chatbot/products")
+async def chatbot_product_create(request: Request) -> dict:
+    payload = await request.json()
+    try:
+        product = await asyncio.to_thread(upsert_chatbot_product, payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return product
+
+
+@app.get(f"{settings.api_prefix}/chatbot/products/{{product_id}}")
+async def chatbot_product_detail(product_id: str) -> dict:
+    product = await asyncio.to_thread(get_chatbot_product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return product
+
+
+@app.put(f"{settings.api_prefix}/chatbot/products/{{product_id}}")
+async def chatbot_product_update(product_id: str, request: Request) -> dict:
+    payload = await request.json()
+    try:
+        return await asyncio.to_thread(upsert_chatbot_product, payload, product_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.delete(f"{settings.api_prefix}/chatbot/products/{{product_id}}")
+async def chatbot_product_delete(product_id: str) -> dict:
+    deleted = await asyncio.to_thread(delete_chatbot_product, product_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return {"ok": True, "product_id": product_id}
+
+
+@app.post(f"{settings.api_prefix}/chatbot/products/{{product_id}}/toggle")
+async def chatbot_product_toggle(product_id: str, request: Request) -> dict:
+    payload = await request.json()
+    try:
+        return await asyncio.to_thread(toggle_chatbot_product, product_id, bool(payload.get("is_active")))
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post(f"{settings.api_prefix}/chatbot/products/{{product_id}}/variants/{{variant_id}}/toggle")
+async def chatbot_product_variant_toggle(product_id: str, variant_id: str, request: Request) -> dict:
+    payload = await request.json()
+    try:
+        return await asyncio.to_thread(toggle_chatbot_product_variant, product_id, variant_id, bool(payload.get("is_active")))
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(f"{settings.api_prefix}/chatbot/categories")
+async def chatbot_product_categories(search: str | None = None) -> dict:
+    return await asyncio.to_thread(list_chatbot_product_categories, search)
+
+
+@app.post(f"{settings.api_prefix}/chatbot/categories")
+async def chatbot_product_category_create(request: Request) -> dict:
+    payload = await request.json()
+    try:
+        return await asyncio.to_thread(upsert_chatbot_product_category, payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.put(f"{settings.api_prefix}/chatbot/categories/{{category_id}}")
+async def chatbot_product_category_update(category_id: str, request: Request) -> dict:
+    payload = await request.json()
+    try:
+        return await asyncio.to_thread(upsert_chatbot_product_category, payload, category_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.delete(f"{settings.api_prefix}/chatbot/categories/{{category_id}}")
+async def chatbot_product_category_delete(category_id: str) -> dict:
+    deleted = await asyncio.to_thread(delete_chatbot_product_category, category_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return {"ok": True, "category_id": category_id}
 
 
 @app.get(f"{settings.api_prefix}/sites", response_model=SiteListResponse)

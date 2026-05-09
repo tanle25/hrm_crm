@@ -1483,52 +1483,14 @@
         return Array.from(container?.querySelectorAll(".product-label-chip") || []).map((chip) => chip.dataset.label || "").filter(Boolean);
     }
 
-    function productVariantRowHtml(index) {
-        return `
-            <div class="product-variant-row border border-hud-amber/20 bg-black/20 p-3" data-index="${index}">
-                <div class="grid grid-cols-1 md:grid-cols-[96px_1fr_120px_1fr_1fr_92px_32px] gap-3 items-end">
-                    <div>
-                        <label class="text-[8px] text-hud-muted uppercase-widest font-bold">Ảnh</label>
-                        <label class="mt-1 w-20 h-20 border border-hud-amber/25 bg-black/30 flex items-center justify-center overflow-hidden cursor-pointer">
-                            <img class="variant-image-preview hidden w-full h-full object-cover" alt="variant preview"/>
-                            <i class="variant-image-empty fa-solid fa-image text-hud-amber/50"></i>
-                            <input type="file" accept="image/*" class="variant-image-input hidden"/>
-                        </label>
-                    </div>
-                    <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Tên biến thể</label><input class="variant-name hud-input w-full px-3 py-2 text-xs mt-1" placeholder="VD: Đỏ / Size M"/></div>
-                    <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Giá</label><input class="variant-price hud-input w-full px-3 py-2 text-xs mt-1" type="number" min="0"/></div>
-                    <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Thuộc tính 1</label><input class="variant-attr-1 hud-input w-full px-3 py-2 text-xs mt-1" placeholder="Màu sắc=Đỏ"/></div>
-                    <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Thuộc tính 2</label><input class="variant-attr-2 hud-input w-full px-3 py-2 text-xs mt-1" placeholder="Kích thước=M"/></div>
-                    <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Trạng thái</label><select class="variant-active hud-select w-full px-2 py-2 text-xs mt-1"><option value="true">Còn</option><option value="false">Hết</option></select></div>
-                    <button type="button" class="variant-remove text-hud-red hover:text-white pb-2"><i class="fa-solid fa-trash"></i></button>
-                </div>
-            </div>
-        `;
-    }
-
-    function parseVariantAttribute(value) {
-        const text = String(value || "").trim();
-        if (!text) return null;
-        const [rawKey, ...rest] = text.split("=");
-        const key = String(rawKey || "").trim();
-        const val = rest.join("=").trim();
-        if (!key || !val) return null;
-        return [key, val];
-    }
-
     async function collectProductVariantRows(form) {
-        const rows = Array.from(form.querySelectorAll(".product-variant-row"));
+        const rows = Array.from(form.querySelectorAll(".variant-combo-row"));
         const output = [];
         for (const [index, row] of rows.entries()) {
-            const name = row.querySelector(".variant-name")?.value?.trim() || "";
+            const name = row.dataset.variantName || row.querySelector(".variant-name")?.value?.trim() || "";
             const price = Number(row.querySelector(".variant-price")?.value || 0) || 0;
             const file = row.querySelector(".variant-image-input")?.files?.[0];
-            const attributes = {};
-            [parseVariantAttribute(row.querySelector(".variant-attr-1")?.value), parseVariantAttribute(row.querySelector(".variant-attr-2")?.value)]
-                .filter(Boolean)
-                .forEach(([key, val]) => {
-                    attributes[key] = val;
-                });
+            const attributes = JSON.parse(row.dataset.attributes || "{}");
             if (!name && !price && !Object.keys(attributes).length && !file) continue;
             const uploaded = file ? await uploadProductImages([file]) : [];
             output.push({
@@ -1544,42 +1506,81 @@
     }
 
     function bindProductVariantBuilder(section) {
-        const list = section.querySelector("#product-variant-list");
-        const addButton = section.querySelector("#product-variant-add");
-        if (!list || !addButton) return;
-        const syncRemoveState = () => {
-            const rows = Array.from(list.querySelectorAll(".product-variant-row"));
-            rows.forEach((row) => {
-                row.querySelector(".variant-remove").disabled = rows.length <= 1;
-                row.querySelector(".variant-remove").classList.toggle("opacity-30", rows.length <= 1);
-            });
-        };
-        const bindRow = (row) => {
-            row.querySelector(".variant-remove")?.addEventListener("click", () => {
-                if (list.querySelectorAll(".product-variant-row").length <= 1) return;
-                row.remove();
-                syncRemoveState();
-            });
-            row.querySelector(".variant-image-input")?.addEventListener("change", (event) => {
+        const groups = Array.from(section.querySelectorAll(".variant-group"));
+        const comboList = section.querySelector("#product-variant-list");
+        if (!comboList) return;
+        const parseOptions = (value) => String(value || "")
+            .split(/\n|,/)
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .slice(0, 40);
+        const buildCombos = () => {
+            const dimensions = groups.map((group) => ({
+                name: group.querySelector(".variant-group-name")?.value?.trim(),
+                options: parseOptions(group.querySelector(".variant-group-options")?.value),
+            })).filter((group) => group.name && group.options.length);
+            const combos = dimensions.length === 2
+                ? dimensions[0].options.flatMap((one) => dimensions[1].options.map((two) => [one, two]))
+                : dimensions.length === 1
+                    ? dimensions[0].options.map((one) => [one])
+                    : [];
+            comboList.innerHTML = combos.length ? combos.map((combo, index) => {
+                const attributes = {};
+                combo.forEach((option, optionIndex) => {
+                    attributes[dimensions[optionIndex].name] = option;
+                });
+                const label = combo.join(" / ");
+                return `
+                    <div class="variant-combo-row border border-hud-amber/20 bg-black/20 p-3" data-variant-name="${escapeHtml(label)}" data-attributes="${escapeHtml(JSON.stringify(attributes))}">
+                        <div class="grid grid-cols-1 md:grid-cols-[96px_1fr_130px_110px] gap-3 items-end">
+                            <div>
+                                <label class="text-[8px] text-hud-muted uppercase-widest font-bold">Ảnh</label>
+                                <label class="mt-1 w-20 h-20 border border-hud-amber/25 bg-black/30 flex items-center justify-center overflow-hidden cursor-pointer">
+                                    <img class="variant-image-preview hidden w-full h-full object-cover" alt="variant preview"/>
+                                    <i class="variant-image-empty fa-solid fa-image text-hud-amber/50"></i>
+                                    <input type="file" accept="image/*" class="variant-image-input hidden"/>
+                                </label>
+                            </div>
+                            <div>
+                                <div class="text-[8px] text-hud-muted uppercase-widest font-bold">Option</div>
+                                <div class="text-white font-bold mt-2">${escapeHtml(label)}</div>
+                                <div class="text-[10px] text-hud-muted mt-1">${Object.entries(attributes).map(([key, val]) => `${escapeHtml(key)}=${escapeHtml(val)}`).join(" · ")}</div>
+                            </div>
+                            <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Giá</label><input class="variant-price hud-input w-full px-3 py-2 text-xs mt-1" type="number" min="0"/></div>
+                            <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Trạng thái</label><select class="variant-active hud-select w-full px-2 py-2 text-xs mt-1"><option value="true">Còn</option><option value="false">Hết</option></select></div>
+                        </div>
+                    </div>
+                `;
+            }).join("") : `<div class="text-[11px] text-hud-muted border border-hud-amber/15 bg-black/20 p-4">Nhập tên biến thể và option để tự tạo danh sách biến thể. Ví dụ: Tên biến thể 1 = Màu sắc, options = Đỏ, Xanh. Tên biến thể 2 = Kích thước, options = M, L.</div>`;
+            comboList.querySelectorAll(".variant-image-input").forEach((input) => input.addEventListener("change", (event) => {
+                const row = event.target.closest(".variant-combo-row");
                 const file = event.target.files?.[0];
-                const preview = row.querySelector(".variant-image-preview");
-                const empty = row.querySelector(".variant-image-empty");
+                const preview = row?.querySelector(".variant-image-preview");
+                const empty = row?.querySelector(".variant-image-empty");
                 if (!file || !preview || !empty) return;
                 preview.src = URL.createObjectURL(file);
                 preview.classList.remove("hidden");
                 empty.classList.add("hidden");
-            });
+            }));
         };
-        const addRow = () => {
-            if (list.querySelectorAll(".product-variant-row").length >= 40) return;
-            list.insertAdjacentHTML("beforeend", productVariantRowHtml(list.querySelectorAll(".product-variant-row").length));
-            bindRow(list.lastElementChild);
-            syncRemoveState();
-        };
-        addButton.addEventListener("click", addRow);
-        if (!list.querySelector(".product-variant-row")) addRow();
-        list.querySelectorAll(".product-variant-row").forEach(bindRow);
-        syncRemoveState();
+        groups.forEach((group) => {
+            group.querySelectorAll("input, textarea").forEach((input) => input.addEventListener("input", buildCombos));
+        });
+        buildCombos();
+    }
+
+    function bindProductImagePreview(section) {
+        const input = section.querySelector('input[name="image_files"]');
+        const preview = section.querySelector("#product-image-preview");
+        if (!input || !preview) return;
+        input.addEventListener("change", () => {
+            const files = Array.from(input.files || []);
+            preview.innerHTML = files.length ? files.map((file) => `
+                <div class="w-20 h-20 border border-hud-amber/25 bg-black/30 overflow-hidden">
+                    <img src="${URL.createObjectURL(file)}" alt="${escapeHtml(file.name)}" class="w-full h-full object-cover"/>
+                </div>
+            `).join("") : `<div class="text-[10px] text-hud-muted">Chưa chọn ảnh.</div>`;
+        });
     }
 
     async function renderProductsPage() {
@@ -1711,18 +1712,36 @@
                             <div>
                                 <label class="text-[9px] text-hud-amber uppercase-widest font-bold">Upload ảnh sản phẩm</label>
                                 <input name="image_files" type="file" multiple accept="image/*" class="hud-input w-full px-3 py-2 text-xs mt-1"/>
+                                <div id="product-image-preview" class="mt-2 flex flex-wrap gap-2"><div class="text-[10px] text-hud-muted">Chưa chọn ảnh.</div></div>
                                 <textarea name="images" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-2" placeholder="Hoặc dán URL ảnh, mỗi dòng một ảnh"></textarea>
                             </div>
                             <div class="border border-hud-amber/15 bg-black/10 p-3">
                                 <div class="text-[9px] text-hud-amber uppercase-widest font-bold">Quy tắc biến thể</div>
-                                <div class="text-[10px] text-hud-muted mt-2 leading-5">Mỗi biến thể là một dòng riêng. Mỗi dòng hỗ trợ tối đa 2 thuộc tính, ví dụ <span class="text-white">Màu sắc=Đỏ</span> và <span class="text-white">Kích thước=M</span>. Ảnh được preview trước khi lưu.</div>
+                                <div class="text-[10px] text-hud-muted mt-2 leading-5">Nhập tối đa 2 tên biến thể, sau đó thêm các option. Hệ thống tự tạo các tổ hợp để nhập giá, trạng thái và ảnh preview.</div>
                             </div>
                             <div class="md:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Mô tả ngắn</label><textarea name="short_description" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-1"></textarea></div>
                             <div class="md:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Mô tả chi tiết</label><textarea name="description" rows="4" class="hud-input w-full px-3 py-2 text-xs mt-1"></textarea></div>
                             <div class="md:col-span-2">
+                                <label class="text-[9px] text-hud-amber uppercase-widest font-bold">Cấu hình biến thể</label>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+                                    <div class="variant-group border border-hud-amber/15 bg-black/20 p-3">
+                                        <label class="text-[8px] text-hud-muted uppercase-widest font-bold">Tên biến thể 1</label>
+                                        <input class="variant-group-name hud-input w-full px-3 py-2 text-xs mt-1" placeholder="VD: Màu sắc"/>
+                                        <label class="text-[8px] text-hud-muted uppercase-widest font-bold mt-3 block">Option, cách nhau bằng dấu phẩy hoặc xuống dòng</label>
+                                        <textarea class="variant-group-options hud-input w-full px-3 py-2 text-xs mt-1" rows="3" placeholder="Đỏ, Xanh, Đen"></textarea>
+                                    </div>
+                                    <div class="variant-group border border-hud-amber/15 bg-black/20 p-3">
+                                        <label class="text-[8px] text-hud-muted uppercase-widest font-bold">Tên biến thể 2</label>
+                                        <input class="variant-group-name hud-input w-full px-3 py-2 text-xs mt-1" placeholder="VD: Kích thước"/>
+                                        <label class="text-[8px] text-hud-muted uppercase-widest font-bold mt-3 block">Option, cách nhau bằng dấu phẩy hoặc xuống dòng</label>
+                                        <textarea class="variant-group-options hud-input w-full px-3 py-2 text-xs mt-1" rows="3" placeholder="S, M, L"></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="md:col-span-2">
                                 <div class="flex items-center gap-2 mb-2">
-                                    <label class="text-[9px] text-hud-amber uppercase-widest font-bold">Biến thể sản phẩm</label>
-                                    <button id="product-variant-add" type="button" class="ml-auto btn-ghost px-3 py-1.5 text-[10px] uppercase-wide font-bold"><i class="fa-solid fa-plus"></i> THÊM BIẾN THỂ</button>
+                                    <label class="text-[9px] text-hud-amber uppercase-widest font-bold">Danh sách option sẽ tạo</label>
+                                    <span class="text-[10px] text-hud-muted ml-auto">Mỗi tổ hợp là một biến thể lưu vào catalog</span>
                                 </div>
                                 <div id="product-variant-list" class="space-y-3"></div>
                             </div>
@@ -1780,6 +1799,7 @@
             section.querySelectorAll(".product-label-suggestion").forEach((button) => button.addEventListener("click", () => {
                 addProductLabelChip(labelChips, button.dataset.label || "");
             }));
+            bindProductImagePreview(section);
             bindProductVariantBuilder(section);
             section.querySelector("#product-create-form")?.addEventListener("submit", async (event) => {
                 event.preventDefault();

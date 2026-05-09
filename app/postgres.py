@@ -178,6 +178,12 @@ def init_schema() -> None:
                 data JSONB NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS chatbot_product_labels (
+                label TEXT PRIMARY KEY,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                data JSONB NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS chatbot_products (
                 product_id TEXT PRIMARY KEY,
                 category_id TEXT NOT NULL DEFAULT '',

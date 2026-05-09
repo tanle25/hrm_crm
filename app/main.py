@@ -20,6 +20,7 @@ from app.chatbot_products import (
     delete_category as delete_chatbot_product_category,
     delete_product as delete_chatbot_product,
     get_product as get_chatbot_product,
+    list_labels as list_chatbot_product_labels,
     list_categories as list_chatbot_product_categories,
     list_products as list_chatbot_products,
     toggle_product as toggle_chatbot_product,
@@ -131,6 +132,7 @@ app = FastAPI(title=settings.app_name, version="2.0.0")
 log = get_logger("content_forge.api")
 UI_DIR = Path("ui")
 FACEBOOK_MESSAGE_MEDIA_DIR = Path("data/facebook_message_media")
+CHATBOT_PRODUCT_MEDIA_DIR = Path("data/chatbot_product_media")
 app.include_router(facebook_content_router)
 app.include_router(facebook_reels_router)
 app.include_router(facebook_reel_flowkit_router)
@@ -141,6 +143,8 @@ if UI_DIR.exists():
     app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
 FACEBOOK_MESSAGE_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/public/facebook-message-media", StaticFiles(directory=FACEBOOK_MESSAGE_MEDIA_DIR), name="facebook-message-media")
+CHATBOT_PRODUCT_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/public/chatbot-product-media", StaticFiles(directory=CHATBOT_PRODUCT_MEDIA_DIR), name="chatbot-product-media")
 
 
 AUTH_EXEMPT_PATHS = {
@@ -168,6 +172,8 @@ def _is_exempt_path(path: str) -> bool:
     if path.startswith("/ui/"):
         return True
     if path.startswith("/public/facebook-message-media/"):
+        return True
+    if path.startswith("/public/chatbot-product-media/"):
         return True
     if path.startswith(f"{settings.api_prefix}/auth/"):
         return True
@@ -1295,6 +1301,34 @@ async def shopee_enqueue(item_id: str, request: ShopeeEnqueueRequest) -> SubmitB
 @app.get(f"{settings.api_prefix}/chatbot/products")
 async def chatbot_products(search: str | None = None, category_id: str = "", status: str = "", limit: int = 100) -> dict:
     return await asyncio.to_thread(list_chatbot_products, search, category_id, status, max(1, min(limit, 500)))
+
+
+@app.get(f"{settings.api_prefix}/chatbot/labels")
+async def chatbot_product_labels(search: str | None = None, limit: int = 100) -> dict:
+    return await asyncio.to_thread(list_chatbot_product_labels, search, max(1, min(limit, 300)))
+
+
+@app.post(f"{settings.api_prefix}/chatbot/uploads/images")
+async def chatbot_product_image_upload(request: Request, files: list[UploadFile] = File(default=[])) -> dict:
+    if not files:
+        raise HTTPException(status_code=400, detail="At least one image is required")
+    proto = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    host = request.headers.get("X-Forwarded-Host", request.headers.get("host", ""))
+    uploaded: list[dict[str, str]] = []
+    for file in files[:20]:
+        content_type = str(file.content_type or "").lower()
+        suffix = Path(file.filename or "").suffix.lower()
+        if content_type not in {"image/jpeg", "image/png", "image/webp", "image/gif"} and suffix not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+            raise HTTPException(status_code=400, detail=f"Unsupported image type: {file.filename}")
+        safe_suffix = suffix if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif"} else ".jpg"
+        payload = await file.read(10 * 1024 * 1024 + 1)
+        if len(payload) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail=f"Image too large: {file.filename}")
+        target = CHATBOT_PRODUCT_MEDIA_DIR / f"{secrets.token_hex(16)}{safe_suffix}"
+        target.write_bytes(payload)
+        url = f"{proto}://{host}/public/chatbot-product-media/{target.name}"
+        uploaded.append({"url": url, "filename": file.filename or target.name})
+    return {"total": len(uploaded), "images": uploaded}
 
 
 @app.post(f"{settings.api_prefix}/chatbot/products")

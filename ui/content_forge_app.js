@@ -1479,6 +1479,33 @@
             });
     }
 
+    async function uploadProductImages(files) {
+        const selected = Array.from(files || []).filter(Boolean);
+        if (!selected.length) return [];
+        const formData = new FormData();
+        selected.forEach((file) => formData.append("files", file));
+        const payload = await fetchJSON("/chatbot/uploads/images", { method: "POST", body: formData });
+        return (payload.images || []).map((item) => item.url).filter(Boolean);
+    }
+
+    function addProductLabelChip(container, value) {
+        const label = String(value || "").trim();
+        if (!label || !container) return;
+        const existing = new Set(Array.from(container.querySelectorAll(".product-label-chip")).map((chip) => (chip.dataset.label || "").toLowerCase()));
+        if (existing.has(label.toLowerCase())) return;
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "product-label-chip badge amber hover:brightness-125";
+        chip.dataset.label = label;
+        chip.innerHTML = `${escapeHtml(label)} <i class="fa-solid fa-xmark ml-1"></i>`;
+        chip.addEventListener("click", () => chip.remove());
+        container.appendChild(chip);
+    }
+
+    function getProductLabelChips(container) {
+        return Array.from(container?.querySelectorAll(".product-label-chip") || []).map((chip) => chip.dataset.label || "").filter(Boolean);
+    }
+
     async function renderProductsPage() {
         const section = document.getElementById("page-products");
         if (!section) return;
@@ -1489,13 +1516,15 @@
             if (state.productCategoryFilter) params.set("category_id", state.productCategoryFilter);
             if (state.productStatusFilter) params.set("status", state.productStatusFilter);
             params.set("limit", "200");
-            const [productsPayload, categoriesPayload] = await Promise.all([
+            const [productsPayload, categoriesPayload, labelsPayload] = await Promise.all([
                 fetchJSON(`/chatbot/products?${params.toString()}`),
                 fetchJSON("/chatbot/categories"),
+                fetchJSON("/chatbot/labels?limit=100"),
             ]);
             const items = productsPayload.items || [];
             const stats = productsPayload.stats || {};
             const categories = categoriesPayload.categories || [];
+            const savedLabels = (labelsPayload.labels || []).map((item) => item.label).filter(Boolean);
             const categoryMap = new Map(categories.map((item) => [item.category_id, item]));
             section.innerHTML = `
                 <div class="max-w-7xl mx-auto overflow-x-hidden">
@@ -1532,20 +1561,6 @@
                             </div>
                         </div>
                         <div class="space-y-4">
-                            <div class="hud-card amber p-4">
-                                <span class="c-tl"></span><span class="c-br"></span>
-                                <form id="product-create-form" class="grid grid-cols-1 lg:grid-cols-6 gap-3">
-                                    <div class="lg:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Tên sản phẩm</label><input name="title" class="hud-input w-full px-3 py-2 text-xs mt-1" required placeholder="VD: Trà Shan Tuyết Hà Giang"/></div>
-                                    <div><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Danh mục</label><select name="category_id" class="hud-select w-full px-3 py-2 text-xs mt-1"><option value="">Chưa phân loại</option>${categories.map((cat) => `<option value="${escapeHtml(cat.category_id)}">${escapeHtml(cat.name)}</option>`).join("")}</select></div>
-                                    <div><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Giá</label><input name="price" type="number" min="0" class="hud-input w-full px-3 py-2 text-xs mt-1" placeholder="99000"/></div>
-                                    <div><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Nhãn</label><input name="labels" class="hud-input w-full px-3 py-2 text-xs mt-1" placeholder="trà xanh, quà tặng"/></div>
-                                    <div class="flex items-end"><button class="btn-primary w-full px-3 py-2 text-[10px] uppercase-wide font-bold" style="background:#ffaa00;border-color:#ffaa00;color:#000;"><i class="fa-solid fa-plus"></i> THÊM</button></div>
-                                    <div class="lg:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Ảnh, mỗi dòng một URL</label><textarea name="images" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-1"></textarea></div>
-                                    <div class="lg:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Mô tả ngắn</label><textarea name="short_description" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-1"></textarea></div>
-                                    <div class="lg:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Biến thể: tên | giá | key=value | còn/hết</label><textarea name="variants" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-1" placeholder="100g | 99000 | size=100g | còn"></textarea></div>
-                                </form>
-                                <div id="product-create-feedback" class="text-[11px] text-hud-muted mt-3"></div>
-                            </div>
                             <div class="hud-card amber p-3 flex flex-col lg:flex-row gap-3">
                                 <input id="product-search" class="hud-input flex-1 px-3 py-2 text-xs" placeholder="Tìm sản phẩm, SKU, nhãn..." value="${escapeHtml(state.productSearch)}"/>
                                 <select id="product-status-filter" class="hud-select px-3 py-2 text-xs">
@@ -1553,6 +1568,7 @@
                                     <option value="available" ${state.productStatusFilter === "available" ? "selected" : ""}>CÒN HÀNG</option>
                                     <option value="unavailable" ${state.productStatusFilter === "unavailable" ? "selected" : ""}>HẾT HÀNG</option>
                                 </select>
+                                <button id="product-open-dialog" class="btn-primary px-4 py-2 text-xs uppercase-wide font-bold" style="background:#ffaa00;border-color:#ffaa00;color:#000;"><i class="fa-solid fa-plus"></i> THÊM SP</button>
                                 <button id="product-refresh" class="btn-ghost px-4 py-2 text-xs uppercase-wide font-bold"><i class="fa-solid fa-rotate"></i> REFRESH</button>
                             </div>
                             <div class="hud-card amber overflow-hidden">
@@ -1593,6 +1609,50 @@
                         </div>
                     </div>
                 </div>
+                <div id="product-dialog-backdrop" class="hidden fixed inset-0 bg-black/70 z-40"></div>
+                <div id="product-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div class="hud-card amber w-full max-w-4xl max-h-[92vh] overflow-y-auto bg-[#07141c]">
+                        <span class="c-tl"></span><span class="c-br"></span>
+                        <div class="header-strip px-5 py-4 flex items-center gap-2 sticky top-0 z-10">
+                            <i class="fa-solid fa-box-open text-hud-amber"></i>
+                            <span class="font-display font-black text-xs text-white uppercase-widest">THÊM SẢN PHẨM CHATBOT</span>
+                            <button id="product-dialog-close" class="ml-auto text-hud-amber hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                        <form id="product-create-form" class="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Tên sản phẩm</label><input name="title" class="hud-input w-full px-3 py-2 text-xs mt-1" required placeholder="VD: Trà Shan Tuyết Hà Giang"/></div>
+                            <div><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Danh mục</label><select name="category_id" class="hud-select w-full px-3 py-2 text-xs mt-1"><option value="">Chưa phân loại</option>${categories.map((cat) => `<option value="${escapeHtml(cat.category_id)}">${escapeHtml(cat.name)}</option>`).join("")}</select></div>
+                            <div><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Giá</label><input name="price" type="number" min="0" class="hud-input w-full px-3 py-2 text-xs mt-1" placeholder="99000"/></div>
+                            <div><label class="text-[9px] text-hud-amber uppercase-widest font-bold">SKU</label><input name="sku" class="hud-input w-full px-3 py-2 text-xs mt-1" placeholder="SKU nội bộ"/></div>
+                            <div class="md:col-span-2">
+                                <label class="text-[9px] text-hud-amber uppercase-widest font-bold">Nhãn</label>
+                                <div id="product-label-chips" class="min-h-[42px] border border-hud-amber/20 bg-black/20 p-2 mt-1 flex flex-wrap gap-2"></div>
+                                <div class="flex gap-2 mt-2">
+                                    <input id="product-label-input" class="hud-input flex-1 px-3 py-2 text-xs" placeholder="Nhập nhãn rồi Enter hoặc bấm thêm"/>
+                                    <button id="product-label-add" type="button" class="btn-ghost px-3 py-2 text-[10px] uppercase-wide font-bold">THÊM NHÃN</button>
+                                </div>
+                                <div class="mt-2 flex flex-wrap gap-2">${savedLabels.slice(0, 24).map((label) => `<button type="button" class="product-label-suggestion badge cyan hover:brightness-125" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>`).join("")}</div>
+                            </div>
+                            <div>
+                                <label class="text-[9px] text-hud-amber uppercase-widest font-bold">Upload ảnh sản phẩm</label>
+                                <input name="image_files" type="file" multiple accept="image/*" class="hud-input w-full px-3 py-2 text-xs mt-1"/>
+                                <textarea name="images" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-2" placeholder="Hoặc dán URL ảnh, mỗi dòng một ảnh"></textarea>
+                            </div>
+                            <div>
+                                <label class="text-[9px] text-hud-amber uppercase-widest font-bold">Upload ảnh biến thể</label>
+                                <input name="variant_image_files" type="file" multiple accept="image/*" class="hud-input w-full px-3 py-2 text-xs mt-1"/>
+                                <div class="text-[10px] text-hud-muted mt-2">Ảnh biến thể được gán theo thứ tự từng dòng biến thể.</div>
+                            </div>
+                            <div class="md:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Mô tả ngắn</label><textarea name="short_description" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-1"></textarea></div>
+                            <div class="md:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Mô tả chi tiết</label><textarea name="description" rows="4" class="hud-input w-full px-3 py-2 text-xs mt-1"></textarea></div>
+                            <div class="md:col-span-2"><label class="text-[9px] text-hud-amber uppercase-widest font-bold">Biến thể: tên | giá | key=value | còn/hết</label><textarea name="variants" rows="4" class="hud-input w-full px-3 py-2 text-xs mt-1" placeholder="100g | 99000 | size=100g | còn&#10;200g | 179000 | size=200g | hết"></textarea></div>
+                            <div id="product-create-feedback" class="md:col-span-2 text-[11px] text-hud-muted"></div>
+                            <div class="md:col-span-2 flex justify-end gap-3 border-t border-hud-amber/15 pt-4">
+                                <button id="product-dialog-cancel" type="button" class="btn-ghost px-4 py-2 text-xs uppercase-wide font-bold">HỦY</button>
+                                <button class="btn-primary px-5 py-2 text-xs uppercase-wide font-bold" style="background:#ffaa00;border-color:#ffaa00;color:#000;"><i class="fa-solid fa-save"></i> LƯU SẢN PHẨM</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
             `;
             section.querySelectorAll(".product-category-filter").forEach((button) => button.addEventListener("click", async () => {
                 state.productCategoryFilter = button.dataset.categoryId || "";
@@ -1609,6 +1669,36 @@
                 state.productStatusFilter = event.target.value || "";
                 await renderProductsPage();
             });
+            const productDialog = section.querySelector("#product-dialog");
+            const productBackdrop = section.querySelector("#product-dialog-backdrop");
+            const openProductDialog = () => {
+                productDialog?.classList.remove("hidden");
+                productBackdrop?.classList.remove("hidden");
+            };
+            const closeProductDialog = () => {
+                productDialog?.classList.add("hidden");
+                productBackdrop?.classList.add("hidden");
+            };
+            section.querySelector("#product-open-dialog")?.addEventListener("click", openProductDialog);
+            section.querySelector("#product-dialog-close")?.addEventListener("click", closeProductDialog);
+            section.querySelector("#product-dialog-cancel")?.addEventListener("click", closeProductDialog);
+            productBackdrop?.addEventListener("click", closeProductDialog);
+            const labelChips = section.querySelector("#product-label-chips");
+            const labelInput = section.querySelector("#product-label-input");
+            const addLabelFromInput = () => {
+                addProductLabelChip(labelChips, labelInput?.value || "");
+                if (labelInput) labelInput.value = "";
+            };
+            section.querySelector("#product-label-add")?.addEventListener("click", addLabelFromInput);
+            labelInput?.addEventListener("keydown", (event) => {
+                if (event.key === "Enter") {
+                    event.preventDefault();
+                    addLabelFromInput();
+                }
+            });
+            section.querySelectorAll(".product-label-suggestion").forEach((button) => button.addEventListener("click", () => {
+                addProductLabelChip(labelChips, button.dataset.label || "");
+            }));
             section.querySelector("#product-create-form")?.addEventListener("submit", async (event) => {
                 event.preventDefault();
                 const form = event.currentTarget;
@@ -1617,21 +1707,31 @@
                 const categoryId = String(formData.get("category_id") || "");
                 const category = categoryMap.get(categoryId) || {};
                 try {
-                    if (feedback) feedback.textContent = "Đang thêm sản phẩm...";
+                    if (feedback) feedback.textContent = "Đang upload ảnh và thêm sản phẩm...";
+                    const productImageUrls = await uploadProductImages(form.querySelector('input[name="image_files"]')?.files);
+                    const variantImageUrls = await uploadProductImages(form.querySelector('input[name="variant_image_files"]')?.files);
+                    const variants = parseProductVariants(formData.get("variants")).map((variant, index) => ({
+                        ...variant,
+                        image_url: variantImageUrls[index] || variant.image_url || "",
+                    }));
                     await fetchJSON("/chatbot/products", {
                         method: "POST",
                         body: JSON.stringify({
                             title: formData.get("title"),
+                            sku: formData.get("sku"),
                             category_id: categoryId,
                             category_name: category.name || "",
                             price: Number(formData.get("price") || 0) || 0,
-                            labels: formData.get("labels"),
-                            images: formData.get("images"),
+                            labels: getProductLabelChips(labelChips),
+                            images: [...productImageUrls, ...String(formData.get("images") || "").split(/\n|,/).map((item) => item.trim()).filter(Boolean)],
                             short_description: formData.get("short_description"),
-                            variants: parseProductVariants(formData.get("variants")),
+                            description: formData.get("description"),
+                            variants,
                         }),
                     });
                     form.reset();
+                    if (labelChips) labelChips.innerHTML = "";
+                    closeProductDialog();
                     await renderProductsPage();
                 } catch (error) {
                     if (feedback) feedback.textContent = `Thêm thất bại: ${error.message}`;

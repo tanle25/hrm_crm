@@ -14,6 +14,7 @@ from app.postgres import get_connection as _pg_connection, init_schema as _init_
 
 PRODUCTS_PATH = Path("data/chatbot_products.json")
 CATEGORIES_PATH = Path("data/chatbot_product_categories.json")
+LABELS_PATH = Path("data/chatbot_product_labels.json")
 STORE_LOCK = Lock()
 
 
@@ -33,6 +34,8 @@ def _ensure_store() -> None:
         PRODUCTS_PATH.write_text("[]", encoding="utf-8")
     if not CATEGORIES_PATH.exists():
         CATEGORIES_PATH.write_text("[]", encoding="utf-8")
+    if not LABELS_PATH.exists():
+        LABELS_PATH.write_text("[]", encoding="utf-8")
 
 
 def _load_json_list(path: Path) -> list[dict[str, Any]]:
@@ -85,6 +88,59 @@ def _clean_list(value: Any) -> list[str]:
             seen.add(key)
             output.append(text)
     return output
+
+
+def _label_key(value: str) -> str:
+    return _clean_text(value, 120).lower()
+
+
+def _remember_labels(labels: list[str]) -> None:
+    cleaned = [label for label in _clean_list(labels) if label]
+    if not cleaned:
+        return
+    now = _now_iso()
+    conn = _postgres_conn()
+    if conn is not None:
+        with conn, conn.cursor() as cur:
+            for label in cleaned:
+                key = _label_key(label)
+                payload = {"label": label, "key": key, "updated_at": now}
+                cur.execute(
+                    """
+                    INSERT INTO chatbot_product_labels (label, updated_at, data)
+                    VALUES (%s, NOW(), %s::jsonb)
+                    ON CONFLICT (label) DO UPDATE SET updated_at = NOW(), data = EXCLUDED.data
+                    """,
+                    (key, serialize_json(payload)),
+                )
+        return
+    with STORE_LOCK:
+        existing = {str(item.get("key") or item.get("label") or "").lower(): item for item in _load_json_list(LABELS_PATH)}
+        for label in cleaned:
+            key = _label_key(label)
+            existing[key] = {"label": label, "key": key, "updated_at": now}
+        _save_json_list(LABELS_PATH, list(existing.values()))
+
+
+def list_labels(search: str | None = None, limit: int = 100) -> dict[str, Any]:
+    needle = (search or "").strip().lower()
+    if postgres_available():
+        conn = _postgres_conn()
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT data::text FROM chatbot_product_labels ORDER BY updated_at DESC LIMIT %s", (max(1, min(limit * 3, 1000)),))
+            labels = [json.loads(row[0]) for row in cur.fetchall()]
+    else:
+        with STORE_LOCK:
+            labels = _load_json_list(LABELS_PATH)
+    output = []
+    for item in labels:
+        label = str(item.get("label") or "").strip()
+        if not label:
+            continue
+        if needle and needle not in label.lower():
+            continue
+        output.append(item)
+    return {"total": len(output), "labels": output[: max(1, min(limit, 300))]}
 
 
 def _availability(is_active: bool) -> str:
@@ -333,6 +389,10 @@ def upsert_product(payload: dict[str, Any], product_id: str = "") -> dict[str, A
         category = get_category(str(item.get("category_id") or ""))
         if category:
             item["category_name"] = category.get("name") or ""
+    labels = list(item.get("labels") or [])
+    for variant in item.get("variants") or []:
+        labels.extend(variant.get("labels") or [])
+    _remember_labels(labels)
     conn = _postgres_conn()
     if conn is not None:
         with conn, conn.cursor() as cur:
@@ -399,4 +459,3 @@ def toggle_variant(product_id: str, variant_id: str, is_active: bool) -> dict[st
         raise KeyError("Variant not found")
     item["rag_dirty"] = True
     return upsert_product(item, product_id)
-

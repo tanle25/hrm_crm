@@ -133,10 +133,12 @@ def get_collection(use_embedding: bool = True, fallback_on_error: bool = True, c
         return _memory_db
     try:
         client = chromadb.PersistentClient(path=settings.chroma_path)
+        name = _safe_collection_name(collection_name) if collection_name else get_collection_name()
+        if not use_embedding:
+            return client.get_collection(name)
         kwargs: Dict[str, Any] = {"metadata": {"embedding_model": settings.rag_embedding_model}}
-        if use_embedding:
-            kwargs["embedding_function"] = get_embedding_function(settings.rag_embedding_model, settings.rag_embedding_max_tokens)
-        return client.get_or_create_collection(_safe_collection_name(collection_name) if collection_name else get_collection_name(), **kwargs)
+        kwargs["embedding_function"] = get_embedding_function(settings.rag_embedding_model, settings.rag_embedding_max_tokens)
+        return client.get_or_create_collection(name, **kwargs)
     except Exception:
         if not fallback_on_error:
             raise

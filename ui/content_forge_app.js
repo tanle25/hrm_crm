@@ -1572,15 +1572,46 @@
     function bindProductImagePreview(section) {
         const input = section.querySelector('input[name="image_files"]');
         const preview = section.querySelector("#product-image-preview");
+        const picker = section.querySelector("#product-image-picker");
+        const count = section.querySelector("#product-image-count");
         if (!input || !preview) return;
-        input.addEventListener("change", () => {
-            const files = Array.from(input.files || []);
-            preview.innerHTML = files.length ? files.map((file) => `
-                <div class="w-20 h-20 border border-hud-amber/25 bg-black/30 overflow-hidden">
+        const selected = [];
+        const signature = (file) => `${file.name}:${file.size}:${file.lastModified}`;
+        const render = () => {
+            preview.innerHTML = selected.length ? selected.map((file, index) => `
+                <div class="relative w-20 h-20 border border-hud-amber/25 bg-black/30 overflow-hidden group">
                     <img src="${URL.createObjectURL(file)}" alt="${escapeHtml(file.name)}" class="w-full h-full object-cover"/>
+                    <button type="button" class="product-image-remove absolute top-1 right-1 w-6 h-6 bg-black/80 border border-hud-red/50 text-hud-red hover:text-white text-[10px]" data-index="${index}">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
                 </div>
             `).join("") : `<div class="text-[10px] text-hud-muted">Chưa chọn ảnh.</div>`;
+            if (count) count.textContent = selected.length ? `${selected.length} ảnh đã chọn` : "Chưa chọn ảnh";
+            preview.querySelectorAll(".product-image-remove").forEach((button) => button.addEventListener("click", () => {
+                selected.splice(Number(button.dataset.index || 0), 1);
+                render();
+            }));
+        };
+        picker?.addEventListener("click", () => input.click());
+        input.addEventListener("change", () => {
+            const existing = new Set(selected.map(signature));
+            Array.from(input.files || []).forEach((file) => {
+                if (!existing.has(signature(file))) {
+                    existing.add(signature(file));
+                    selected.push(file);
+                }
+            });
+            input.value = "";
+            render();
         });
+        render();
+        return {
+            getFiles: () => selected.slice(),
+            clear: () => {
+                selected.splice(0, selected.length);
+                render();
+            },
+        };
     }
 
     async function renderProductsPage() {
@@ -1711,7 +1742,17 @@
                             </div>
                             <div>
                                 <label class="text-[9px] text-hud-amber uppercase-widest font-bold">Upload ảnh sản phẩm</label>
-                                <input name="image_files" type="file" multiple accept="image/*" class="hud-input w-full px-3 py-2 text-xs mt-1"/>
+                                <input name="image_files" type="file" multiple accept="image/*" class="hidden"/>
+                                <button id="product-image-picker" type="button" class="mt-1 w-full border border-dashed border-hud-amber/40 bg-hud-amber/5 hover:bg-hud-amber/10 px-4 py-4 text-left transition">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-10 h-10 border border-hud-amber/30 bg-black/30 flex items-center justify-center text-hud-amber"><i class="fa-solid fa-images"></i></div>
+                                        <div class="flex-1">
+                                            <div class="text-xs text-white font-bold uppercase-wide">Chọn hoặc chọn thêm ảnh</div>
+                                            <div id="product-image-count" class="text-[10px] text-hud-muted mt-1">Chưa chọn ảnh</div>
+                                        </div>
+                                        <i class="fa-solid fa-chevron-down text-hud-amber text-xs"></i>
+                                    </div>
+                                </button>
                                 <div id="product-image-preview" class="mt-2 flex flex-wrap gap-2"><div class="text-[10px] text-hud-muted">Chưa chọn ảnh.</div></div>
                                 <textarea name="images" rows="2" class="hud-input w-full px-3 py-2 text-xs mt-2" placeholder="Hoặc dán URL ảnh, mỗi dòng một ảnh"></textarea>
                             </div>
@@ -1799,7 +1840,7 @@
             section.querySelectorAll(".product-label-suggestion").forEach((button) => button.addEventListener("click", () => {
                 addProductLabelChip(labelChips, button.dataset.label || "");
             }));
-            bindProductImagePreview(section);
+            const productImagePicker = bindProductImagePreview(section);
             bindProductVariantBuilder(section);
             section.querySelector("#product-create-form")?.addEventListener("submit", async (event) => {
                 event.preventDefault();
@@ -1810,7 +1851,7 @@
                 const category = categoryMap.get(categoryId) || {};
                 try {
                     if (feedback) feedback.textContent = "Đang upload ảnh và thêm sản phẩm...";
-                    const productImageUrls = await uploadProductImages(form.querySelector('input[name="image_files"]')?.files);
+                    const productImageUrls = await uploadProductImages(productImagePicker?.getFiles?.() || []);
                     const variants = await collectProductVariantRows(form);
                     await fetchJSON("/chatbot/products", {
                         method: "POST",
@@ -1829,6 +1870,7 @@
                     });
                     form.reset();
                     if (labelChips) labelChips.innerHTML = "";
+                    productImagePicker?.clear?.();
                     const variantList = section.querySelector("#product-variant-list");
                     if (variantList) variantList.innerHTML = "";
                     closeProductDialog();

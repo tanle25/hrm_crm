@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import mimetypes
 import os
@@ -173,15 +174,34 @@ def _vision_description_text(payload: dict) -> str:
 async def _describe_catalog_image(image_url: str, title: str = "") -> str:
     if not image_url:
         return ""
+    local_image = _chatbot_media_local_file(image_url)
+    image_base64 = None
+    mime_type = "image/jpeg"
+    if local_image and local_image.exists():
+        image_base64 = base64.b64encode(local_image.read_bytes()).decode("ascii")
+        mime_type = mimetypes.guess_type(local_image.name)[0] or "image/jpeg"
+        image_url = ""
     payload = await _call_vision(
         VisionDescribeRequest(
-            image_url=image_url,
+            image_url=image_url or None,
+            image_base64=image_base64,
+            mime_type=mime_type,
             prompt=_vision_product_prompt(title),
             max_tokens=800,
             temperature=0,
         )
     )
     return _vision_description_text(payload)
+
+
+def _chatbot_media_local_file(image_url: str) -> Path | None:
+    marker = "/public/chatbot-product-media/"
+    if marker not in str(image_url or ""):
+        return None
+    filename = str(image_url).split(marker, 1)[1].split("?", 1)[0].split("#", 1)[0]
+    if "/" in filename or "\\" in filename or not filename:
+        return None
+    return CHATBOT_PRODUCT_MEDIA_DIR / filename
 
 
 def _has_summary_for_url(product: dict, image_url: str) -> bool:

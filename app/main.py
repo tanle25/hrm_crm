@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 from contextlib import suppress
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -449,6 +450,34 @@ async def _resolve_sites(site_ids: list[str]) -> list[dict]:
     return sites
 
 
+def _website_publish_schedule(index: int, daily_limit: int) -> dict:
+    daily_limit = max(0, min(int(daily_limit or 0), 100))
+    if daily_limit <= 0:
+        return {}
+    vn_tz = timezone(timedelta(hours=7))
+    now = datetime.now(vn_tz)
+    # Start tomorrow to avoid dumping the first batch into the current day.
+    day_offset = 1 + (index // daily_limit)
+    slot_index = index % daily_limit
+    start_hour = 9
+    end_hour = 18
+    if daily_limit == 1:
+        publish_time = time(hour=start_hour, minute=0)
+    else:
+        total_minutes = (end_hour - start_hour) * 60
+        publish_minute = round((slot_index * total_minutes) / max(daily_limit - 1, 1))
+        publish_time = time(hour=start_hour + publish_minute // 60, minute=publish_minute % 60)
+    scheduled = datetime.combine((now + timedelta(days=day_offset)).date(), publish_time, tzinfo=vn_tz)
+    if scheduled <= now + timedelta(minutes=15):
+        scheduled = now + timedelta(minutes=20)
+    return {
+        "scheduled_publish_at": scheduled.isoformat(),
+        "scheduled_publish_at_gmt": scheduled.astimezone(timezone.utc).replace(tzinfo=None).isoformat(),
+        "daily_publish_limit": daily_limit,
+        "schedule_index": index,
+    }
+
+
 async def _enqueue_multi_site_batch(
     *,
     urls: list[str],
@@ -460,10 +489,12 @@ async def _enqueue_multi_site_batch(
     publish_status: str,
     source_origin: str = "",
     source_seed: dict | None = None,
+    daily_publish_limit: int = 0,
 ) -> SubmitBatchResponse:
     batch_id = create_job_id()
     master_job_ids: list[str] = []
     child_job_ids: list[str] = []
+    schedule_index = 0
 
     if len(sites) == 1:
         site = sites[0]
@@ -486,6 +517,9 @@ async def _enqueue_multi_site_batch(
             state["batch_id"] = batch_id
             state["workflow_role"] = "standard"
             state["site_name"] = site.get("site_name", "")
+            if publish_status == "publish" and source_origin in {"website_article_url", "website_keyword"}:
+                state.update(_website_publish_schedule(schedule_index, daily_publish_limit))
+                schedule_index += 1
             update_job(job_id, state)
             queue_name = enqueue_saved_state(job_id, state)
             if queue_name == "inline":
@@ -521,6 +555,9 @@ async def _enqueue_multi_site_batch(
                 state["batch_id"] = batch_id
                 state["workflow_role"] = "standard"
                 state["site_name"] = site.get("site_name", "")
+                if publish_status == "publish" and source_origin in {"website_article_url", "website_keyword"}:
+                    state.update(_website_publish_schedule(schedule_index, daily_publish_limit))
+                    schedule_index += 1
                 update_job(job_id, state)
                 queue_name = enqueue_saved_state(job_id, state)
                 if queue_name == "inline":
@@ -582,6 +619,9 @@ async def _enqueue_multi_site_batch(
             child_state["parent_job_id"] = master_job_id
             child_state["workflow_role"] = "shared_publish_child"
             child_state["site_name"] = site.get("site_name", "")
+            if publish_status == "publish" and source_origin in {"website_article_url", "website_keyword"}:
+                child_state.update(_website_publish_schedule(schedule_index, daily_publish_limit))
+                schedule_index += 1
             update_job(child_job_id, child_state)
             child_job_ids.append(child_job_id)
             master_state.setdefault("child_job_ids", []).append(child_job_id)
@@ -606,12 +646,14 @@ async def _enqueue_website_keyword_batch(
     priority: str,
     publish_status: str,
     brief: str = "",
+    daily_publish_limit: int = 0,
 ) -> SubmitBatchResponse:
     batch_id = create_job_id()
     master_job_ids: list[str] = []
     child_job_ids: list[str] = []
+    schedule_index = 0
 
-    async def enqueue_standard(keyword: str, site: dict, mode: str) -> str:
+    async def enqueue_standard(keyword: str, site: dict, mode: str, index: int) -> str:
         payload = PipelineState(
             url=f"keyword://{keyword}",
             site_id=str(site.get("site_id") or ""),
@@ -630,6 +672,8 @@ async def _enqueue_website_keyword_batch(
         state["batch_id"] = batch_id
         state["workflow_role"] = "standard"
         state["site_name"] = site.get("site_name", "")
+        if publish_status == "publish":
+            state.update(_website_publish_schedule(index, daily_publish_limit))
         update_job(job_id, state)
         queue_name = enqueue_saved_state(job_id, state)
         if queue_name == "inline":
@@ -640,7 +684,8 @@ async def _enqueue_website_keyword_batch(
     if len(sites) == 1 or content_mode == "per-site":
         for keyword in keywords:
             for site in sites:
-                child_job_ids.append(await enqueue_standard(keyword, site, "per-site" if content_mode == "per-site" else content_mode))
+                child_job_ids.append(await enqueue_standard(keyword, site, "per-site" if content_mode == "per-site" else content_mode, schedule_index))
+                schedule_index += 1
         return SubmitBatchResponse(batch_id=batch_id, status="queued", total_jobs=len(child_job_ids), child_job_ids=child_job_ids)
 
     for keyword in keywords:
@@ -690,6 +735,9 @@ async def _enqueue_website_keyword_batch(
             child_state["parent_job_id"] = master_job_id
             child_state["workflow_role"] = "shared_publish_child"
             child_state["site_name"] = site.get("site_name", "")
+            if publish_status == "publish":
+                child_state.update(_website_publish_schedule(schedule_index, daily_publish_limit))
+                schedule_index += 1
             update_job(child_job_id, child_state)
             child_job_ids.append(child_job_id)
             master_state.setdefault("child_job_ids", []).append(child_job_id)
@@ -1327,6 +1375,7 @@ async def submit_website_posts(request: WebsitePostSubmitRequest) -> SubmitBatch
             priority=request.priority,
             publish_status=request.publish_status,
             source_origin="website_article_url",
+            daily_publish_limit=request.daily_publish_limit,
         )
 
     keywords = []
@@ -1347,6 +1396,7 @@ async def submit_website_posts(request: WebsitePostSubmitRequest) -> SubmitBatch
         priority=request.priority,
         publish_status=request.publish_status,
         brief=request.brief,
+        daily_publish_limit=request.daily_publish_limit,
     )
 
 

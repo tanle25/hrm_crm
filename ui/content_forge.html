@@ -2856,6 +2856,23 @@
                                 </div>
                             </div>
 
+                            <div id="submit-post-schedule-panel" class="hidden">
+                                <label class="text-[10px] font-bold text-hud-cyan uppercase-widest mb-2 flex items-center gap-2">
+                                    <i class="fa-solid fa-calendar-days"></i>
+                                    <span>Giới hạn đăng bài mỗi ngày</span>
+                                </label>
+                                <div class="hud-input px-4 py-3">
+                                    <div class="flex items-center gap-3">
+                                        <input id="submit-daily-publish-limit" type="number" min="0" max="100" value="5" class="hud-input w-28 px-3 py-2 text-sm"/>
+                                        <span class="text-xs text-white font-bold uppercase-wide">bài / ngày</span>
+                                        <span class="text-[10px] text-hud-muted">Chỉ áp dụng tab Bài viết khi chọn Publish. Nhập 0 để đăng ngay toàn bộ.</span>
+                                    </div>
+                                    <p class="text-[10px] text-hud-muted mt-2">
+                                        Ví dụ 100 keyword, giới hạn 5 bài/ngày thì hệ thống tạo lịch đăng rải trong 20 ngày trên WordPress.
+                                    </p>
+                                </div>
+                            </div>
+
                             <!-- Submit Buttons -->
                             <div class="flex gap-3">
                                 <button id="submit-enqueue" type="submit" class="btn-primary flex-1 py-3 text-sm uppercase tracking-[0.25em] flex items-center justify-center gap-3">

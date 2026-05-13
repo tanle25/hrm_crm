@@ -200,6 +200,7 @@ class WebsitePostSubmitRequest(BaseModel):
     priority: Literal["normal", "high"] = "normal"
     publish_status: Literal["draft", "publish"] = "draft"
     brief: str = ""
+    daily_publish_limit: int = 0
 
 
 class ShopeeEnqueueRequest(BaseModel):

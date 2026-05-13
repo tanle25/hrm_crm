@@ -6,6 +6,7 @@ import tempfile
 import re
 import unicodedata
 import xmlrpc.client
+from datetime import datetime, timezone
 from html import escape, unescape
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
@@ -997,6 +998,17 @@ def _build_website_post_payload(state: dict) -> dict:
             "_content_forge_source_origin": str(state.get("source_origin") or ""),
         },
     }
+    scheduled_gmt = str(state.get("scheduled_publish_at_gmt") or "").strip()
+    if status == "publish" and scheduled_gmt:
+        try:
+            scheduled_dt = datetime.fromisoformat(scheduled_gmt.replace("Z", "+00:00"))
+            if scheduled_dt.tzinfo is None:
+                scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
+            if scheduled_dt > datetime.now(timezone.utc):
+                payload["status"] = "future"
+                payload["date_gmt"] = scheduled_dt.replace(tzinfo=None).isoformat()
+        except ValueError:
+            pass
     if featured_media_id > 0:
         payload["featured_media"] = featured_media_id
     return payload

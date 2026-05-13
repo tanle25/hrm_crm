@@ -1054,6 +1054,7 @@
         const mode = document.querySelector('input[name="website-post-mode"]:checked')?.value || "urls";
         const isPost = tab === "post";
         document.getElementById("submit-post-mode-panel")?.classList.toggle("hidden", !isPost);
+        document.getElementById("submit-post-schedule-panel")?.classList.toggle("hidden", !isPost);
         document.getElementById("submit-url-panel")?.classList.toggle("hidden", isPost && mode !== "urls");
         document.getElementById("submit-keyword-panel")?.classList.toggle("hidden", !isPost || mode !== "keywords");
         const urlLabel = document.getElementById("submit-url-label");
@@ -1115,6 +1116,7 @@
         const mode = document.querySelector('input[name="website-post-mode"]:checked')?.value || "urls";
         const publishInput = document.querySelector('input[name="status"]:checked');
         const contentModeInput = document.querySelector('input[name="content-mode"]:checked');
+        const dailyPublishLimitInput = document.getElementById("submit-daily-publish-limit");
         if (!urlInput && !keywordInput) return;
         const urls = urlInput.value
             .split(/\r?\n/)
@@ -1163,6 +1165,7 @@
                         category_id: 1,
                         priority: "normal",
                         publish_status: publishInput?.value || "draft",
+                        daily_publish_limit: Math.max(0, Math.min(Number.parseInt(dailyPublishLimitInput?.value || "0", 10) || 0, 100)),
                     }),
                 });
             const focusJobId = (payload.master_job_ids || [])[0] || (payload.child_job_ids || [])[0];

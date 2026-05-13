@@ -307,8 +307,10 @@ def run(state: dict) -> dict:
     knowledge_facts = _clean_for_writer(state.get("knowledge_facts", [])[:knowledge_limit], state)
     knowledge_instruction = (
         "Với bài viết theo keyword, hãy lấy kiến thức RAG làm nguồn chính; chỉ dùng brief keyword để định hướng intent, không coi brief là nguồn dữ kiện đầy đủ.\n"
+        "Nếu knowledge facts chứa hướng dẫn SEO/GEO, hãy dùng như chỉ dẫn biên tập nội bộ, không trích nguyên văn và không đưa thuật ngữ kỹ thuật như SEO, GEO, CTA, FAQ, heading, checklist vào nội dung hiển thị.\n"
         if source_origin == "website_keyword"
         else "Với bài viết từ URL, hãy kết hợp dữ kiện nguồn và knowledge facts từ RAG; ưu tiên nguồn khi có xung đột.\n"
+        "Nếu knowledge facts chứa hướng dẫn SEO/GEO, hãy dùng như chỉ dẫn biên tập nội bộ, không trích nguyên văn và không đưa thuật ngữ kỹ thuật như SEO, GEO, CTA, FAQ, heading, checklist vào nội dung hiển thị.\n"
         if source_origin == "website_article_url"
         else ""
     )

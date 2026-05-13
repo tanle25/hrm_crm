@@ -130,9 +130,13 @@ def get_embedding_function(model_name: str, max_tokens: int | None = None) -> An
         def embed_documents(self, texts: List[str]) -> List[List[float]]:
             return self._encode(texts)
 
-        def embed_query(self, text: str | None = None, **kwargs: Any) -> List[float]:
-            query = text if text is not None else kwargs.get("input", "")
-            return self._encode([str(query)])[0]
+        def embed_query(self, text: str | None = None, **kwargs: Any) -> List[List[float]] | List[float]:
+            if "input" in kwargs:
+                query_input = kwargs.get("input") or []
+                if isinstance(query_input, list):
+                    return self._encode([str(item) for item in query_input])
+                return self._encode([str(query_input)])
+            return self._encode([str(text or "")])[0]
 
     return LocalSentenceTransformerEmbeddingFunction()
 

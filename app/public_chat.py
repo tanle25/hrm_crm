@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 from uuid import uuid4
@@ -14,6 +15,7 @@ from app.metrics import record_tokens
 
 settings = get_settings()
 router = APIRouter(prefix=f"{settings.api_prefix}/public/v1", tags=["public-chat"])
+PUBLIC_LLM_SEMAPHORE = asyncio.Semaphore(settings.public_llm_max_concurrency)
 
 
 class ChatMessage(BaseModel):
@@ -82,7 +84,7 @@ def _max_tokens(value: int | None) -> int:
     return max(1, min(int(value or 1024), 4096))
 
 
-def _call_router(model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float | None) -> dict[str, Any]:
+async def _call_router(model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float | None) -> dict[str, Any]:
     if not settings.router_base:
         raise HTTPException(status_code=503, detail="LLM router is not configured.")
     payload: dict[str, Any] = {
@@ -96,12 +98,13 @@ def _call_router(model: str, messages: list[dict[str, str]], max_tokens: int, te
     if settings.router_key:
         headers["Authorization"] = f"Bearer {settings.router_key}"
     try:
-        response = httpx.post(
-            f"{settings.router_base.rstrip('/')}/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=settings.llm_timeout_writer_sec,
-        )
+        timeout = httpx.Timeout(float(settings.llm_timeout_writer_sec), connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{settings.router_base.rstrip('/')}/chat/completions",
+                headers=headers,
+                json=payload,
+            )
         response.raise_for_status()
     except httpx.HTTPStatusError as error:
         detail = error.response.text[:500] if error.response is not None else str(error)
@@ -127,7 +130,14 @@ async def public_chat_completions(request: ChatCompletionRequest) -> dict[str, A
     resolved_model = _resolve_model(public_model)
     messages = _validated_messages(request.messages)
     max_tokens = _max_tokens(request.max_tokens)
-    data = _call_router(resolved_model, messages, max_tokens, request.temperature)
+    try:
+        await asyncio.wait_for(PUBLIC_LLM_SEMAPHORE.acquire(), timeout=0.1)
+    except asyncio.TimeoutError as error:
+        raise HTTPException(status_code=429, detail="Public LLM is busy. Please retry shortly.") from error
+    try:
+        data = await _call_router(resolved_model, messages, max_tokens, request.temperature)
+    finally:
+        PUBLIC_LLM_SEMAPHORE.release()
     choices = data.get("choices") or []
     if not choices:
         raise HTTPException(status_code=502, detail="LLM router returned no choices.")

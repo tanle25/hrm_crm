@@ -78,6 +78,7 @@ class Settings:
     llm_timeout_qa_sec: int
     llm_router_retry_attempts: int
     llm_router_retry_backoff_ms: int
+    public_llm_max_concurrency: int
     llm_model_extract_planner: str
     llm_model_writer: str
     llm_model_humanizer: str
@@ -150,6 +151,7 @@ def get_settings() -> Settings:
         llm_timeout_qa_sec=_env_int("LLM_TIMEOUT_QA_SEC", _env_int("LLM_TIMEOUT_SEC", 120)),
         llm_router_retry_attempts=_env_int("LLM_ROUTER_RETRY_ATTEMPTS", 2),
         llm_router_retry_backoff_ms=_env_int("LLM_ROUTER_RETRY_BACKOFF_MS", 2000),
+        public_llm_max_concurrency=max(1, _env_int("PUBLIC_LLM_MAX_CONCURRENCY", 2)),
         llm_model_extract_planner=os.getenv("LLM_MODEL_EXTRACT_PLANNER", "cx/gpt-5.2"),
         llm_model_writer=os.getenv("LLM_MODEL_WRITER", "cx/gpt-5.2"),
         llm_model_humanizer=os.getenv("LLM_MODEL_HUMANIZER", "cx/gpt-5.2"),

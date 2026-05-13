@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 
 from app.llm import call_json
@@ -64,6 +65,11 @@ def _unique(values: list[str], limit: int) -> list[str]:
         if len(output) >= limit:
             break
     return output
+
+
+def _strip_accents(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    return normalized.encode("ascii", "ignore").decode("ascii")
 
 
 def _text_from_value(value: object) -> str:
@@ -145,11 +151,37 @@ def _normalize_faq(raw_faq: object, fallback: list[dict]) -> list[dict]:
         else:
             text = _text_from_value(item)
             question, answer = "", text
-        if question and answer:
+        if question and answer and not _contains_editorial_prompt_text(f"{question} {answer}"):
             faq_items.append({"question": question.strip(), "answer": answer.strip()})
     if faq_items:
         return faq_items[:6]
-    return fallback
+    return [item for item in fallback if not _contains_editorial_prompt_text(f"{item.get('question', '')} {item.get('answer', '')}")]
+
+
+def _contains_editorial_prompt_text(value: str) -> bool:
+    text = _strip_accents(value).lower()
+    return any(
+        marker in text
+        for marker in [
+            "viet bai seo",
+            "tu khoa chinh",
+            "muc tieu",
+            "cau truc heading",
+            "khong viet nhu trang san pham",
+            "woocommerce",
+            "website blog",
+            "seo geo",
+            "cta",
+        ]
+    )
+
+
+def _is_article_source(metadata: dict | None) -> bool:
+    metadata = metadata or {}
+    classification = metadata.get("source_classification") if isinstance(metadata.get("source_classification"), dict) else {}
+    source_type = str(classification.get("source_type") or metadata.get("source_type") or "").lower()
+    source_kind = str(classification.get("source_kind") or metadata.get("source_kind") or "").lower()
+    return source_type == "article" or source_kind in {"article", "keyword"}
 
 
 def _normalize_entities(raw_entities: object, components: list[str], fallback: dict) -> dict:
@@ -381,6 +413,12 @@ def run(clean_content: str, metadata: dict | None = None) -> dict:
         enriched_content = f"{enriched_content}\n\nGiá hiển thị từ nguồn: {hints['price_text']}"
 
     fallback = _heuristic_extract(clean_content, metadata)
+    if _is_article_source(metadata):
+        fallback["faq_items"] = []
+        fallback["buyer_objections"] = []
+        fallback["product_components"] = []
+        fallback["product_use_cases"] = []
+        fallback["product_attributes"] = []
     prompt = f"Metadata:\n{metadata}\n\nNội dung nguồn:\n{enriched_content[:4200]}"
     data = call_json("extractor", EXTRACTOR_SYSTEM_PROMPT, prompt, fallback=fallback, max_tokens=800)
 

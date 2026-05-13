@@ -233,11 +233,35 @@ def _append_faq_if_missing(html_text: str, faq_items: list[dict]) -> str:
             continue
         question = _clean_phrase(str(item.get("question") or ""))
         answer = _clean_phrase(str(item.get("answer") or ""))
+        if _contains_editorial_meta_text(f"{question} {answer}"):
+            continue
         if question and answer:
             blocks.append(f"<h3>{escape(question)}</h3><p>{escape(answer)}</p>")
     if not blocks:
         return html_text
     return html_text + "\n<section><h2>Câu hỏi thường gặp</h2>" + "".join(blocks) + "</section>"
+
+
+def _contains_editorial_meta_text(value: str) -> bool:
+    normalized = re.sub(r"\s+", " ", unescape(value or "")).lower()
+    return any(
+        marker in normalized
+        for marker in [
+            "sản phẩm gồm những gì",
+            "sản phẩm này phù hợp cho ai",
+            "thông số hoặc quy cách đáng chú ý",
+            "viết bài seo",
+            "tu khoa chính",
+            "từ khóa chính",
+            "mục tiêu",
+            "cấu trúc heading",
+            "không viết như trang sản phẩm",
+            "woocommerce",
+            "website/blog",
+            "seo/g",
+            "cta",
+        ]
+    )
 
 
 def _sanitize_product_terms(html_text: str) -> str:

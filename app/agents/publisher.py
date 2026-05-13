@@ -1396,6 +1396,9 @@ def _strip_editorial_meta_blocks(html: str) -> str:
         r"cần những phần nào khi xây dựng nội dung",
         r"đây là bài viết\s+(?:blog|website)",
         r"không phải một trang giới thiệu sản phẩm",
+        r"sản phẩm gồm những gì",
+        r"sản phẩm này phù hợp cho ai",
+        r"thông số hoặc quy cách đáng chú ý là gì",
         r"cấu trúc\s+(?:seo|bài viết)",
         r"\bSEO\b",
         r"\bCTA\b",
@@ -1408,6 +1411,12 @@ def _strip_editorial_meta_blocks(html: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
     cleaned = re.sub(
+        rf"<h3\b[^>]*>.*?</h3>\s*<p\b[^>]*>[^<]*(?:{question_pattern})[^<]*</p>\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = re.sub(
         rf"<p\b[^>]*>[^<]*(?:{question_pattern})[^<]*</p>\s*",
         "",
         cleaned,
@@ -1415,6 +1424,12 @@ def _strip_editorial_meta_blocks(html: str) -> str:
     )
     cleaned = re.sub(r"\bFAQ\b", "câu hỏi thường gặp", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bCTA\b", "lời gợi ý", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"<section\b[^>]*>\s*<h2\b[^>]*>\s*Câu hỏi thường gặp\s*</h2>\s*</section>\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     return cleaned
 
 

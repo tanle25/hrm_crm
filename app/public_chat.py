@@ -112,6 +112,13 @@ def _vision_prompt(prompt: str | None) -> str:
     )
 
 
+def _vision_content(request: VisionDescribeRequest) -> list[dict[str, Any]]:
+    return [
+        {"type": "text", "text": _vision_prompt(request.prompt)},
+        _vision_image_part(request),
+    ]
+
+
 def _vision_image_part(request: VisionDescribeRequest) -> dict[str, Any]:
     image_url = str(request.image_url or "").strip()
     if image_url:
@@ -176,10 +183,7 @@ async def _call_openrouter_vision(request: VisionDescribeRequest) -> dict[str, A
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": _vision_prompt(request.prompt)},
-                    _vision_image_part(request),
-                ],
+                "content": _vision_content(request),
             }
         ],
         "max_tokens": _vision_max_tokens(request.max_tokens),
@@ -210,6 +214,48 @@ async def _call_openrouter_vision(request: VisionDescribeRequest) -> dict[str, A
     usage = data.get("usage") or {}
     record_tokens("public_vision", int(usage.get("total_tokens") or 0))
     return data
+
+
+async def _call_router_vision(request: VisionDescribeRequest) -> dict[str, Any]:
+    if not settings.router_base:
+        raise HTTPException(status_code=503, detail="LLM router is not configured.")
+    model = str(request.model or settings.vision_model).strip() or settings.vision_model
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": _vision_content(request)}],
+        "max_tokens": _vision_max_tokens(request.max_tokens),
+        "temperature": max(0.0, min(float(request.temperature if request.temperature is not None else 0.2), 2.0)),
+    }
+    headers = {"Content-Type": "application/json"}
+    if settings.router_key:
+        headers["Authorization"] = f"Bearer {settings.router_key}"
+    try:
+        timeout = httpx.Timeout(float(settings.vision_timeout_sec), connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{settings.router_base.rstrip('/')}/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        detail = error.response.text[:800] if error.response is not None else str(error)
+        raise HTTPException(status_code=502, detail=f"Vision router failed: {detail}") from error
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail=f"Vision router failed: {error}") from error
+
+    data = response.json()
+    usage = data.get("usage") or {}
+    record_tokens("public_vision", int(usage.get("total_tokens") or 0))
+    return data
+
+
+async def _call_vision(request: VisionDescribeRequest) -> dict[str, Any]:
+    if settings.vision_provider == "openrouter":
+        return await _call_openrouter_vision(request)
+    if settings.vision_provider in {"router", "cliproxy", "codex", "gpt"}:
+        return await _call_router_vision(request)
+    raise HTTPException(status_code=503, detail=f"Unsupported VISION_PROVIDER: {settings.vision_provider}")
 
 
 @router.get("/models")
@@ -254,7 +300,7 @@ async def public_vision_describe_image(request: VisionDescribeRequest) -> dict[s
     except asyncio.TimeoutError as error:
         raise HTTPException(status_code=429, detail="Public vision is busy. Please retry shortly.") from error
     try:
-        data = await _call_openrouter_vision(request)
+        data = await _call_vision(request)
     finally:
         PUBLIC_VISION_SEMAPHORE.release()
 
@@ -271,5 +317,5 @@ async def public_vision_describe_image(request: VisionDescribeRequest) -> dict[s
         "description": content,
         "choices": choices,
         "usage": data.get("usage") or {},
-        "provider": data.get("provider") or "openrouter",
+        "provider": data.get("provider") or settings.vision_provider,
     }

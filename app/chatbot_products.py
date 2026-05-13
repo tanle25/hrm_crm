@@ -59,6 +59,12 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", ascii_text).strip("-") or secrets.token_hex(4)
 
 
+def _normalize_search_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text or "")
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii").lower()
+    return re.sub(r"[^a-z0-9]+", " ", ascii_text).strip()
+
+
 def _clean_text(value: Any, limit: int = 5000) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip())[:limit]
 
@@ -640,8 +646,52 @@ def delete_catalog_product_vectors(product_id: str) -> dict[str, Any]:
 
 def search_catalog(query: str, limit: int = 8, available_only: bool = False) -> dict[str, Any]:
     where = {"availability_status": "available"} if available_only else None
-    results = search_documents(query, n_results=max(1, min(limit, 30)), where=where, collection_name=_catalog_collection_name())
-    return {"query": query, "total": len(results), "results": results}
+    safe_limit = max(1, min(limit, 30))
+    try:
+        results = search_documents(query, n_results=safe_limit, where=where, collection_name=_catalog_collection_name())
+        return {"query": query, "total": len(results), "results": results, "mode": "vector"}
+    except Exception as error:
+        results = _fallback_search_catalog(query, safe_limit, available_only)
+        return {
+            "query": query,
+            "total": len(results),
+            "results": results,
+            "mode": "fallback_text",
+            "_search_error": str(error),
+        }
+
+
+def _fallback_search_catalog(query: str, limit: int, available_only: bool = False) -> list[dict[str, Any]]:
+    terms = [term for term in re.split(r"\s+", _normalize_search_text(query)) if term]
+    if not terms:
+        return []
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for product in list_products(limit=10000).get("items", []):
+        if available_only and str(product.get("availability_status") or "") != "available":
+            continue
+        docs = _product_documents(product)
+        haystack = _normalize_search_text(
+            "\n".join([str(product.get("title") or ""), *[str(doc.get("document") or "") for doc in docs]])
+        )
+        score = sum(3 if term in haystack else 0 for term in terms)
+        if query and _normalize_search_text(query) in haystack:
+            score += 10
+        if score <= 0:
+            continue
+        best_doc = docs[0] if docs else {"id": str(product.get("product_id") or ""), "document": "", "metadata": {}}
+        scored.append(
+            (
+                score,
+                {
+                    "id": best_doc["id"],
+                    "document": best_doc["document"],
+                    "metadata": best_doc["metadata"],
+                    "score": score,
+                },
+            )
+        )
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [item for _, item in scored[:limit]]
 
 
 def catalog_rag_status() -> dict[str, Any]:

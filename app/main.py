@@ -70,6 +70,7 @@ from app.logging import get_logger
 from app.metrics import dlq_size, jobs_submitted, start_metrics_server_once
 from app.postgres import init_schema as init_postgres_schema, migrate_local_state as migrate_local_postgres_state
 from app.public_chat import router as public_chat_router
+from app.public_chat import VisionDescribeRequest, _call_vision
 from app.queue import create_job_id, enqueue_job, enqueue_saved_state, init_job_state, queue_is_full, update_job
 from app.rag_categories import create_category, list_categories
 from app.rag import delete_source_documents, get_source_documents, get_taxonomy_summary, list_rag_sources, search_knowledge
@@ -149,6 +150,88 @@ FACEBOOK_MESSAGE_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/public/facebook-message-media", StaticFiles(directory=FACEBOOK_MESSAGE_MEDIA_DIR), name="facebook-message-media")
 CHATBOT_PRODUCT_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/public/chatbot-product-media", StaticFiles(directory=CHATBOT_PRODUCT_MEDIA_DIR), name="chatbot-product-media")
+
+
+def _vision_product_prompt(title: str = "") -> str:
+    return (
+        "Bạn là hệ thống mô tả ảnh để tìm sản phẩm tương tự trong catalog. "
+        "TUYỆT ĐỐI không bịa tên sản phẩm, thương hiệu, model, chất liệu, công dụng, xuất xứ nếu không nhìn thấy rõ chữ hoặc bằng chứng trực tiếp trong ảnh. "
+        "Chỉ mô tả đặc điểm thị giác quan sát được. Nếu không chắc, ghi null hoặc 'không xác định'. "
+        f"Ngữ cảnh tên sản phẩm catalog nếu có: {title}. "
+        "Trả JSON thuần với schema: {\"visible_object\":\"\", \"object_type_guess\":\"\", \"confidence\":0-1, \"colors\":[], \"shape\":\"\", \"materials_visible\":\"\", \"visible_text\":[], \"logos\":[], \"packaging\":\"\", \"distinctive_features\":[], \"background_context\":\"\", \"search_keywords_vi\":[], \"do_not_assume\":[]}."
+    )
+
+
+def _vision_description_text(payload: dict) -> str:
+    choices = payload.get("choices") or []
+    if choices:
+        message = choices[0].get("message") or {}
+        return str(message.get("content") or message.get("reasoning") or "").strip()
+    return ""
+
+
+async def _describe_catalog_image(image_url: str, title: str = "") -> str:
+    if not image_url:
+        return ""
+    payload = await _call_vision(
+        VisionDescribeRequest(
+            image_url=image_url,
+            prompt=_vision_product_prompt(title),
+            max_tokens=800,
+            temperature=0,
+        )
+    )
+    return _vision_description_text(payload)
+
+
+def _has_summary_for_url(product: dict, image_url: str) -> bool:
+    for item in product.get("image_summaries") or []:
+        if isinstance(item, dict) and str(item.get("image_url") or item.get("url") or "") == image_url and str(item.get("summary") or "").strip():
+            return True
+    return False
+
+
+async def _enrich_product_vision_and_reindex(product_id: str) -> None:
+    product = await asyncio.to_thread(get_chatbot_product, product_id)
+    if not product:
+        return
+    changed = False
+    title = str(product.get("title") or "")
+    image_summaries = list(product.get("image_summaries") or [])
+    for image_url in list(product.get("images") or [])[:6]:
+        image_url = str(image_url or "").strip()
+        if not image_url or _has_summary_for_url(product, image_url):
+            continue
+        with suppress(Exception):
+            summary = await _describe_catalog_image(image_url, title)
+            if summary:
+                image_summaries.append({"image_url": image_url, "summary": summary})
+                changed = True
+    product["image_summaries"] = image_summaries
+
+    for variant in product.get("variants") or []:
+        image_url = str(variant.get("image_url") or "").strip()
+        if not image_url or str(variant.get("image_summary") or "").strip():
+            continue
+        with suppress(Exception):
+            summary = await _describe_catalog_image(image_url, f"{title} {variant.get('name') or ''}".strip())
+            if summary:
+                variant["image_summary"] = summary
+                changed = True
+
+    if changed:
+        product["rag_dirty"] = True
+        product = await asyncio.to_thread(upsert_chatbot_product, product, product_id)
+    await asyncio.to_thread(reindex_chatbot_catalog, product["product_id"], False)
+
+
+async def _enrich_catalog_vision_and_reindex(product_id: str | None = None, limit: int = 50) -> None:
+    if product_id:
+        await _enrich_product_vision_and_reindex(product_id)
+        return
+    payload = await asyncio.to_thread(list_chatbot_products, None, "", "", max(1, min(limit, 200)))
+    for product in payload.get("items") or []:
+        await _enrich_product_vision_and_reindex(str(product.get("product_id") or ""))
 
 
 AUTH_EXEMPT_PATHS = {
@@ -1328,6 +1411,16 @@ async def chatbot_products_reindex(request: Request) -> dict:
     )
 
 
+@app.post(f"{settings.api_prefix}/chatbot/products/enrich-vision")
+async def chatbot_products_enrich_vision(request: Request, background_tasks: BackgroundTasks) -> dict:
+    content_type = str(request.headers.get("content-type") or "").lower()
+    payload = await request.json() if content_type.startswith("application/json") else {}
+    product_id = str(payload.get("product_id") or "").strip() or None
+    limit = max(1, min(int(payload.get("limit") or 50), 200))
+    background_tasks.add_task(_enrich_catalog_vision_and_reindex, product_id, limit)
+    return {"queued": True, "product_id": product_id, "limit": limit}
+
+
 @app.get(f"{settings.api_prefix}/chatbot/products/search")
 async def chatbot_products_search(q: str, limit: int = 8, available_only: bool = False) -> dict:
     if not q.strip():
@@ -1365,7 +1458,7 @@ async def chatbot_product_create(request: Request, background_tasks: BackgroundT
         product = await asyncio.to_thread(upsert_chatbot_product, payload)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    background_tasks.add_task(reindex_chatbot_catalog, product["product_id"], False)
+    background_tasks.add_task(_enrich_product_vision_and_reindex, product["product_id"])
     return product
 
 
@@ -1384,7 +1477,7 @@ async def chatbot_product_update(product_id: str, request: Request, background_t
         product = await asyncio.to_thread(upsert_chatbot_product, payload, product_id)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    background_tasks.add_task(reindex_chatbot_catalog, product["product_id"], False)
+    background_tasks.add_task(_enrich_product_vision_and_reindex, product["product_id"])
     return product
 
 
@@ -1404,7 +1497,7 @@ async def chatbot_product_toggle(product_id: str, request: Request, background_t
         product = await asyncio.to_thread(toggle_chatbot_product, product_id, bool(payload.get("is_active")))
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    background_tasks.add_task(reindex_chatbot_catalog, product["product_id"], False)
+    background_tasks.add_task(_enrich_product_vision_and_reindex, product["product_id"])
     return product
 
 
@@ -1415,7 +1508,7 @@ async def chatbot_product_variant_toggle(product_id: str, variant_id: str, reque
         product = await asyncio.to_thread(toggle_chatbot_product_variant, product_id, variant_id, bool(payload.get("is_active")))
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    background_tasks.add_task(reindex_chatbot_catalog, product["product_id"], False)
+    background_tasks.add_task(_enrich_product_vision_and_reindex, product["product_id"])
     return product
 
 

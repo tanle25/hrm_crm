@@ -158,6 +158,25 @@ def _metadata_csv(values: Any) -> str:
     return ", ".join(_clean_list(values))
 
 
+def _image_summary_lines(items: Any) -> list[str]:
+    if isinstance(items, str):
+        return [items] if items.strip() else []
+    if not isinstance(items, list):
+        return []
+    lines: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            url = str(item.get("image_url") or item.get("url") or "").strip()
+            summary = str(item.get("summary") or item.get("description") or "").strip()
+            keywords = _metadata_csv(item.get("visual_keywords") or item.get("keywords") or [])
+            parts = [part for part in [url, summary, keywords] if part]
+            if parts:
+                lines.append(" | ".join(parts))
+        elif str(item or "").strip():
+            lines.append(str(item).strip())
+    return lines
+
+
 def _product_document(product: dict[str, Any]) -> str:
     variants = product.get("variants") or []
     variant_lines = []
@@ -177,6 +196,7 @@ def _product_document(product: dict[str, Any]) -> str:
         f"Mô tả chi tiết: {product.get('description')}",
         f"Thuộc tính: {_metadata_csv(product.get('attributes') or {})}",
         f"Ảnh: {', '.join(product.get('images') or [])}",
+        f"Mô tả thị giác ảnh sản phẩm: {'; '.join(_image_summary_lines(product.get('image_summaries')))}",
         "Biến thể và trạng thái:",
         "\n".join(variant_lines),
     ]
@@ -195,6 +215,7 @@ def _variant_document(product: dict[str, Any], variant: dict[str, Any]) -> str:
         f"Nhãn biến thể: {', '.join(variant.get('labels') or [])}",
         f"Thuộc tính biến thể: {_metadata_csv(variant.get('attributes') or {})}",
         f"Ảnh biến thể: {variant.get('image_url')}",
+        f"Mô tả thị giác ảnh biến thể: {variant.get('image_summary')}",
         f"Mô tả sản phẩm: {product.get('short_description') or product.get('description')}",
     ]
     return "\n".join(str(line or "").strip() for line in lines if str(line or "").strip())
@@ -212,6 +233,7 @@ def _product_documents(product: dict[str, Any]) -> list[dict[str, Any]]:
         "category_name": str(product.get("category_name") or ""),
         "brand": str(product.get("brand") or ""),
         "labels": ", ".join(product.get("labels") or []),
+        "image_summaries": " | ".join(_image_summary_lines(product.get("image_summaries"))),
         "currency": str(product.get("currency") or "VND"),
         "availability_status": str(product.get("availability_status") or _availability(product.get("is_active", True))),
         "is_active": bool(product.get("is_active", True)),
@@ -285,6 +307,7 @@ def _normalize_variant(raw: dict[str, Any], index: int = 0, existing: dict[str, 
         "compare_at_price": _safe_int(raw.get("compare_at_price") if "compare_at_price" in raw else existing.get("compare_at_price")),
         "currency": _clean_text(raw.get("currency") or existing.get("currency") or "VND", 12).upper(),
         "image_url": _clean_text(raw.get("image_url") or raw.get("image") or existing.get("image_url"), 1200),
+        "image_summary": _clean_text(raw.get("image_summary") if "image_summary" in raw else existing.get("image_summary"), 4000),
         "attributes": attributes,
         "labels": labels,
         "is_active": is_active,
@@ -323,6 +346,7 @@ def _normalize_product(payload: dict[str, Any], existing: dict[str, Any] | None 
         "brand": _clean_text(payload.get("brand") if "brand" in payload else existing.get("brand"), 160),
         "labels": _clean_list(payload.get("labels") if "labels" in payload else existing.get("labels")),
         "images": _clean_list(payload.get("images") if "images" in payload else existing.get("images")),
+        "image_summaries": payload.get("image_summaries") if isinstance(payload.get("image_summaries"), list) else existing.get("image_summaries") or [],
         "attributes": payload.get("attributes") if isinstance(payload.get("attributes"), dict) else existing.get("attributes") or {},
         "variants": variants,
         "is_active": is_active,

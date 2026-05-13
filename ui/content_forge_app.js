@@ -1487,22 +1487,67 @@
         const rows = Array.from(form.querySelectorAll(".variant-combo-row"));
         const output = [];
         for (const [index, row] of rows.entries()) {
-            const name = row.dataset.variantName || row.querySelector(".variant-name")?.value?.trim() || "";
+            const name = row.querySelector(".variant-name")?.value?.trim() || row.dataset.variantName || "";
             const price = Number(row.querySelector(".variant-price")?.value || 0) || 0;
             const file = row.querySelector(".variant-image-input")?.files?.[0];
             const attributes = JSON.parse(row.dataset.attributes || "{}");
-            if (!name && !price && !Object.keys(attributes).length && !file) continue;
+            const existingImageUrl = row.dataset.existingImageUrl || "";
+            const variantId = row.dataset.variantId || "";
+            if (!name && !price && !Object.keys(attributes).length && !file && !existingImageUrl) continue;
             const uploaded = file ? await uploadProductImages([file]) : [];
-            output.push({
+            const item = {
                 name: name || `Biến thể ${index + 1}`,
                 price,
                 attributes,
-                image_url: uploaded[0] || "",
+                image_url: uploaded[0] || existingImageUrl,
                 is_active: row.querySelector(".variant-active")?.value !== "false",
                 sort_order: index,
-            });
+            };
+            if (variantId) item.variant_id = variantId;
+            output.push(item);
         }
         return output;
+    }
+
+    function renderExistingProductVariants(section, variants) {
+        const comboList = section.querySelector("#product-variant-list");
+        if (!comboList) return;
+        comboList.innerHTML = (variants || []).length ? (variants || []).map((variant, index) => {
+            const attributes = variant.attributes || {};
+            const label = variant.name || `Biến thể ${index + 1}`;
+            const imageUrl = variant.image_url || "";
+            return `
+                <div class="variant-combo-row border border-hud-amber/20 bg-black/20 p-3" data-variant-id="${escapeHtml(variant.variant_id || "")}" data-variant-name="${escapeHtml(label)}" data-existing-image-url="${escapeHtml(imageUrl)}" data-attributes="${escapeHtml(JSON.stringify(attributes))}">
+                    <div class="grid grid-cols-1 md:grid-cols-[96px_1fr_130px_110px] gap-3 items-end">
+                        <div>
+                            <label class="text-[8px] text-hud-muted uppercase-widest font-bold">Ảnh</label>
+                            <label class="mt-1 w-20 h-20 border border-hud-amber/25 bg-black/30 flex items-center justify-center overflow-hidden cursor-pointer">
+                                <img class="variant-image-preview ${imageUrl ? "" : "hidden"} w-full h-full object-cover" src="${escapeHtml(imageUrl)}" alt="variant preview"/>
+                                <i class="variant-image-empty fa-solid fa-image text-hud-amber/50 ${imageUrl ? "hidden" : ""}"></i>
+                                <input type="file" accept="image/*" class="variant-image-input hidden"/>
+                            </label>
+                        </div>
+                        <div>
+                            <label class="text-[8px] text-hud-muted uppercase-widest font-bold">Tên biến thể</label>
+                            <input class="variant-name hud-input w-full px-3 py-2 text-xs mt-1" value="${escapeHtml(label)}"/>
+                            <div class="text-[10px] text-hud-muted mt-1">${Object.entries(attributes).map(([key, val]) => `${escapeHtml(key)}=${escapeHtml(val)}`).join(" · ")}</div>
+                        </div>
+                        <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Giá</label><input class="variant-price hud-input w-full px-3 py-2 text-xs mt-1" type="number" min="0" value="${escapeHtml(variant.price || "")}"/></div>
+                        <div><label class="text-[8px] text-hud-muted uppercase-widest font-bold">Trạng thái</label><select class="variant-active hud-select w-full px-2 py-2 text-xs mt-1"><option value="true" ${variant.is_active === false ? "" : "selected"}>Còn</option><option value="false" ${variant.is_active === false ? "selected" : ""}>Hết</option></select></div>
+                    </div>
+                </div>
+            `;
+        }).join("") : `<div class="text-[11px] text-hud-muted border border-hud-amber/15 bg-black/20 p-4">Sản phẩm chưa có biến thể.</div>`;
+        comboList.querySelectorAll(".variant-image-input").forEach((input) => input.addEventListener("change", (event) => {
+            const row = event.target.closest(".variant-combo-row");
+            const file = event.target.files?.[0];
+            const preview = row?.querySelector(".variant-image-preview");
+            const empty = row?.querySelector(".variant-image-empty");
+            if (!file || !preview || !empty) return;
+            preview.src = URL.createObjectURL(file);
+            preview.classList.remove("hidden");
+            empty.classList.add("hidden");
+        }));
     }
 
     function bindProductVariantBuilder(section) {
@@ -1691,7 +1736,7 @@
                                 </div>
                                 <div class="overflow-x-auto">
                                     <table class="hud-table min-w-[940px]">
-                                        <thead><tr><th class="w-[76px]">ẢNH</th><th>TÊN SẢN PHẨM</th><th class="w-[150px]">DANH MỤC</th><th class="w-[120px] text-right">GIÁ</th><th class="w-[100px]">RAG</th><th class="w-[110px]">STATUS</th><th class="w-[110px]"></th></tr></thead>
+                                        <thead><tr><th class="w-[76px]">ẢNH</th><th>TÊN SẢN PHẨM</th><th class="w-[150px]">DANH MỤC</th><th class="w-[120px] text-right">GIÁ</th><th class="w-[100px]">RAG</th><th class="w-[110px]">STATUS</th><th class="w-[150px]"></th></tr></thead>
                                         <tbody>
                                             ${items.map((item) => {
                                                 const image = (item.images || [])[0] || "";
@@ -1709,7 +1754,7 @@
                                                         <td class="text-right font-mono text-hud-amber font-bold">${escapeHtml(shopeePrice(item.price, item.currency || "VND"))}</td>
                                                         <td>${item.rag_dirty ? `<span class="badge amber">DIRTY</span>` : `<span class="badge green">SYNCED</span>`}</td>
                                                         <td>${productStatusBadge(item)}</td>
-                                                        <td><div class="flex gap-2 justify-end"><button class="product-toggle btn-ghost px-2 py-1 text-[10px]" data-product-id="${escapeHtml(item.product_id)}" data-next-active="${item.is_active ? "false" : "true"}">${item.is_active ? "TẮT" : "BẬT"}</button><button class="product-delete text-hud-red hover:text-white text-xs" data-product-id="${escapeHtml(item.product_id)}"><i class="fa-solid fa-trash"></i></button></div></td>
+                                                        <td><div class="flex gap-2 justify-end"><button class="product-edit btn-ghost px-2 py-1 text-[10px]" data-product-id="${escapeHtml(item.product_id)}"><i class="fa-solid fa-pen"></i></button><button class="product-toggle btn-ghost px-2 py-1 text-[10px]" data-product-id="${escapeHtml(item.product_id)}" data-next-active="${item.is_active ? "false" : "true"}">${item.is_active ? "TẮT" : "BẬT"}</button><button class="product-delete text-hud-red hover:text-white text-xs" data-product-id="${escapeHtml(item.product_id)}"><i class="fa-solid fa-trash"></i></button></div></td>
                                                     </tr>
                                                 `;
                                             }).join("") || `<tr><td colspan="7" class="text-center text-hud-muted py-8">Chưa có sản phẩm. Thêm sản phẩm đầu tiên để chatbot có catalog tư vấn.</td></tr>`}
@@ -1726,7 +1771,7 @@
                         <span class="c-tl"></span><span class="c-br"></span>
                         <div class="header-strip px-5 py-4 flex items-center gap-2 sticky top-0 z-10">
                             <i class="fa-solid fa-box-open text-hud-amber"></i>
-                            <span class="font-display font-black text-xs text-white uppercase-widest">THÊM SẢN PHẨM CHATBOT</span>
+                            <span id="product-dialog-title" class="font-display font-black text-xs text-white uppercase-widest">THÊM SẢN PHẨM CHATBOT</span>
                             <button id="product-dialog-close" class="ml-auto text-hud-amber hover:text-white"><i class="fa-solid fa-xmark"></i></button>
                         </div>
                         <form id="product-create-form" class="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1792,7 +1837,7 @@
                             <div id="product-create-feedback" class="md:col-span-2 text-[11px] text-hud-muted"></div>
                             <div class="md:col-span-2 flex justify-end gap-3 border-t border-hud-amber/15 pt-4">
                                 <button id="product-dialog-cancel" type="button" class="btn-ghost px-4 py-2 text-xs uppercase-wide font-bold">HỦY</button>
-                                <button class="btn-primary px-5 py-2 text-xs uppercase-wide font-bold" style="background:#ffaa00;border-color:#ffaa00;color:#000;"><i class="fa-solid fa-save"></i> LƯU SẢN PHẨM</button>
+                                <button id="product-submit-button" class="btn-primary px-5 py-2 text-xs uppercase-wide font-bold" style="background:#ffaa00;border-color:#ffaa00;color:#000;"><i class="fa-solid fa-save"></i> LƯU SẢN PHẨM</button>
                             </div>
                         </form>
                     </div>
@@ -1829,15 +1874,34 @@
             });
             const productDialog = section.querySelector("#product-dialog");
             const productBackdrop = section.querySelector("#product-dialog-backdrop");
+            const productForm = section.querySelector("#product-create-form");
+            const productDialogTitle = section.querySelector("#product-dialog-title");
+            const productSubmitButton = section.querySelector("#product-submit-button");
             const openProductDialog = () => {
                 productDialog?.classList.remove("hidden");
                 productBackdrop?.classList.remove("hidden");
+            };
+            const resetProductDialog = () => {
+                productForm?.reset();
+                if (productForm) {
+                    delete productForm.dataset.editingProductId;
+                    delete productForm.dataset.existingActive;
+                }
+                if (productDialogTitle) productDialogTitle.textContent = "THÊM SẢN PHẨM CHATBOT";
+                if (productSubmitButton) productSubmitButton.innerHTML = `<i class="fa-solid fa-save"></i> LƯU SẢN PHẨM`;
+                if (labelChips) labelChips.innerHTML = "";
+                productImagePicker?.clear?.();
+                const variantList = section.querySelector("#product-variant-list");
+                if (variantList) variantList.innerHTML = "";
             };
             const closeProductDialog = () => {
                 productDialog?.classList.add("hidden");
                 productBackdrop?.classList.add("hidden");
             };
-            section.querySelector("#product-open-dialog")?.addEventListener("click", openProductDialog);
+            section.querySelector("#product-open-dialog")?.addEventListener("click", () => {
+                resetProductDialog();
+                openProductDialog();
+            });
             section.querySelector("#product-dialog-close")?.addEventListener("click", closeProductDialog);
             section.querySelector("#product-dialog-cancel")?.addEventListener("click", closeProductDialog);
             productBackdrop?.addEventListener("click", closeProductDialog);
@@ -1859,6 +1923,23 @@
             }));
             const productImagePicker = bindProductImagePreview(section);
             bindProductVariantBuilder(section);
+            const populateProductDialog = (product) => {
+                resetProductDialog();
+                if (!productForm || !product) return;
+                productForm.dataset.editingProductId = product.product_id || "";
+                productForm.dataset.existingActive = String(product.is_active !== false);
+                if (productDialogTitle) productDialogTitle.textContent = "SỬA SẢN PHẨM CHATBOT";
+                if (productSubmitButton) productSubmitButton.innerHTML = `<i class="fa-solid fa-save"></i> CẬP NHẬT SẢN PHẨM`;
+                productForm.elements.title.value = product.title || "";
+                productForm.elements.sku.value = product.sku || "";
+                productForm.elements.category_id.value = product.category_id || "";
+                productForm.elements.price.value = product.price || "";
+                productForm.elements.short_description.value = product.short_description || "";
+                productForm.elements.description.value = product.description || "";
+                productForm.elements.images.value = (product.images || []).join("\n");
+                (product.labels || []).forEach((label) => addProductLabelChip(labelChips, label));
+                renderExistingProductVariants(section, product.variants || []);
+            };
             section.querySelector("#product-create-form")?.addEventListener("submit", async (event) => {
                 event.preventDefault();
                 const form = event.currentTarget;
@@ -1866,12 +1947,13 @@
                 const formData = new FormData(form);
                 const categoryId = String(formData.get("category_id") || "");
                 const category = categoryMap.get(categoryId) || {};
+                const editingProductId = form.dataset.editingProductId || "";
                 try {
-                    if (feedback) feedback.textContent = "Đang upload ảnh và thêm sản phẩm...";
+                    if (feedback) feedback.textContent = editingProductId ? "Đang upload ảnh và cập nhật sản phẩm..." : "Đang upload ảnh và thêm sản phẩm...";
                     const productImageUrls = await uploadProductImages(productImagePicker?.getFiles?.() || []);
                     const variants = await collectProductVariantRows(form);
-                    await fetchJSON("/chatbot/products", {
-                        method: "POST",
+                    await fetchJSON(editingProductId ? `/chatbot/products/${encodeURIComponent(editingProductId)}` : "/chatbot/products", {
+                        method: editingProductId ? "PUT" : "POST",
                         body: JSON.stringify({
                             title: formData.get("title"),
                             sku: formData.get("sku"),
@@ -1882,20 +1964,26 @@
                             images: [...productImageUrls, ...String(formData.get("images") || "").split(/\n|,/).map((item) => item.trim()).filter(Boolean)],
                             short_description: formData.get("short_description"),
                             description: formData.get("description"),
+                            is_active: form.dataset.existingActive !== "false",
                             variants,
                         }),
                     });
-                    form.reset();
-                    if (labelChips) labelChips.innerHTML = "";
-                    productImagePicker?.clear?.();
-                    const variantList = section.querySelector("#product-variant-list");
-                    if (variantList) variantList.innerHTML = "";
+                    resetProductDialog();
                     closeProductDialog();
                     await renderProductsPage();
                 } catch (error) {
-                    if (feedback) feedback.textContent = `Thêm thất bại: ${error.message}`;
+                    if (feedback) feedback.textContent = `${editingProductId ? "Cập nhật" : "Thêm"} thất bại: ${error.message}`;
                 }
             });
+            section.querySelectorAll(".product-edit").forEach((button) => button.addEventListener("click", async () => {
+                try {
+                    const product = await fetchJSON(`/chatbot/products/${encodeURIComponent(button.dataset.productId || "")}`);
+                    populateProductDialog(product);
+                    openProductDialog();
+                } catch (error) {
+                    alert(`Không tải được sản phẩm: ${error.message}`);
+                }
+            }));
             section.querySelectorAll(".product-toggle").forEach((button) => button.addEventListener("click", async () => {
                 await fetchJSON(`/chatbot/products/${encodeURIComponent(button.dataset.productId || "")}/toggle`, { method: "POST", body: JSON.stringify({ is_active: button.dataset.nextActive === "true" }) });
                 await renderProductsPage();

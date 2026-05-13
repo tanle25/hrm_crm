@@ -36,7 +36,9 @@ Nếu nguồn là product:
 Nếu không phải product:
 - Không dùng TL;DR hoặc nhãn "Tóm tắt nhanh"; mở bài phải bắt đầu tự nhiên bằng focus keyword trong câu đầu.
 - Focus keyword phải xuất hiện tự nhiên trong mở bài, một số H2/H3 và thân bài; tránh viết biến thể quá xa khiến Rank Math không nhận diện được.
-- Có ít nhất 3 H2, 1 bảng so sánh nếu phù hợp, FAQ, kết bài có tác giả/ngày/nguồn.
+- Có ít nhất 3 H2, 1 bảng so sánh nếu phù hợp, phần hỏi đáp tự nhiên, lời kết mềm.
+- Không được viết các câu hỏi meta như "Bài viết theo dạng nào?", "Cần những phần nào khi xây dựng nội dung...".
+- Không dùng các cụm nhãn nội bộ như SEO, CTA, FAQ, heading, checklist, website/blog trong nội dung người đọc nhìn thấy.
 
 HTML phải sạch, semantic, dùng các thẻ như: p, h2, h3, ul, li, table, tr, th, td, section, figure, figcaption.
 Không thêm giải thích ngoài JSON.
@@ -324,9 +326,9 @@ def run(state: dict) -> dict:
         "Yêu cầu: tiếng Việt tự nhiên, có quan sát thực tế, không sáo rỗng, không bịa dữ kiện.\n"
         "Không nhắc website nguồn, URL nguồn hoặc thương hiệu nguồn trong nội dung cuối.\n"
         "Không dùng blockquote mở đầu, không dùng heading kiểu 'Gợi ý nhanh' hay 'Mô tả ngắn'.\n"
-        "Mở bài đi thẳng vào bối cảnh mua hoặc dùng thực tế; thân bài mềm mại; kết bài có CTA tinh tế.\n"
+        "Mở bài đi thẳng vào bối cảnh mua hoặc dùng thực tế; thân bài mềm mại; kết bài gợi bước tiếp theo thật tự nhiên, không gọi tên là CTA.\n"
         "Không kéo toàn bộ câu chuyện sang quà biếu nếu dữ liệu không cho thấy đó là trung tâm.\n"
-        "Heading phải tự nhiên, không đều tay kiểu slogan; FAQ phải là băn khoăn mua hàng thật.\n"
+        "Heading phải tự nhiên, không đều tay kiểu slogan; phần hỏi đáp phải là băn khoăn thật, không hỏi về cấu trúc bài viết hoặc SEO.\n"
         "Dựa vào ảnh để mô tả hình thức sản phẩm; HTML cuối cần có 3-5 ảnh chèn tự nhiên trong thân bài.\n"
         "Focus keyword rải tự nhiên ở mở bài, vài heading, bảng/bullet, FAQ, caption ảnh và kết bài; ưu tiên mật độ khoảng 1-1.5% tính trên toàn bài, dùng cả exact phrase và biến thể gần nhưng không nhồi máy móc.\n"
         "Để tránh density thấp, exact focus keyword nên xuất hiện tối thiểu khoảng 0.8% số từ: bài 1500 từ cần ít nhất 12 lần, bài 2000 từ cần ít nhất 16 lần, bài 2500 từ cần ít nhất 20 lần; hãy rải đều và tự nhiên.\n"

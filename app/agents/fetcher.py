@@ -492,9 +492,9 @@ def run_seeded_keyword(seed: dict) -> dict:
         raise RuntimeError("Keyword seed is empty")
     brief = re.sub(r"\s+", " ", str(seed.get("brief") or "").strip())
     clean_content = (
-        f"Viết bài SEO tiếng Việt chuyên sâu theo từ khóa chính: {keyword}.\n"
-        f"Mục tiêu: cung cấp thông tin hữu ích, dễ đọc, có cấu trúc heading rõ ràng, FAQ, checklist và CTA mềm.\n"
-        f"Không viết như trang sản phẩm WooCommerce; đây là bài viết website/blog."
+        f"Chủ đề chính: {keyword}.\n"
+        "Mục tiêu: viết một bài kiến thức hữu ích cho người đọc, có bố cục rõ ràng, ví dụ thực tế, bảng hoặc danh sách nếu thật sự cần.\n"
+        "Đây là bài chia sẻ thông tin, không phải trang bán hàng. Không đưa tên kỹ thuật của cấu trúc biên tập vào câu chữ hiển thị."
     )
     if brief:
         clean_content += f"\nGhi chú thêm: {brief}"

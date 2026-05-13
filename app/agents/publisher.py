@@ -1389,6 +1389,35 @@ def _strip_tldr_blocks(html: str) -> str:
     return cleaned
 
 
+def _strip_editorial_meta_blocks(html: str) -> str:
+    cleaned = html or ""
+    meta_patterns = [
+        r"bài viết theo dạng nào",
+        r"cần những phần nào khi xây dựng nội dung",
+        r"đây là bài viết\s+(?:blog|website)",
+        r"không phải một trang giới thiệu sản phẩm",
+        r"cấu trúc\s+(?:seo|bài viết)",
+        r"\bSEO\b",
+        r"\bCTA\b",
+    ]
+    question_pattern = "|".join(meta_patterns)
+    cleaned = re.sub(
+        rf"<h[23]\b[^>]*>\s*(?:{question_pattern}).*?</h[23]>\s*(?:<p\b[^>]*>.*?</p>\s*){{0,2}}",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = re.sub(
+        rf"<p\b[^>]*>[^<]*(?:{question_pattern})[^<]*</p>\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = re.sub(r"\bFAQ\b", "câu hỏi thường gặp", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bCTA\b", "lời gợi ý", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
 def _ensure_focus_keyword_intro(html: str, focus_keyword: str) -> str:
     keyword = re.sub(r"\s+", " ", unescape(focus_keyword or "")).strip()
     if not keyword:
@@ -1568,6 +1597,7 @@ def _prepare_website_post_content(html: str, state: dict) -> str:
     focus_keyword = state["plan"]["focus_keyword"]
     site_url = str((state.get("site_profile") or {}).get("url") or "")
     prepared = _strip_tldr_blocks(html)
+    prepared = _strip_editorial_meta_blocks(prepared)
     prepared = _ensure_focus_keyword_intro(prepared, focus_keyword)
     prepared = _boost_focus_keyword_density(prepared, focus_keyword)
     prepared = _nofollow_external_links(prepared, site_url)

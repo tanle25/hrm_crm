@@ -116,13 +116,22 @@ def get_embedding_function(model_name: str, max_tokens: int | None = None) -> An
         def name(self) -> str:
             return "sentence_transformer"
 
-        def __call__(self, input: List[str]) -> List[List[float]]:  # Chroma requires the parameter name `input`.
+        def _encode(self, texts: List[str]) -> List[List[float]]:
             embeddings = model.encode(
-                list(input),
+                list(texts),
                 normalize_embeddings=True,
                 show_progress_bar=False,
             )
             return embeddings.tolist()
+
+        def __call__(self, input: List[str]) -> List[List[float]]:  # Chroma requires the parameter name `input`.
+            return self._encode(input)
+
+        def embed_documents(self, texts: List[str]) -> List[List[float]]:
+            return self._encode(texts)
+
+        def embed_query(self, text: str) -> List[float]:
+            return self._encode([text])[0]
 
     return LocalSentenceTransformerEmbeddingFunction()
 

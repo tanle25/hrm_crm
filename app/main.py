@@ -196,33 +196,56 @@ async def _enrich_product_vision_and_reindex(product_id: str) -> None:
     if not product:
         return
     changed = False
+    vision_errors: list[str] = []
     title = str(product.get("title") or "")
     image_summaries = list(product.get("image_summaries") or [])
     for image_url in list(product.get("images") or [])[:6]:
         image_url = str(image_url or "").strip()
         if not image_url or _has_summary_for_url(product, image_url):
             continue
-        with suppress(Exception):
+        try:
             summary = await _describe_catalog_image(image_url, title)
             if summary:
                 image_summaries.append({"image_url": image_url, "summary": summary})
                 changed = True
+        except Exception as error:
+            vision_errors.append(f"product image {image_url}: {error}")
     product["image_summaries"] = image_summaries
 
     for variant in product.get("variants") or []:
         image_url = str(variant.get("image_url") or "").strip()
         if not image_url or str(variant.get("image_summary") or "").strip():
             continue
-        with suppress(Exception):
+        try:
             summary = await _describe_catalog_image(image_url, f"{title} {variant.get('name') or ''}".strip())
             if summary:
                 variant["image_summary"] = summary
                 changed = True
+        except Exception as error:
+            vision_errors.append(f"variant {variant.get('variant_id') or variant.get('name')}: {error}")
 
+    if vision_errors:
+        data = product.get("data") if isinstance(product.get("data"), dict) else {}
+        data["vision_errors"] = vision_errors[-10:]
+        product["data"] = data
+        changed = True
     if changed:
         product["rag_dirty"] = True
         product = await asyncio.to_thread(upsert_chatbot_product, product, product_id)
     await asyncio.to_thread(reindex_chatbot_catalog, product["product_id"], False)
+
+
+async def _enrich_product_vision_sync(product_id: str) -> dict:
+    await _enrich_product_vision_and_reindex(product_id)
+    product = await asyncio.to_thread(get_chatbot_product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return {
+        "product_id": product_id,
+        "image_summaries_count": len(product.get("image_summaries") or []),
+        "variant_summaries": sum(1 for item in product.get("variants") or [] if item.get("image_summary")),
+        "vision_errors": (product.get("data") or {}).get("vision_errors") if isinstance(product.get("data"), dict) else [],
+    }
 
 
 async def _enrich_catalog_vision_and_reindex(product_id: str | None = None, limit: int = 50) -> None:
@@ -1417,6 +1440,8 @@ async def chatbot_products_enrich_vision(request: Request, background_tasks: Bac
     payload = await request.json() if content_type.startswith("application/json") else {}
     product_id = str(payload.get("product_id") or "").strip() or None
     limit = max(1, min(int(payload.get("limit") or 50), 200))
+    if product_id and bool(payload.get("wait", False)):
+        return await _enrich_product_vision_sync(product_id)
     background_tasks.add_task(_enrich_catalog_vision_and_reindex, product_id, limit)
     return {"queued": True, "product_id": product_id, "limit": limit}
 

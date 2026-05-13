@@ -79,6 +79,11 @@ class Settings:
     llm_router_retry_attempts: int
     llm_router_retry_backoff_ms: int
     public_llm_max_concurrency: int
+    openrouter_api_key: Optional[str]
+    openrouter_base: str
+    vision_model: str
+    vision_timeout_sec: int
+    public_vision_max_concurrency: int
     llm_model_extract_planner: str
     llm_model_writer: str
     llm_model_humanizer: str
@@ -152,6 +157,11 @@ def get_settings() -> Settings:
         llm_router_retry_attempts=_env_int("LLM_ROUTER_RETRY_ATTEMPTS", 2),
         llm_router_retry_backoff_ms=_env_int("LLM_ROUTER_RETRY_BACKOFF_MS", 2000),
         public_llm_max_concurrency=max(1, _env_int("PUBLIC_LLM_MAX_CONCURRENCY", 2)),
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
+        openrouter_base=os.getenv("OPENROUTER_BASE", "https://openrouter.ai/api/v1"),
+        vision_model=os.getenv("VISION_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"),
+        vision_timeout_sec=_env_int("VISION_TIMEOUT_SEC", 120),
+        public_vision_max_concurrency=max(1, _env_int("PUBLIC_VISION_MAX_CONCURRENCY", 2)),
         llm_model_extract_planner=os.getenv("LLM_MODEL_EXTRACT_PLANNER", "cx/gpt-5.2"),
         llm_model_writer=os.getenv("LLM_MODEL_WRITER", "cx/gpt-5.2"),
         llm_model_humanizer=os.getenv("LLM_MODEL_HUMANIZER", "cx/gpt-5.2"),

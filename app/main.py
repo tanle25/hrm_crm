@@ -1473,6 +1473,46 @@ async def chatbot_products_search(q: str, limit: int = 8, available_only: bool =
     return await asyncio.to_thread(search_chatbot_catalog, q, max(1, min(limit, 30)), available_only)
 
 
+@app.post(f"{settings.api_prefix}/chatbot/products/search-by-image")
+async def chatbot_products_search_by_image(request: Request) -> dict:
+    payload = await request.json()
+    image_url = str(payload.get("image_url") or "").strip()
+    image_base64 = str(payload.get("image_base64") or "").strip()
+    if not image_url and not image_base64:
+        raise HTTPException(status_code=400, detail="image_url or image_base64 is required")
+    limit = max(1, min(int(payload.get("limit") or 5), 20))
+    available_only = bool(payload.get("available_only", False))
+    question = str(payload.get("question") or "").strip()
+    prompt = (
+        "Bạn là hệ thống nhận diện ảnh sản phẩm khách gửi để tìm sản phẩm tương tự trong catalog. "
+        "Chỉ mô tả đặc điểm thị giác quan sát được và các từ khóa tìm kiếm tiếng Việt. "
+        "Không bịa tên sản phẩm, thương hiệu, model, chất liệu, công dụng hoặc xuất xứ nếu không nhìn thấy rõ. "
+        "Nếu khách hỏi có sản phẩm này không, hãy tạo các search_keywords_vi bám sát hình dáng, màu sắc, vật liệu nhìn thấy, chữ/logo nếu có. "
+        f"Câu hỏi của khách nếu có: {question}. "
+        "Trả JSON thuần với schema: {\"visible_object\":\"\", \"object_type_guess\":\"\", \"confidence\":0-1, \"colors\":[], \"shape\":\"\", \"materials_visible\":\"\", \"visible_text\":[], \"logos\":[], \"distinctive_features\":[], \"search_keywords_vi\":[], \"summary_vi\":\"\"}."
+    )
+    vision_payload = await _call_vision(
+        VisionDescribeRequest(
+            image_url=image_url or None,
+            image_base64=image_base64 or None,
+            mime_type=str(payload.get("mime_type") or "image/jpeg"),
+            prompt=prompt,
+            max_tokens=max(300, min(int(payload.get("max_tokens") or 800), 1200)),
+            temperature=0,
+        )
+    )
+    description = _vision_description_text(vision_payload)
+    search_query = " ".join(part for part in [question, description] if part).strip()
+    results = await asyncio.to_thread(search_chatbot_catalog, search_query, limit, available_only)
+    return {
+        "image_url": image_url,
+        "question": question,
+        "vision_description": description,
+        "search_query": search_query[:4000],
+        "matches": results,
+    }
+
+
 @app.post(f"{settings.api_prefix}/chatbot/uploads/images")
 async def chatbot_product_image_upload(request: Request, files: list[UploadFile] = File(default=[])) -> dict:
     if not files:

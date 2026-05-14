@@ -281,6 +281,10 @@ def _sanitize_product_terms(html_text: str) -> str:
 
 
 def _sanitize_source_terms(html_text: str, state: dict) -> str:
+    source_origin = str(state.get("source_origin") or "").strip().lower()
+    source_type = str(state.get("fetch_result", {}).get("metadata", {}).get("source_type") or "").strip().lower()
+    if source_origin in {"website_keyword", "website_article_url"} or source_type == "article":
+        return html_text
     return _replace_source_terms(html_text, state, replacement="thương hiệu")
 
 
@@ -294,6 +298,13 @@ def _infer_product_archetype(state: dict) -> str:
 def run(state: dict) -> dict:
     fallback = {"html": ""}
     extracted = state["extracted"]
+    source_origin = str(state.get("source_origin") or "").strip().lower()
+    metadata_source_type = str(state["fetch_result"].get("metadata", {}).get("source_type") or "").strip().lower()
+    is_product = (
+        metadata_source_type == "product"
+        or (state.get("plan", {}).get("schema_type") == "Product")
+        or (state.get("plan", {}).get("article_type") == "Product Description")
+    )
     image_library = _image_library(state)
     concise_extracted = {
         "product_components": extracted.get("product_components", []),
@@ -303,10 +314,11 @@ def run(state: dict) -> dict:
         "faq_items": extracted.get("faq_items", [])[:4],
         "component_profiles": extracted.get("component_profiles", {}),
     }
-    concise_extracted = _clean_for_writer(concise_extracted, state)
+    if is_product:
+        concise_extracted = _clean_for_writer(concise_extracted, state)
     archetype = _infer_product_archetype(state)
     concise_metadata = {
-        "title": _replace_source_terms(str(state["fetch_result"].get("title") or ""), state),
+        "title": _replace_source_terms(str(state["fetch_result"].get("title") or ""), state) if is_product else str(state["fetch_result"].get("title") or ""),
         "source_type": state["fetch_result"].get("metadata", {}).get("source_type"),
         "product_kind": state["fetch_result"].get("metadata", {}).get("product_kind"),
         "product_hints": {
@@ -324,11 +336,13 @@ def run(state: dict) -> dict:
         "schema_type": state["plan"].get("schema_type"),
         "product_kind": state["plan"].get("product_kind") or state["fetch_result"].get("metadata", {}).get("product_kind"),
     }
-    concise_plan = _clean_for_writer(concise_plan, state)
-    source_origin = str(state.get("source_origin") or "").strip().lower()
-    source_excerpt = _replace_source_terms(str(state["fetch_result"].get("clean_content") or ""), state)[:1800]
+    if is_product:
+        concise_plan = _clean_for_writer(concise_plan, state)
+    source_excerpt_raw = str(state["fetch_result"].get("clean_content") or "")
+    source_excerpt = (_replace_source_terms(source_excerpt_raw, state) if is_product else source_excerpt_raw)[:1800]
     knowledge_limit = 8 if source_origin in {"website_keyword", "website_article_url"} else 4
-    knowledge_facts = _clean_for_writer(state.get("knowledge_facts", [])[:knowledge_limit], state)
+    raw_knowledge_facts = state.get("knowledge_facts", [])[:knowledge_limit]
+    knowledge_facts = _clean_for_writer(raw_knowledge_facts, state) if is_product else raw_knowledge_facts
     knowledge_instruction = (
         "Với bài viết theo keyword, hãy lấy kiến thức RAG làm nguồn chính; chỉ dùng brief keyword để định hướng intent, không coi brief là nguồn dữ kiện đầy đủ.\n"
         "Nếu knowledge facts chứa hướng dẫn SEO/GEO, hãy dùng như chỉ dẫn biên tập nội bộ, không trích nguyên văn và không đưa thuật ngữ kỹ thuật như SEO, GEO, CTA, FAQ, heading, checklist vào nội dung hiển thị.\n"
@@ -345,17 +359,19 @@ def run(state: dict) -> dict:
         f"Content mode: {state.get('content_mode') or 'shared'}\n"
         f"Site profile: {state.get('site_profile') or {}}\n"
         f"Concise extracted data: {concise_extracted}\n"
-        f"Uploaded/local image library (3-5 ảnh để dùng tự nhiên trong bài): {image_library}\n"
+        f"Uploaded/local image library: {image_library if is_product else []}\n"
         f"Knowledge facts: {knowledge_facts}\n"
         f"Source/brief excerpt: {source_excerpt}\n"
         f"{knowledge_instruction}"
         "Yêu cầu: tiếng Việt tự nhiên, có quan sát thực tế, không sáo rỗng, không bịa dữ kiện.\n"
         "Không nhắc website nguồn, URL nguồn hoặc thương hiệu nguồn trong nội dung cuối.\n"
         "Không dùng blockquote mở đầu, không dùng heading kiểu 'Gợi ý nhanh' hay 'Mô tả ngắn'.\n"
-        "Mở bài đi thẳng vào bối cảnh mua hoặc dùng thực tế; thân bài mềm mại; kết bài gợi bước tiếp theo thật tự nhiên, không gọi tên là CTA.\n"
+        "Mở bài đi thẳng vào bối cảnh thực tế; thân bài mềm mại; kết bài gợi bước tiếp theo thật tự nhiên, không gọi tên là CTA.\n"
         "Không kéo toàn bộ câu chuyện sang quà biếu nếu dữ liệu không cho thấy đó là trung tâm.\n"
         "Heading phải tự nhiên, không đều tay kiểu slogan; phần hỏi đáp phải là băn khoăn thật, không hỏi về cấu trúc bài viết hoặc SEO.\n"
-        "Dựa vào ảnh để mô tả hình thức sản phẩm; HTML cuối cần có 3-5 ảnh chèn tự nhiên trong thân bài.\n"
+        + ("Dựa vào ảnh để mô tả hình thức sản phẩm; HTML cuối cần có 3-5 ảnh chèn tự nhiên trong thân bài.\n" if is_product else "Không chèn ảnh, figure, figcaption hoặc gallery trong HTML; hệ thống sẽ tự phân phối ảnh theo từng section sau.\n")
+        + ("Không dùng cụm 'thông tin sản phẩm' nếu đây là bài kiến thức/blog; hãy gọi đúng chủ đề bằng focus keyword hoặc biến thể tự nhiên.\n" if not is_product else "")
+        +
         "Focus keyword rải tự nhiên ở mở bài, vài heading, bảng/bullet, FAQ, caption ảnh và kết bài; ưu tiên mật độ khoảng 1-1.5% tính trên toàn bài, dùng cả exact phrase và biến thể gần nhưng không nhồi máy móc.\n"
         "Để tránh density thấp, exact focus keyword nên xuất hiện tối thiểu khoảng 0.8% số từ: bài 1500 từ cần ít nhất 12 lần, bài 2000 từ cần ít nhất 16 lần, bài 2500 từ cần ít nhất 20 lần; hãy rải đều và tự nhiên.\n"
         "Độ dài mục tiêu cho product: 1500-2500 chữ. Nếu archetype là single_tea, ưu tiên nửa dưới của khoảng này và tập trung vào hương, vị, nước trà, cánh trà, cách pha, đối tượng hợp gu, lý do chọn loại trà này.\n"
@@ -365,16 +381,12 @@ def run(state: dict) -> dict:
     data_html = _coerce_text_field(data.get("html"))
     if not data_html:
         raise RuntimeError("Writer returned empty html.")
-    if image_library:
+    if image_library and is_product:
         data_html = _inject_inline_images(data_html, image_library, state["plan"]["focus_keyword"])
-    data_html = _append_faq_if_missing(data_html, extracted.get("faq_items", []))
+    if is_product:
+        data_html = _append_faq_if_missing(data_html, extracted.get("faq_items", []))
     data_html = _sanitize_product_terms(data_html)
     data_html = _sanitize_source_terms(data_html, state)
-    is_product = (
-        (state["fetch_result"]["metadata"].get("source_type") or "").lower() == "product"
-        or (state.get("plan", {}).get("schema_type") == "Product")
-        or (state.get("plan", {}).get("article_type") == "Product Description")
-    )
     if is_product:
         validation_error = _product_html_validation_error(data_html)
         if validation_error:

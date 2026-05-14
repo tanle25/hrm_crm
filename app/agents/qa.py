@@ -99,6 +99,12 @@ def _strict_blocks(state: dict, similarity: float) -> list[str]:
             if term in text_lower:
                 blocks.append(f"Bài website còn FAQ sản phẩm generic: {term}.")
                 break
+        if text_lower.count("thông tin sản phẩm") >= 3:
+            blocks.append("Bài website bị nhiễm cụm product generic: thông tin sản phẩm.")
+        if "trà thương hiệu" in text_lower and "trà xanh" in focus_keyword:
+            blocks.append("Bài website có dấu hiệu thay sai 'trà xanh' thành 'trà thương hiệu'.")
+        if "content-forge-image-grid" in html_lower:
+            blocks.append("Bài website còn gallery ảnh cũ, chưa dùng ảnh phân phối theo section.")
     if source_type == "product":
         forbidden_terms = ["nguồn tham khảo", "website nguồn", "url nguồn"]
         forbidden_terms.extend(_source_terms(state))

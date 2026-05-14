@@ -1703,7 +1703,8 @@ def _style_website_post_content(html: str, state: dict | None = None) -> str:
     if paragraphs:
         intro = re.sub(
             r'<p\b([^>]*)>',
-            f'<p style="font-size:17px;line-height:1.9;color:#1f2933;margin:0 0 22px">',
+            f'<p style="font-size:17px;line-height:1.9;color:#1f2933;background:{accent_soft};'
+            f'border-left:5px solid {accent};border-radius:0 12px 12px 0;padding:18px 20px;margin:0 0 24px">',
             paragraphs[0],
             count=1,
             flags=re.IGNORECASE,
@@ -1771,7 +1772,7 @@ def _inject_article_toc(html: str, accent: str, accent_soft: str) -> str:
 
 def _style_article_faq_block(html: str, accent: str) -> str:
     pattern = re.compile(
-        r"(<h2\b[^>]*>\s*(?:FAQ\s*:?\s*)?Câu hỏi thường gặp\s*</h2>)(.*?)(?=<h2\b|$)",
+        r"(<h2\b[^>]*>\s*(?:FAQ\s*:?\s*)?(?:[^<]*câu hỏi thường gặp[^<]*)</h2>)(.*?)(?=<h2\b|$)",
         flags=re.IGNORECASE | re.DOTALL,
     )
 

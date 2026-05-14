@@ -204,17 +204,24 @@ def _run_media_uploader(state: dict) -> dict:
 
 
 def _run_humanizer(state: dict) -> dict:
+    source_type = str(state["fetch_result"].get("metadata", {}).get("source_type") or "").strip().lower()
+    is_product = (
+        source_type == "product"
+        or state.get("plan", {}).get("schema_type") == "Product"
+        or state.get("plan", {}).get("article_type") == "Product Description"
+    )
     state["humanized"] = humanizer.run(
         state["draft"]["html"],
-        state["fetch_result"].get("metadata", {}).get("source_type"),
+        source_type,
         state.get("site_profile") or {},
         state.get("content_mode"),
     )
-    state["humanized"]["html"] = writer._inject_inline_images(
-        state["humanized"].get("html") or "",
-        writer._image_library(state),
-        state["plan"]["focus_keyword"],
-    )
+    if is_product:
+        state["humanized"]["html"] = writer._inject_inline_images(
+            state["humanized"].get("html") or "",
+            writer._image_library(state),
+            state["plan"]["focus_keyword"],
+        )
     _update_metrics(state, "humanizer", tokens_delta=3500, cost_delta=0.028)
     return state
 

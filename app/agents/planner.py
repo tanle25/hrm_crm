@@ -209,21 +209,31 @@ def _clean_title(value: str) -> str:
 def _natural_article_title(value: str, focus_keyword: str = "") -> str:
     title = _clean_title(value)
     keyword = _clean_title(focus_keyword or title)
+    title = _join_title_parts_naturally(title)
+    if keyword and keyword.lower() not in title.lower() and len(title.split()) < 4:
+        title = keyword
+    return re.sub(r"\s+", " ", title or keyword).strip(" .,:;|-–—")
+
+
+def _join_title_parts_naturally(title: str) -> str:
+    value = re.sub(r"\s+", " ", title or "").strip(" .,:;|-–—")
     for separator in [":", " - ", " – ", " — ", "|"]:
-        if separator in title:
-            pieces = [piece.strip(" .,:;|-–—") for piece in title.split(separator) if piece.strip(" .,:;|-–—")]
-            title = pieces[0] if pieces else title
-            break
-    title = re.sub(r"\b(huong dan|hướng dẫn|tong hop|tổng hợp|phan tich|phân tích|thuc te|thực tế)\b$", "", title, flags=re.IGNORECASE)
-    title = re.sub(r"\s+", " ", title).strip(" .,:;|-–—")
-    if keyword and keyword.lower() not in title.lower():
-        base = keyword
-    else:
-        base = title or keyword
-    lowered = base.lower()
-    if not any(verb in lowered for verb in ["giúp", "cho", "khi", "vì sao", "cách", "nên", "hiểu", "chọn", "dùng"]):
-        base = f"{base} giúp bạn hiểu đúng và áp dụng dễ hơn"
-    return re.sub(r"\s+", " ", base).strip(" .,:;|-–—")
+        if separator not in value:
+            continue
+        left, right = [part.strip(" .,:;|-–—") for part in value.split(separator, 1)]
+        if not left:
+            return right
+        lowered_right = right.lower()
+        if not right:
+            return left
+        if re.fullmatch(r"(hướng dẫn|huong dan|tổng hợp|tong hop|phân tích|phan tich|thực tế|thuc te)(\s+\w+){0,3}", lowered_right):
+            return left
+        if lowered_right.startswith(("cách ", "cach ")):
+            return f"{left} và {right[0].lower() + right[1:]}"
+        if lowered_right.startswith(("vì sao", "vi sao", "khi ", "cho ", "để ", "de ")):
+            return f"{left} {right[0].lower() + right[1:]}"
+        return f"{left} với {right[0].lower() + right[1:]}"
+    return value
 
 
 def _refine_product_title(raw_title: str, source_title: str, metadata: dict) -> str:

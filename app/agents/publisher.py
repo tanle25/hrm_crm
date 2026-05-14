@@ -1825,17 +1825,30 @@ def _seo_title(state: dict) -> str:
 def _natural_website_title(title: str, focus_keyword: str) -> str:
     value = re.sub(r"\s+", " ", unescape(title or "")).strip(" .,:;|-–—")
     keyword = re.sub(r"\s+", " ", unescape(focus_keyword or "")).strip(" .,:;|-–—")
-    for separator in [":", " - ", " – ", " — ", "|"]:
-        if separator in value:
-            pieces = [piece.strip(" .,:;|-–—") for piece in value.split(separator) if piece.strip(" .,:;|-–—")]
-            value = pieces[0] if pieces else value
-            break
-    value = re.sub(r"\b(hướng dẫn|huong dan|tổng hợp|tong hop|phân tích|phan tich|thực tế|thuc te)\b$", "", value, flags=re.IGNORECASE)
-    value = re.sub(r"\s+", " ", value).strip(" .,:;|-–—")
-    if keyword and keyword.lower() not in value.lower():
+    value = _join_website_title_parts(value)
+    if keyword and keyword.lower() not in value.lower() and len(value.split()) < 4:
         value = keyword
-    if not any(term in value.lower() for term in ["giúp", "cho", "khi", "vì sao", "cách", "nên", "hiểu", "chọn", "dùng"]):
-        value = f"{value} giúp bạn hiểu đúng và áp dụng dễ hơn"
+    return value
+
+
+def _join_website_title_parts(title: str) -> str:
+    value = re.sub(r"\s+", " ", title or "").strip(" .,:;|-–—")
+    for separator in [":", " - ", " – ", " — ", "|"]:
+        if separator not in value:
+            continue
+        left, right = [part.strip(" .,:;|-–—") for part in value.split(separator, 1)]
+        if not left:
+            return right
+        lowered_right = right.lower()
+        if not right:
+            return left
+        if re.fullmatch(r"(hướng dẫn|huong dan|tổng hợp|tong hop|phân tích|phan tich|thực tế|thuc te)(\s+\w+){0,3}", lowered_right):
+            return left
+        if lowered_right.startswith(("cách ", "cach ")):
+            return f"{left} và {right[0].lower() + right[1:]}"
+        if lowered_right.startswith(("vì sao", "vi sao", "khi ", "cho ", "để ", "de ")):
+            return f"{left} {right[0].lower() + right[1:]}"
+        return f"{left} với {right[0].lower() + right[1:]}"
     return value
 
 

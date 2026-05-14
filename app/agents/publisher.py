@@ -1112,7 +1112,8 @@ def build_schema(state: dict) -> dict | list[dict]:
 
 
 def _slugify(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value or "")
+    prepared = (value or "").replace("đ", "d").replace("Đ", "D")
+    normalized = unicodedata.normalize("NFKD", prepared)
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
     slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in ascii_value).strip("-")
     while "--" in slug:
@@ -1562,23 +1563,24 @@ def _style_website_post_content(html: str, state: dict | None = None) -> str:
         styled_html = re.sub(r'\s*</div>\s*$', "", styled_html)
     plan = (state or {}).get("plan") or {}
     focus_keyword = str(plan.get("focus_keyword") or "").strip()
+    # WordPress already renders the post title as H1; body content must not duplicate it.
+    styled_html = re.sub(r"<h1\b[^>]*>.*?</h1>\s*", "", styled_html, flags=re.IGNORECASE | re.DOTALL)
 
-    replacements = {
-        "<h1>": f'<h1 style="color:{accent};text-align:center;font-size:30px;line-height:1.3;margin:0 0 24px;font-weight:800">',
-        "<h2>": f'<h2 style="color:{accent};font-size:25px;line-height:1.35;border-bottom:2px solid {accent_soft};padding-bottom:10px;margin:34px 0 18px;font-weight:800">',
-        "<h3>": f'<h3 style="color:{_darken_hex(accent)};margin:24px 0 12px;font-size:20px;line-height:1.4;font-weight:750">',
-        "<p>": '<p style="margin:0 0 18px;color:#333">',
-        "<ul>": f'<ul style="margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-left:4px solid {accent};border-radius:0 12px 12px 0;color:#333">',
-        "<ol>": f'<ol style="margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-left:4px solid {accent};border-radius:0 12px 12px 0;color:#333">',
-        "<li>": '<li style="margin-bottom:10px">',
-        "<table>": f'<table style="width:100%;margin:24px 0 32px;border-collapse:separate;border-spacing:0;border:1px solid {accent_border};border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,0.04)">',
-        "<th>": f'<th style="padding:14px 16px;background:{accent_soft};border-bottom:1px solid {_rgba(accent, 0.18)};text-align:left;color:{accent}">',
-        "<td>": '<td style="padding:14px 16px;border-bottom:1px solid #edf0ed;vertical-align:top">',
-        "<figure>": '<figure style="margin:26px 0;text-align:center">',
-        "<figcaption>": '<figcaption style="margin-top:10px;color:#667085;font-size:14px;font-style:italic">',
+    tag_styles = {
+        "h2": f"color:{accent};font-size:25px;line-height:1.35;border-bottom:2px solid {accent_soft};padding-bottom:10px;margin:34px 0 18px;font-weight:800",
+        "h3": f"color:{_darken_hex(accent)};margin:24px 0 12px;font-size:20px;line-height:1.4;font-weight:750",
+        "p": "margin:0 0 18px;color:#333",
+        "ul": f"margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-left:4px solid {accent};border-radius:0 12px 12px 0;color:#333",
+        "ol": f"margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-left:4px solid {accent};border-radius:0 12px 12px 0;color:#333",
+        "li": "margin-bottom:10px",
+        "table": f"width:100%;margin:24px 0 32px;border-collapse:separate;border-spacing:0;border:1px solid {accent_border};border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,0.04)",
+        "th": f"padding:14px 16px;background:{accent_soft};border-bottom:1px solid {_rgba(accent, 0.18)};text-align:left;color:{accent}",
+        "td": "padding:14px 16px;border-bottom:1px solid #edf0ed;vertical-align:top",
+        "figure": "margin:26px 0;text-align:center",
+        "figcaption": "margin-top:10px;color:#667085;font-size:14px;font-style:italic",
     }
-    for source, target in replacements.items():
-        styled_html = styled_html.replace(source, target)
+    for tag, style in tag_styles.items():
+        styled_html = _apply_inline_style(styled_html, tag, style)
 
     styled_html = re.sub(
         r"<a\b(?![^>]*\bstyle=)",
@@ -1629,6 +1631,17 @@ def _darken_hex(hex_color: str) -> str:
     except ValueError:
         return "#2c5e1a"
     return "#" + "".join(f"{max(0, round(value * 0.78)):02x}" for value in (red, green, blue))
+
+
+def _apply_inline_style(html: str, tag: str, style: str) -> str:
+    pattern = re.compile(rf"<{tag}\b([^>]*)>", flags=re.IGNORECASE | re.DOTALL)
+
+    def replace(match: re.Match[str]) -> str:
+        attrs = match.group(1) or ""
+        attrs = re.sub(r"\sstyle=(['\"]).*?\1", "", attrs, flags=re.IGNORECASE | re.DOTALL)
+        return f'<{tag}{attrs} style="{style}">'
+
+    return pattern.sub(replace, html or "")
 
 
 def _inject_article_toc(html: str, accent: str, accent_soft: str) -> str:

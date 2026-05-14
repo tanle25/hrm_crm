@@ -71,6 +71,34 @@ def _strict_blocks(state: dict, similarity: float) -> list[str]:
 
     if similarity >= 0.35:
         blocks.append(f"Similarity quá cao ({similarity:.1%}); cần viết lại mạnh hơn.")
+    if source_origin in {"website_keyword", "website_article_url"}:
+        prompt_leak_terms = [
+            "viết bài seo",
+            "từ khóa chính",
+            "tu khoa chinh",
+            "mục tiêu:",
+            "cấu trúc heading",
+            "không viết như trang sản phẩm",
+            "woocommerce",
+            "website/blog",
+            "seo/g",
+            "cta",
+        ]
+        for term in prompt_leak_terms:
+            if term in text_lower:
+                blocks.append(f"Bài website bị nhiễm prompt hoặc thuật ngữ nội bộ: {term}.")
+                break
+        generic_product_faq_terms = [
+            "sản phẩm gồm những gì",
+            "sản phẩm này phù hợp cho ai",
+            "thông số hoặc quy cách đáng chú ý",
+            "phù hợp cho nhu cầu sử dụng thực tế trong các bối cảnh liên quan",
+            "nên kiểm tra trực tiếp thông số và phụ kiện đi kèm",
+        ]
+        for term in generic_product_faq_terms:
+            if term in text_lower:
+                blocks.append(f"Bài website còn FAQ sản phẩm generic: {term}.")
+                break
     if source_type == "product":
         forbidden_terms = ["nguồn tham khảo", "website nguồn", "url nguồn"]
         forbidden_terms.extend(_source_terms(state))

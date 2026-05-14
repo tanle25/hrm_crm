@@ -1313,25 +1313,43 @@ def _inject_content_images(html: str, image_urls: list[str], alt_text: str, forc
     if "<img " in html.lower():
         return html
     selected = image_urls[:4]
-    figures = []
+    image_blocks = []
     for index, url in enumerate(selected, start=1):
-        figures.append(
+        image_blocks.append(
             f'<figure><img src="{url}" alt="{alt_text}" loading="lazy" '
             'style="width:100%;height:auto;border-radius:14px;display:block" />'
-            f'<figcaption>Hình ảnh tham chiếu sản phẩm #{index}</figcaption></figure>'
+            f'<figcaption>{alt_text} - hình minh họa {index}</figcaption></figure>'
         )
-    image_block = (
-        '<section class="content-forge-image-grid">'
-        + "".join(figures)
-        + "</section>"
-    )
-    # Insert after the first </p> that follows the first <h2>
-    import re as _re
-    match = _re.search(r'(<h2[^>]*>.*?</h2>\s*(?:<p[^>]*>.*?</p>))', html, _re.DOTALL)
-    if match:
-        insert_pos = match.end()
-        return html[:insert_pos] + "\n" + image_block + html[insert_pos:]
-    return image_block + "\n" + html
+    updated = html
+    h2_matches = list(re.finditer(r"<h2\b[^>]*>.*?</h2>\s*(?:<p\b[^>]*>.*?</p>)?", updated, flags=re.IGNORECASE | re.DOTALL))
+    if h2_matches:
+        # Spread images after separate sections, avoiding FAQ/conclusion where possible.
+        candidate_indexes = [
+            idx for idx, match in enumerate(h2_matches)
+            if not any(marker in _html_text(match.group(0)).lower() for marker in ["câu hỏi thường gặp", "faq", "kết luận"])
+        ] or list(range(len(h2_matches)))
+        overflow_indexes = [idx for idx in range(len(h2_matches)) if idx not in candidate_indexes]
+        selected_indexes = (candidate_indexes + overflow_indexes)[: len(image_blocks)]
+        offset = 0
+        for block, match_index in zip(image_blocks, selected_indexes):
+            match = h2_matches[match_index]
+            insert_pos = match.end() + offset
+            insertion = f'\n<section class="content-forge-image-slot" style="margin:26px 0">{block}</section>\n'
+            updated = updated[:insert_pos] + insertion + updated[insert_pos:]
+            offset += len(insertion)
+        return updated
+    paragraphs = list(re.finditer(r"</p>", updated, flags=re.IGNORECASE))
+    if paragraphs:
+        step = max(1, len(paragraphs) // (len(image_blocks) + 1))
+        offset = 0
+        for idx, block in enumerate(image_blocks):
+            paragraph = paragraphs[min((idx + 1) * step - 1, len(paragraphs) - 1)]
+            insert_pos = paragraph.end() + offset
+            insertion = f'\n<section class="content-forge-image-slot" style="margin:26px 0">{block}</section>\n'
+            updated = updated[:insert_pos] + insertion + updated[insert_pos:]
+            offset += len(insertion)
+        return updated
+    return '<section class="content-forge-image-slot" style="margin:26px 0">' + image_blocks[0] + "</section>\n" + html
 
 
 def _has_valid_content_image(html: str) -> bool:

@@ -1315,21 +1315,22 @@ def _inject_content_images(html: str, image_urls: list[str], alt_text: str, forc
     html = re.sub(r"<section\b[^>]*content-forge-image-grid[^>]*>\s*</section>\s*", "", html, flags=re.IGNORECASE | re.DOTALL)
     if "<img " in html.lower():
         return html
-    selected = normalized_items[:4]
+    selected = normalized_items[:3]
     updated = html
     h2_matches = list(re.finditer(r"<h2\b[^>]*>.*?</h2>\s*(?:<p\b[^>]*>.*?</p>)?", updated, flags=re.IGNORECASE | re.DOTALL))
     if h2_matches:
-        # Spread images after separate sections, avoiding FAQ/conclusion where possible.
+        # Spread images after separate sections, using each full H2 section as matching context.
         candidate_indexes = [
             idx for idx, match in enumerate(h2_matches)
-            if not any(marker in _html_text(match.group(0)).lower() for marker in ["câu hỏi thường gặp", "faq", "kết luận"])
+            if not any(marker in _html_text(match.group(0)).lower() for marker in ["câu hỏi thường gặp", "faq", "kết luận", "lời kết"])
         ]
         selected_indexes = (candidate_indexes or list(range(len(h2_matches))))[: len(selected)]
         offset = 0
         used_urls: set[str] = set()
         for ordinal, match_index in enumerate(selected_indexes, start=1):
             match = h2_matches[match_index]
-            context = _html_text(match.group(0))
+            section_end = h2_matches[match_index + 1].start() if match_index + 1 < len(h2_matches) else len(updated)
+            context = _html_text(updated[match.start():section_end])
             item = _select_image_for_context(selected, context, used_urls)
             if not item:
                 continue
@@ -1445,7 +1446,7 @@ def _has_valid_content_image(html: str) -> bool:
 def _remove_all_content_images(html: str) -> str:
     cleaned = re.sub(r"<figure\b[^>]*>.*?<img\b.*?</figure>\s*", "", html or "", flags=re.IGNORECASE | re.DOTALL)
     cleaned = re.sub(r"<img\b[^>]*>\s*", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
-    cleaned = re.sub(r"<section\b[^>]*(?:content-forge-image-grid|content-forge-inline-gallery|content-forge-affiliate-gallery)[^>]*>.*?</section>\s*", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"<section\b[^>]*(?:content-forge-image-grid|content-forge-inline-gallery|content-forge-affiliate-gallery|content-forge-image-slot)[^>]*>.*?</section>\s*", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
     return cleaned
 
 
@@ -1547,6 +1548,8 @@ def _strip_website_seo_artifacts(html: str, focus_keyword: str = "") -> str:
             r"[^.!?。]*\bngười đọc nên ưu tiên thông tin rõ ràng,\s*tiêu chí lựa chọn thực tế và cách áp dụng phù hợp nhu cầu[^.!?。]*[.!?。]?\s*",
             r"[^.!?。]*\bcần được hiểu theo nhu cầu thực tế,\s*dữ kiện đáng tin và tiêu chí lựa chọn rõ ràng[^.!?。]*[.!?。]?\s*",
             r"[^.!?。]*\bthông tin sản phẩm\b[^.!?。]*[.!?。]?\s*",
+            r"[^.!?。]*\bbài viết này\b[^.!?。]*[.!?。]?\s*",
+            r"[^.!?。]*\bgiúp bạn nắm rõ bối cảnh\b[^.!?。]*[.!?。]?\s*",
         ]
         for pattern in patterns:
             body = re.sub(pattern, " ", body, flags=re.IGNORECASE | re.DOTALL)
@@ -1660,7 +1663,7 @@ def _style_website_post_content(html: str, state: dict | None = None) -> str:
 
     wrapper_style = (
         "font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.8;color:#333;"
-        "padding:20px;border:1px solid #eee;border-radius:10px;background-color:#fff;box-sizing:border-box"
+        f"padding:20px;border:1px solid {accent_border};border-radius:10px;background-color:#fff;box-sizing:border-box"
     )
     return f'<div class="content-forge-article" style="{wrapper_style}">\n{styled_html}\n</div>'
 

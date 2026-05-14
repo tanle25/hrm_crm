@@ -57,45 +57,50 @@ Không thêm giải thích ngoài JSON.
 
 WEBSITE_WRITER_SYSTEM_PROMPT = """
 Bạn là biên tập viên SEO tiếng Việt.
-Nhiệm vụ: viết bài blog/website theo đúng template HTML được yêu cầu, không viết như trang bán hàng.
-Chỉ tối ưu SEO cơ bản: tiêu đề tự nhiên, mở bài rõ ý, heading dễ đọc, từ khóa chính xuất hiện tự nhiên, FAQ hữu ích.
-Không dùng thuật ngữ nội bộ như quy trình tối ưu, CTA, checklist, heading trong nội dung người đọc nhìn thấy.
+Nhiệm vụ: dựa vào tiêu đề, focus keyword và knowledge facts để viết một bài blog SEO tiếng Việt rõ ràng, dễ đọc, hữu ích.
+Chỉ tối ưu SEO cơ bản: tiêu đề section tự nhiên, mở bài rõ ý, heading dễ đọc, từ khóa chính xuất hiện tự nhiên, FAQ hữu ích, meta description gọn.
+Không viết như trang bán hàng. Không dùng thuật ngữ nội bộ như quy trình tối ưu, checklist, heading trong nội dung người đọc nhìn thấy.
 Không dùng TL;DR, không dùng "nội dung trọng tâm", không dùng "thông tin sản phẩm".
 Không chèn ảnh, figure, figcaption hoặc gallery.
 Không bịa dữ kiện ngoài input.
 
-Trả về JSON hợp lệ với một trường duy nhất: html.
+Trả về JSON hợp lệ với đúng hai trường:
+html: nội dung HTML bài viết.
+meta_description: mô tả SEO 140-155 ký tự, có focus keyword, không chứa HTML.
 
-HTML bắt buộc đi theo template này:
+HTML bắt buộc đi theo đúng thứ tự này, không thêm block mở đầu khác:
 <div class="content-forge-article" style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.8;color:#333;padding:20px;border:1px solid #eee;border-radius:10px;background-color:#fff;box-sizing:border-box">
-  <p style="font-size:16px;margin-bottom:20px">...</p>
+  <p style="font-size:16px;margin-bottom:20px">Đoạn mở đầu Sapo...</p>
   <div class="content-forge-toc" style="background-color:{{soft_color}};padding:20px;border-left:5px solid {{primary_color}};margin-bottom:25px;border-radius:0 8px 8px 0">
     <p style="margin:0;font-weight:bold;color:{{primary_color}};font-size:18px">Nội dung bài viết:</p>
     <ul style="margin:10px 0 0 20px;padding:0;list-style-type:square">...</ul>
   </div>
-  <h2 style="color:{{primary_color}};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin-top:30px">...</h2>
+  <h2 style="color:{{primary_color}};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin-top:30px">Lợi ích ...</h2>
   <p>...</p>
   <ul style="padding-left:20px">...</ul>
-  <h2 style="color:{{primary_color}};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin-top:30px">...</h2>
-  <h3 style="color:{{secondary_color}};margin-top:20px;font-size:20px">...</h3>
+  <h2 style="color:{{primary_color}};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin-top:30px">Danh sách các loại trà ...</h2>
+  <h3 style="color:{{secondary_color}};margin-top:20px;font-size:20px">Tên từng loại trà cụ thể</h3>
   <p>...</p>
   <div class="content-forge-faq" style="margin-top:40px;padding:25px;background-color:#fdfdfd;border:1px solid #ddd;border-radius:8px">
     <h2 style="color:{{primary_color}};text-align:center;margin-top:0;margin-bottom:25px">FAQ: Câu Hỏi Thường Gặp</h2>
     <div style="margin-bottom:20px">...</div>
   </div>
-  <h2 style="color:{{primary_color}};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin-top:30px">Kết luận</h2>
+  <h2 style="color:{{primary_color}};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin-top:30px">Lời kết</h2>
   <p>...</p>
   <div class="content-forge-cta" style="text-align:center;margin-top:40px;padding:30px 20px;background:linear-gradient(135deg,{{primary_color}} 0%,{{secondary_color}} 100%);color:white;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.1)">...</div>
 </div>
 
-Quy tắc nội dung:
+Quy tắc nội dung bắt buộc:
 - Không dùng thẻ h1 trong nội dung; tiêu đề bài viết do hệ thống đăng bài xử lý riêng.
-- Mở bài 1 đoạn, câu đầu chứa từ khóa chính và đi thẳng vào nhu cầu người đọc.
-- Mục lục có 3-5 gạch đầu dòng thật sự tương ứng với nội dung.
-- Thân bài có ít nhất 3 H2; dùng H3 cho danh sách lựa chọn hoặc các mục con.
+- Đoạn mở đầu Sapo chỉ 2-4 câu; câu đầu chứa focus keyword và đi thẳng vào lợi ích hoặc vấn đề người đọc đang quan tâm.
+- Không viết câu kiểu "X là nội dung trọng tâm trong bài viết này" hoặc "giúp bạn nắm rõ bối cảnh".
+- Mục lục nội dung có 3-5 gạch đầu dòng thật sự tương ứng với bài.
+- H2 đầu tiên nói về lợi ích sản phẩm/chủ đề.
+- H2 tiếp theo là danh sách các loại trà hoặc các lựa chọn chính.
+- Mỗi loại trà/lựa chọn cụ thể dùng H3 riêng, có mô tả ngắn và thực tế.
 - FAQ có 3-5 câu hỏi thật của người đọc.
-- Kết luận ngắn, mềm, không bán hàng lố.
-- CTA mềm, đúng chủ đề, không gọi tên là CTA.
+- H2 cuối là "Lời kết".
+- Khung kêu gọi hành động mềm, đúng chủ đề.
 Không thêm giải thích ngoài JSON.
 """.strip()
 
@@ -383,13 +388,15 @@ def _sanitize_website_html(html_text: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
     bad_phrases = [
-        r"[^.!?。]*\bnội dung trọng tâm\b[^.!?。]*[.!?。]?\s*",
-        r"[^.!?。]*\bthông tin sản phẩm\b[^.!?。]*[.!?。]?\s*",
-        r"[^.!?。]*\bAI[- ]?friendly\b[^.!?。]*[.!?。]?\s*",
-        r"[^.!?。]*\bGEO\b[^.!?。]*[.!?。]?\s*",
+        r"\bnội dung trọng tâm\b",
+        r"\bthông tin sản phẩm\b",
+        r"\bbài viết này\b",
+        r"\bgiúp bạn nắm rõ bối cảnh\b",
+        r"\bAI[- ]?friendly\b",
+        r"\bGEO\b",
     ]
     for pattern in bad_phrases:
-        sanitized = re.sub(pattern, " ", sanitized, flags=re.IGNORECASE | re.DOTALL)
+        sanitized = re.sub(pattern, " ", sanitized, flags=re.IGNORECASE)
     return re.sub(r"\s{2,}", " ", sanitized).strip()
 
 
@@ -474,18 +481,30 @@ def run(state: dict) -> dict:
     website_template_instruction = ""
     if not is_product:
         website_template_instruction = (
-            "TEMPLATE HTML BẮT BUỘC CHO BÀI WEBSITE:\n"
-            "1) Mở bằng đúng 1 thẻ <p> mở bài; câu đầu của mở bài chứa focus keyword. Không viết 'nội dung trọng tâm', không viết 'thông tin sản phẩm'.\n"
-            "2) Sau mở bài là <div class=\"content-forge-toc\"><p>Nội dung bài viết:</p><ul>...</ul></div> với 3-6 ý chính.\n"
-            "3) Thân bài chia thành nhiều <section>, mỗi section có <h2> và 1-4 đoạn/bullet/table. H2 không dùng số thứ tự nếu không cần.\n"
-            "4) Nếu có danh sách, dùng <ul><li>...</li></ul>. Nếu so sánh, dùng <table><tr><th>...</th></tr>...</table>.\n"
-            "5) FAQ dùng <div class=\"content-forge-faq\"><h2>FAQ: Câu Hỏi Thường Gặp</h2><div><h3>...</h3><p>...</p></div>...</div>.\n"
-            "6) Kết thúc bằng <div class=\"content-forge-cta\"><p>...</p><p>...</p><a href=\"#\">...</a></div>.\n"
-            "7) Tuyệt đối không chèn <h1>; không chèn ảnh, figure, figcaption hoặc class content-forge-image-grid.\n"
+            "CẤU TRÚC BÀI WEBSITE BẮT BUỘC, GIỮ ĐÚNG THỨ TỰ:\n"
+            "1) Đoạn mở đầu Sapo: đúng 1 thẻ <p>, 2-4 câu, câu đầu chứa focus keyword, không viết câu giới thiệu máy móc.\n"
+            "2) Mục lục nội dung: <div class=\"content-forge-toc\"><p>Nội dung bài viết:</p><ul>...</ul></div> với 3-5 ý chính.\n"
+            "3) H2 về lợi ích sản phẩm/chủ đề, kèm đoạn giải thích và bullet nếu phù hợp.\n"
+            "4) H2 về danh sách các loại trà/lựa chọn chính.\n"
+            "5) Các H3 là tên từng loại trà/lựa chọn cụ thể, mỗi H3 có đoạn mô tả riêng.\n"
+            "6) Phần FAQ: <div class=\"content-forge-faq\"><h2>FAQ: Câu Hỏi Thường Gặp</h2>...</div>.\n"
+            "7) H2 cuối là Lời kết.\n"
+            "8) Kết thúc bằng <div class=\"content-forge-cta\">...</div>.\n"
+            "9) Tuyệt đối không chèn <h1>, ảnh, figure, figcaption hoặc gallery.\n"
         )
     primary_color = _site_primary_color(state)
     secondary_color = _darken_hex(primary_color)
     soft_color = _soft_hex(primary_color)
+    image_instruction = (
+        "Dựa vào ảnh để mô tả hình thức sản phẩm; HTML cuối cần có 3-5 ảnh chèn tự nhiên trong thân bài.\n"
+        if is_product
+        else "Bài website phải tự sinh đúng Sapo, mục lục nội dung, H2 lợi ích, H2 danh sách, H3 từng loại, FAQ, H2 Lời kết, khung kêu gọi hành động và meta_description trong JSON; không chèn ảnh, figure, figcaption hoặc gallery.\n"
+    )
+    focus_keyword_instruction = (
+        "Focus keyword rải tự nhiên ở mở bài, vài heading, bảng/bullet, FAQ, caption ảnh và kết bài; ưu tiên mật độ khoảng 1-1.5% tính trên toàn bài, dùng cả exact phrase và biến thể gần nhưng không nhồi máy móc.\n"
+        if is_product
+        else "Focus keyword rải tự nhiên ở mở bài, vài heading, bảng/bullet, FAQ và lời kết; ưu tiên mật độ khoảng 1-1.5% tính trên toàn bài, dùng cả exact phrase và biến thể gần nhưng không nhồi máy móc.\n"
+    )
     prompt = (
         f"Metadata: {concise_metadata}\n"
         f"Plan: {concise_plan}\n"
@@ -502,13 +521,13 @@ def run(state: dict) -> dict:
         "Yêu cầu: tiếng Việt tự nhiên, có quan sát thực tế, không sáo rỗng, không bịa dữ kiện.\n"
         "Không nhắc website nguồn, URL nguồn hoặc thương hiệu nguồn trong nội dung cuối.\n"
         "Không dùng blockquote mở đầu, không dùng heading kiểu 'Gợi ý nhanh' hay 'Mô tả ngắn'.\n"
-        "Mở bài đi thẳng vào bối cảnh thực tế; thân bài mềm mại; kết bài gợi bước tiếp theo thật tự nhiên, không gọi tên là CTA.\n"
+        "Mở bài đi thẳng vào bối cảnh thực tế; không viết 'bài viết này', không viết 'nội dung trọng tâm', không viết 'giúp bạn nắm rõ bối cảnh'.\n"
+        "Thân bài mềm mại; lời kết và khung kêu gọi hành động gợi bước tiếp theo thật tự nhiên.\n"
         "Không kéo toàn bộ câu chuyện sang quà biếu nếu dữ liệu không cho thấy đó là trung tâm.\n"
         "Heading phải tự nhiên, không đều tay kiểu slogan; phần hỏi đáp phải là băn khoăn thật, không hỏi về cấu trúc bài viết hoặc SEO.\n"
-        + ("Dựa vào ảnh để mô tả hình thức sản phẩm; HTML cuối cần có 3-5 ảnh chèn tự nhiên trong thân bài.\n" if is_product else "Bài website phải tự sinh TOC, FAQ card và CTA theo class template ở trên; không chèn ảnh, figure, figcaption hoặc gallery.\n")
+        f"{image_instruction}"
         + ("Không dùng cụm 'thông tin sản phẩm' nếu đây là bài kiến thức/blog; hãy gọi đúng chủ đề bằng focus keyword hoặc biến thể tự nhiên.\n" if not is_product else "")
-        +
-        "Focus keyword rải tự nhiên ở mở bài, vài heading, bảng/bullet, FAQ, caption ảnh và kết bài; ưu tiên mật độ khoảng 1-1.5% tính trên toàn bài, dùng cả exact phrase và biến thể gần nhưng không nhồi máy móc.\n"
+        + f"{focus_keyword_instruction}"
         "Để tránh density thấp, exact focus keyword nên xuất hiện tối thiểu khoảng 0.8% số từ: bài 1500 từ cần ít nhất 12 lần, bài 2000 từ cần ít nhất 16 lần, bài 2500 từ cần ít nhất 20 lần; hãy rải đều và tự nhiên.\n"
         "Độ dài mục tiêu cho product: 1500-2500 chữ. Nếu archetype là single_tea, ưu tiên nửa dưới của khoảng này và tập trung vào hương, vị, nước trà, cánh trà, cách pha, đối tượng hợp gu, lý do chọn loại trà này.\n"
     )
@@ -526,6 +545,11 @@ def run(state: dict) -> dict:
     data_html = _coerce_text_field(data.get("html"))
     if not data_html:
         raise RuntimeError("Writer returned empty html.")
+    if not is_product:
+        meta_description = _clean_phrase(str(data.get("meta_description") or ""))
+        focus_keyword = str(state.get("plan", {}).get("focus_keyword") or "").strip().lower()
+        if meta_description and 120 <= len(meta_description) <= 170 and (not focus_keyword or focus_keyword in meta_description.lower()):
+            state.setdefault("plan", {})["meta_description"] = meta_description[:155]
     if image_library and is_product:
         data_html = _inject_inline_images(data_html, image_library, state["plan"]["focus_keyword"])
     if is_product:

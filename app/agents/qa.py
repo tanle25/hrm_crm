@@ -101,6 +101,8 @@ def _strict_blocks(state: dict, similarity: float) -> list[str]:
                 break
         if text_lower.count("thông tin sản phẩm") >= 3:
             blocks.append("Bài website bị nhiễm cụm product generic: thông tin sản phẩm.")
+        if "bài viết này" in text_lower or "giúp bạn nắm rõ bối cảnh" in text_lower:
+            blocks.append("Bài website còn câu mở đầu máy móc không cần thiết.")
         if "trà thương hiệu" in text_lower and "trà xanh" in focus_keyword:
             blocks.append("Bài website có dấu hiệu thay sai 'trà xanh' thành 'trà thương hiệu'.")
         if "content-forge-image-grid" in html_lower:

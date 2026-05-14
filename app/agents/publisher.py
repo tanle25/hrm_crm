@@ -1555,20 +1555,24 @@ def _nofollow_external_links(html: str, site_url: str) -> str:
 def _style_website_post_content(html: str, state: dict | None = None) -> str:
     accent = _site_primary_color(state or {})
     accent_soft = _rgba(accent, 0.10)
+    accent_border = _rgba(accent, 0.22)
     styled_html = html or ""
     if 'class="content-forge-article"' in styled_html:
         styled_html = re.sub(r'^<div class="content-forge-article"[^>]*>\s*', "", styled_html)
         styled_html = re.sub(r'\s*</div>\s*$', "", styled_html)
+    plan = (state or {}).get("plan") or {}
+    focus_keyword = str(plan.get("focus_keyword") or "").strip()
 
     replacements = {
-        "<h2>": f'<h2 style="margin:42px 0 18px;font-size:26px;line-height:1.32;color:{accent};border-left:5px solid {accent};padding-left:14px">',
-        "<h3>": '<h3 style="margin:26px 0 12px;font-size:20px;line-height:1.4;color:#222">',
+        "<h1>": f'<h1 style="color:{accent};text-align:center;font-size:30px;line-height:1.3;margin:0 0 24px;font-weight:800">',
+        "<h2>": f'<h2 style="color:{accent};font-size:25px;line-height:1.35;border-bottom:2px solid {accent_soft};padding-bottom:10px;margin:34px 0 18px;font-weight:800">',
+        "<h3>": f'<h3 style="color:{_darken_hex(accent)};margin:24px 0 12px;font-size:20px;line-height:1.4;font-weight:750">',
         "<p>": '<p style="margin:0 0 18px;color:#333">',
-        "<ul>": f'<ul style="margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-radius:14px;color:#333">',
-        "<ol>": f'<ol style="margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-radius:14px;color:#333">',
+        "<ul>": f'<ul style="margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-left:4px solid {accent};border-radius:0 12px 12px 0;color:#333">',
+        "<ol>": f'<ol style="margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-left:4px solid {accent};border-radius:0 12px 12px 0;color:#333">',
         "<li>": '<li style="margin-bottom:10px">',
-        "<table>": f'<table style="width:100%;margin:22px 0 30px;border-collapse:separate;border-spacing:0;border:1px solid {_rgba(accent, 0.22)};border-radius:14px;overflow:hidden;background:#fff">',
-        "<th>": f'<th style="padding:14px 16px;background:{accent_soft};border-bottom:1px solid {_rgba(accent, 0.18)};text-align:left;color:#222">',
+        "<table>": f'<table style="width:100%;margin:24px 0 32px;border-collapse:separate;border-spacing:0;border:1px solid {accent_border};border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,0.04)">',
+        "<th>": f'<th style="padding:14px 16px;background:{accent_soft};border-bottom:1px solid {_rgba(accent, 0.18)};text-align:left;color:{accent}">',
         "<td>": '<td style="padding:14px 16px;border-bottom:1px solid #edf0ed;vertical-align:top">',
         "<figure>": '<figure style="margin:26px 0;text-align:center">',
         "<figcaption>": '<figcaption style="margin-top:10px;color:#667085;font-size:14px;font-style:italic">',
@@ -1597,15 +1601,97 @@ def _style_website_post_content(html: str, state: dict | None = None) -> str:
     if paragraphs:
         intro = re.sub(
             r'<p\b([^>]*)>',
-            f'<p style="font-size:18px;line-height:1.85;color:#1f2933;background:{accent_soft};border-radius:16px;padding:18px 20px;margin:0 0 24px">',
+            f'<p style="font-size:17px;line-height:1.9;color:#1f2933;margin:0 0 22px">',
             paragraphs[0],
             count=1,
             flags=re.IGNORECASE,
         )
         styled_html = styled_html.replace(paragraphs[0], intro, 1)
 
-    wrapper_style = "color:#333;font-size:16px;line-height:1.8;font-family:'Segoe UI',Arial,sans-serif"
+    styled_html = _inject_article_toc(styled_html, accent, accent_soft)
+    styled_html = _style_article_faq_block(styled_html, accent)
+    styled_html = _append_article_cta(styled_html, state or {}, accent, focus_keyword)
+
+    wrapper_style = (
+        "font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.8;color:#333;"
+        "padding:24px;border:1px solid #eee;border-radius:14px;background:#fff;box-sizing:border-box;"
+        "box-shadow:0 12px 36px rgba(15,23,42,0.04)"
+    )
     return f'<div class="content-forge-article" style="{wrapper_style}">\n{styled_html}\n</div>'
+
+
+def _darken_hex(hex_color: str) -> str:
+    color = (hex_color or "#2c5e1a").strip().lstrip("#")
+    if len(color) != 6:
+        return "#2c5e1a"
+    try:
+        red, green, blue = (int(color[idx:idx + 2], 16) for idx in (0, 2, 4))
+    except ValueError:
+        return "#2c5e1a"
+    return "#" + "".join(f"{max(0, round(value * 0.78)):02x}" for value in (red, green, blue))
+
+
+def _inject_article_toc(html: str, accent: str, accent_soft: str) -> str:
+    if "content-forge-toc" in html:
+        return html
+    headings = re.findall(r"<h2\b[^>]*>(.*?)</h2>", html or "", flags=re.IGNORECASE | re.DOTALL)
+    items = []
+    for heading in headings[:6]:
+        text = _html_text(heading)
+        if text and text.lower() not in {"câu hỏi thường gặp", "faq"}:
+            items.append(text)
+    if len(items) < 2:
+        return html
+    toc_items = "".join(f'<li style="margin-bottom:8px">{escape(item)}</li>' for item in items)
+    toc = (
+        f'<div class="content-forge-toc" style="background:{accent_soft};padding:20px;border-left:5px solid {accent};'
+        'margin:0 0 28px;border-radius:0 10px 10px 0">'
+        f'<p style="margin:0 0 10px;font-weight:800;color:{accent};font-size:18px">Nội dung bài viết</p>'
+        f'<ul style="margin:0 0 0 20px;padding:0;list-style-type:square">{toc_items}</ul>'
+        '</div>'
+    )
+    first_paragraph = re.search(r"<p\b[^>]*>.*?</p>", html or "", flags=re.IGNORECASE | re.DOTALL)
+    if first_paragraph:
+        return html[:first_paragraph.end()] + "\n" + toc + "\n" + html[first_paragraph.end():]
+    return toc + "\n" + html
+
+
+def _style_article_faq_block(html: str, accent: str) -> str:
+    pattern = re.compile(
+        r"(<h2\b[^>]*>\s*(?:FAQ\s*:?\s*)?Câu hỏi thường gặp\s*</h2>)(.*?)(?=<h2\b|$)",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        body = match.group(2) or ""
+        return (
+            f'<div class="content-forge-faq" style="margin-top:40px;padding:26px;background:#fdfdfd;'
+            f'border:1px solid #ddd;border-radius:12px;box-shadow:0 8px 26px rgba(0,0,0,0.04)">'
+            f'<h2 style="color:{accent};text-align:center;margin:0 0 24px;font-size:24px">Câu hỏi thường gặp</h2>'
+            f'{body}</div>'
+        )
+
+    return pattern.sub(replace, html or "")
+
+
+def _append_article_cta(html: str, state: dict, accent: str, focus_keyword: str) -> str:
+    if "content-forge-cta" in html:
+        return html
+    site = state.get("site_profile") or {}
+    site_url = str(site.get("url") or "").rstrip("/")
+    topic = str(site.get("topic") or focus_keyword or "nội dung này").strip()
+    link = site_url or "#"
+    label = f"Tìm hiểu thêm về {topic}" if topic else "Tìm hiểu thêm"
+    return html + (
+        f'\n<div class="content-forge-cta" style="text-align:center;margin-top:42px;padding:30px 22px;'
+        f'background:linear-gradient(135deg,{accent} 0%,{_darken_hex(accent)} 100%);color:white;'
+        'border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.12)">'
+        '<p style="margin:0 0 10px;font-size:21px;font-weight:800">Muốn chọn thông tin phù hợp hơn?</p>'
+        f'<p style="margin:0 0 20px;font-size:16px;color:rgba(255,255,255,0.92)">Bạn có thể xem thêm các bài liên quan để đối chiếu trước khi quyết định.</p>'
+        f'<a href="{escape(link)}" style="display:inline-block;background:#ffeb3b;color:#25310f;padding:12px 30px;'
+        'text-decoration:none;border-radius:999px;font-weight:800;text-transform:uppercase;font-size:14px">'
+        f'{escape(label)}</a></div>'
+    )
 
 
 def _prepare_website_post_content(html: str, state: dict) -> str:

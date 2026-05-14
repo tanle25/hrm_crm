@@ -39,6 +39,16 @@ Nếu không phải product:
 - Có ít nhất 3 H2, 1 bảng so sánh nếu phù hợp, phần hỏi đáp tự nhiên, lời kết mềm.
 - Không được viết các câu hỏi meta như "Bài viết theo dạng nào?", "Cần những phần nào khi xây dựng nội dung...".
 - Không dùng các cụm nhãn nội bộ như SEO, CTA, FAQ, heading, checklist, website/blog trong nội dung người đọc nhìn thấy.
+- Phải viết HTML theo template bài blog, không chỉ semantic HTML thô:
+  <p>mở bài tự nhiên...</p>
+  <div class="content-forge-toc">...</div>
+  <section>...các h2/h3/p/ul/table...</section>
+  <div class="content-forge-faq">...câu hỏi thường gặp...</div>
+  <div class="content-forge-cta">...gợi ý bước tiếp theo...</div>
+- TOC phải tóm tắt 3-6 ý chính của bài, không ghi là "TOC".
+- FAQ phải dùng câu hỏi thật của người đọc, không hỏi về sản phẩm nếu bài là kiến thức.
+- CTA là lời gợi ý mềm theo chủ đề, không gọi tên là CTA.
+- Không chèn ảnh, figure hoặc gallery cho bài website; hệ thống sẽ tự chèn ảnh sau.
 
 HTML phải sạch, semantic, dùng các thẻ như: p, h2, h3, ul, li, table, tr, th, td, section, figure, figcaption.
 Không thêm giải thích ngoài JSON.
@@ -352,6 +362,18 @@ def run(state: dict) -> dict:
         if source_origin == "website_article_url"
         else ""
     )
+    website_template_instruction = ""
+    if not is_product:
+        website_template_instruction = (
+            "TEMPLATE HTML BẮT BUỘC CHO BÀI WEBSITE:\n"
+            "1) Mở bằng đúng 1 thẻ <p> tự nhiên, câu đầu chứa focus keyword. Không viết 'nội dung trọng tâm', không viết 'thông tin sản phẩm'.\n"
+            "2) Sau mở bài là <div class=\"content-forge-toc\"><p>Nội dung bài viết:</p><ul>...</ul></div> với 3-6 ý chính.\n"
+            "3) Thân bài chia thành nhiều <section>, mỗi section có <h2> và 1-4 đoạn/bullet/table. H2 không dùng số thứ tự nếu không cần.\n"
+            "4) Nếu có danh sách, dùng <ul><li>...</li></ul>. Nếu so sánh, dùng <table><tr><th>...</th></tr>...</table>.\n"
+            "5) FAQ dùng <div class=\"content-forge-faq\"><h2>FAQ: Câu Hỏi Thường Gặp</h2><div><h3>...</h3><p>...</p></div>...</div>.\n"
+            "6) Kết thúc bằng <div class=\"content-forge-cta\"><p>...</p><p>...</p><a href=\"#\">...</a></div>.\n"
+            "7) Tuyệt đối không chèn <h1>, không chèn ảnh, không chèn figure, không chèn figcaption, không chèn class content-forge-image-grid.\n"
+        )
     prompt = (
         f"Metadata: {concise_metadata}\n"
         f"Plan: {concise_plan}\n"
@@ -363,13 +385,14 @@ def run(state: dict) -> dict:
         f"Knowledge facts: {knowledge_facts}\n"
         f"Source/brief excerpt: {source_excerpt}\n"
         f"{knowledge_instruction}"
+        f"{website_template_instruction}"
         "Yêu cầu: tiếng Việt tự nhiên, có quan sát thực tế, không sáo rỗng, không bịa dữ kiện.\n"
         "Không nhắc website nguồn, URL nguồn hoặc thương hiệu nguồn trong nội dung cuối.\n"
         "Không dùng blockquote mở đầu, không dùng heading kiểu 'Gợi ý nhanh' hay 'Mô tả ngắn'.\n"
         "Mở bài đi thẳng vào bối cảnh thực tế; thân bài mềm mại; kết bài gợi bước tiếp theo thật tự nhiên, không gọi tên là CTA.\n"
         "Không kéo toàn bộ câu chuyện sang quà biếu nếu dữ liệu không cho thấy đó là trung tâm.\n"
         "Heading phải tự nhiên, không đều tay kiểu slogan; phần hỏi đáp phải là băn khoăn thật, không hỏi về cấu trúc bài viết hoặc SEO.\n"
-        + ("Dựa vào ảnh để mô tả hình thức sản phẩm; HTML cuối cần có 3-5 ảnh chèn tự nhiên trong thân bài.\n" if is_product else "Không chèn ảnh, figure, figcaption hoặc gallery trong HTML; hệ thống sẽ tự phân phối ảnh theo từng section sau.\n")
+        + ("Dựa vào ảnh để mô tả hình thức sản phẩm; HTML cuối cần có 3-5 ảnh chèn tự nhiên trong thân bài.\n" if is_product else "Bài website phải tự sinh TOC, FAQ card và CTA theo class template ở trên; không chèn ảnh, figure, figcaption hoặc gallery.\n")
         + ("Không dùng cụm 'thông tin sản phẩm' nếu đây là bài kiến thức/blog; hãy gọi đúng chủ đề bằng focus keyword hoặc biến thể tự nhiên.\n" if not is_product else "")
         +
         "Focus keyword rải tự nhiên ở mở bài, vài heading, bảng/bullet, FAQ, caption ảnh và kết bài; ưu tiên mật độ khoảng 1-1.5% tính trên toàn bài, dùng cả exact phrase và biến thể gần nhưng không nhồi máy móc.\n"

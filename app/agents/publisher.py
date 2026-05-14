@@ -1657,6 +1657,7 @@ def _style_website_post_content(html: str, state: dict | None = None) -> str:
     styled_html = _inject_article_toc(styled_html, accent, accent_soft)
     styled_html = _style_article_faq_block(styled_html, accent)
     styled_html = _append_article_cta(styled_html, state or {}, accent, focus_keyword)
+    styled_html = _style_existing_article_template_blocks(styled_html, accent, accent_soft)
 
     wrapper_style = (
         "font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.8;color:#333;"
@@ -1712,7 +1713,42 @@ def _inject_article_toc(html: str, accent: str, accent_soft: str) -> str:
     return toc + "\n" + html
 
 
+def _style_classed_div(html: str, class_name: str, style: str) -> str:
+    pattern = re.compile(
+        rf"<div\b(?=[^>]*\bclass=(['\"])[^'\"]*\b{re.escape(class_name)}\b[^'\"]*\1)([^>]*)>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        attrs = match.group(2) or ""
+        attrs = re.sub(r"\sstyle=(['\"]).*?\1", "", attrs, flags=re.IGNORECASE | re.DOTALL)
+        return f'<div{attrs} style="{style}">'
+
+    return pattern.sub(replace, html or "")
+
+
+def _style_existing_article_template_blocks(html: str, accent: str, accent_soft: str) -> str:
+    styled = _style_classed_div(
+        html,
+        "content-forge-toc",
+        f"background-color:{accent_soft};padding:20px;border-left:5px solid {accent};margin:0 0 25px;border-radius:0 8px 8px 0",
+    )
+    styled = _style_classed_div(
+        styled,
+        "content-forge-faq",
+        "margin-top:40px;padding:25px;background-color:#fdfdfd;border:1px solid #ddd;border-radius:8px",
+    )
+    styled = _style_classed_div(
+        styled,
+        "content-forge-cta",
+        f"text-align:center;margin-top:40px;padding:30px 20px;background:linear-gradient(135deg,{accent} 0%,{_darken_hex(accent)} 100%);color:white;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.1)",
+    )
+    return styled
+
+
 def _style_article_faq_block(html: str, accent: str) -> str:
+    if "content-forge-faq" in (html or ""):
+        return html
     pattern = re.compile(
         r"(<h2\b[^>]*>\s*(?:FAQ\s*:?\s*)?(?:[^<]*câu hỏi thường gặp[^<]*)</h2>)(.*?)(?=<h2\b|$)",
         flags=re.IGNORECASE | re.DOTALL,

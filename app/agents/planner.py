@@ -27,6 +27,8 @@ Neu nguon la product, hay lap ke hoach cho mo ta san pham thuong mai:
 - focus_keyword đủ rõ ý định mua hoặc sử dụng, nhưng không tự kéo sang bối cảnh tặng quà nếu tên sản phẩm không thực sự xoay quanh điều đó
 - nếu metadata.source_type là product và product_kind là variable, kế hoạch phải giúp người mua hiểu các biến thể/quy cách và cách chọn
 - nếu metadata.source_type là article, không lập kế hoạch như trang bán hàng và không ép schema Product
+- với article/keyword, title và meta_title phải là một câu tiêu đề tự nhiên hoàn chỉnh, không tách vế bằng ký tự như ":", "-", "–", "|"
+- với article/keyword, title vẫn nên chứa focus_keyword nhưng không viết kiểu công thức "từ khóa: hướng dẫn..."
 - meta_description <= 155 ky tu
 - outline cần bám đúng sản phẩm đang có, không mặc định kéo mọi sản phẩm về cùng một câu chuyện như "quà biếu", "quà tặng" hay "món quà doanh nghiệp"
 - narrative phải cân bằng giữa bản chất sản phẩm, trải nghiệm dùng, chất liệu/thiết kế, lợi ích thực tế và các bối cảnh sử dụng có thật; chỉ nhấn mạnh một use case duy nhất khi dữ liệu nguồn cho thấy điều đó là trung tâm rõ ràng
@@ -92,8 +94,8 @@ def _heuristic_plan(
         "conclusion": "Tom tat + CTA mem, huong nguoi doc den buoc tiep theo.",
     }
     return {
-        "title": base_title if source_type == "product" else f"{base_title}: huong dan tong hop va phan tich thuc te",
-        "meta_title": _product_meta_title(focus_keyword)[:60] if source_type == "product" else f"{base_title}: hướng dẫn thực tế"[:60],
+        "title": base_title if source_type == "product" else _natural_article_title(focus_keyword or base_title),
+        "meta_title": _product_meta_title(focus_keyword)[:60] if source_type == "product" else _natural_article_title(focus_keyword or base_title)[:60],
         "article_type": article_type,
         "target_intent": "commercial" if source_type == "product" or "san pham" in base_title.lower() else "informational",
         "tone": "professional",
@@ -183,6 +185,12 @@ def run(key_points: list[str], knowledge_facts: list[dict], metadata: dict, focu
             meta_description = fallback["meta_description"]
         data["meta_description"] = meta_description
         data["e_e_a_t_elements"] = fallback["e_e_a_t_elements"]
+    else:
+        title = _natural_article_title(str(data.get("title") or fallback["title"]), str(data.get("focus_keyword") or fallback["focus_keyword"]))
+        meta_title = _natural_article_title(str(data.get("meta_title") or title), str(data.get("focus_keyword") or fallback["focus_keyword"]))
+        data["title"] = title
+        data["meta_title"] = meta_title[:60].rstrip(" ,.;")
+        data["schema_type"] = "Article" if data.get("schema_type") == "Product" else data.get("schema_type", "Article")
     data["tags"] = _normalize_tags(data.get("tags"), fallback["tags"], data.get("focus_keyword", fallback["focus_keyword"]))
     return data
 
@@ -196,6 +204,26 @@ def _clean_title(value: str) -> str:
     title = re.sub(r"\s*:\s*(hướng dẫn|huong dan|phân tích|phan tich|tổng hợp|tong hop).*$", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\s+", " ", title).strip(" -–|")
     return title or "Sản phẩm"
+
+
+def _natural_article_title(value: str, focus_keyword: str = "") -> str:
+    title = _clean_title(value)
+    keyword = _clean_title(focus_keyword or title)
+    for separator in [":", " - ", " – ", " — ", "|"]:
+        if separator in title:
+            pieces = [piece.strip(" .,:;|-–—") for piece in title.split(separator) if piece.strip(" .,:;|-–—")]
+            title = pieces[0] if pieces else title
+            break
+    title = re.sub(r"\b(huong dan|hướng dẫn|tong hop|tổng hợp|phan tich|phân tích|thuc te|thực tế)\b$", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\s+", " ", title).strip(" .,:;|-–—")
+    if keyword and keyword.lower() not in title.lower():
+        base = keyword
+    else:
+        base = title or keyword
+    lowered = base.lower()
+    if not any(verb in lowered for verb in ["giúp", "cho", "khi", "vì sao", "cách", "nên", "hiểu", "chọn", "dùng"]):
+        base = f"{base} giúp bạn hiểu đúng và áp dụng dễ hơn"
+    return re.sub(r"\s+", " ", base).strip(" .,:;|-–—")
 
 
 def _refine_product_title(raw_title: str, source_title: str, metadata: dict) -> str:

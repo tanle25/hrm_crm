@@ -1817,7 +1817,26 @@ def _seo_title(state: dict) -> str:
     title = (plan.get("meta_title") or plan.get("title") or focus_keyword).strip()
     if not title:
         title = focus_keyword
+    if _source_origin(state) in {"website_article_url", "website_keyword"}:
+        title = _natural_website_title(title, focus_keyword)
     return title[:60].rstrip(" -|:,;")
+
+
+def _natural_website_title(title: str, focus_keyword: str) -> str:
+    value = re.sub(r"\s+", " ", unescape(title or "")).strip(" .,:;|-–—")
+    keyword = re.sub(r"\s+", " ", unescape(focus_keyword or "")).strip(" .,:;|-–—")
+    for separator in [":", " - ", " – ", " — ", "|"]:
+        if separator in value:
+            pieces = [piece.strip(" .,:;|-–—") for piece in value.split(separator) if piece.strip(" .,:;|-–—")]
+            value = pieces[0] if pieces else value
+            break
+    value = re.sub(r"\b(hướng dẫn|huong dan|tổng hợp|tong hop|phân tích|phan tich|thực tế|thuc te)\b$", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s+", " ", value).strip(" .,:;|-–—")
+    if keyword and keyword.lower() not in value.lower():
+        value = keyword
+    if not any(term in value.lower() for term in ["giúp", "cho", "khi", "vì sao", "cách", "nên", "hiểu", "chọn", "dùng"]):
+        value = f"{value} giúp bạn hiểu đúng và áp dụng dễ hơn"
+    return value
 
 
 def _seo_description(plan: dict) -> str:

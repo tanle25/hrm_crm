@@ -178,8 +178,24 @@ def _run_image_selector(state: dict) -> dict:
         metadata.get("featured_image_alt"),
         metadata.get("image_urls") or [],
         provider="pexels" if str(state.get("source_origin") or "") == "website_keyword" else "",
+        section_queries=_image_section_queries(state) if str(state.get("source_origin") or "") == "website_keyword" else [],
     )
     return state
+
+
+def _image_section_queries(state: dict) -> list[str]:
+    outline = (state.get("plan") or {}).get("outline") or {}
+    sections = outline.get("sections") if isinstance(outline, dict) else []
+    queries: list[str] = []
+    for section in sections if isinstance(sections, list) else []:
+        heading = str((section or {}).get("h2") if isinstance(section, dict) else section or "").strip()
+        lowered = heading.lower()
+        if not heading or any(marker in lowered for marker in ["faq", "câu hỏi thường gặp", "cau hoi thuong gap", "kết luận", "ket luan"]):
+            continue
+        queries.append(heading)
+        if len(queries) >= 4:
+            break
+    return queries
 
 
 def _run_media_uploader(state: dict) -> dict:

@@ -972,6 +972,7 @@ def _build_website_post_payload(state: dict) -> dict:
     schema = build_schema(state)
     image_data = state.get("image_data", {}) or {}
     image_gallery = image_data.get("gallery") or []
+    image_gallery_items = image_data.get("gallery_items") or []
     meta_title = _seo_title(state)
     meta_description = _seo_description(state["plan"])
     featured_media_id = _website_featured_media_id(state)
@@ -980,6 +981,7 @@ def _build_website_post_payload(state: dict) -> dict:
         image_gallery,
         image_data.get("alt_text", state["plan"]["focus_keyword"]),
         force=True,
+        image_items=image_gallery_items,
     )
     content = _prepare_website_post_content(content, state)
     payload = {
@@ -1303,23 +1305,17 @@ def _style_product_content(html: str, state: dict | None = None) -> str:
     return f'<div class="content-forge-product" style="{wrapper_style}">\n{styled_html}\n</div>'
 
 
-def _inject_content_images(html: str, image_urls: list[str], alt_text: str, force: bool = False) -> str:
+def _inject_content_images(html: str, image_urls: list[str], alt_text: str, force: bool = False, image_items: list[dict] | None = None) -> str:
     html = _remove_all_content_images(html or "") if force else _remove_invalid_content_images(html or "")
-    if not image_urls:
+    normalized_items = _normalize_image_items(image_urls, image_items or [], alt_text)
+    if not normalized_items:
         return html
     if not force and _has_valid_content_image(html):
         return html
     html = re.sub(r"<section\b[^>]*content-forge-image-grid[^>]*>\s*</section>\s*", "", html, flags=re.IGNORECASE | re.DOTALL)
     if "<img " in html.lower():
         return html
-    selected = image_urls[:4]
-    image_blocks = []
-    for index, url in enumerate(selected, start=1):
-        image_blocks.append(
-            f'<figure><img src="{url}" alt="{alt_text}" loading="lazy" '
-            'style="width:100%;height:auto;border-radius:14px;display:block" />'
-            f'<figcaption>{alt_text} - hình minh họa {index}</figcaption></figure>'
-        )
+    selected = normalized_items[:4]
     updated = html
     h2_matches = list(re.finditer(r"<h2\b[^>]*>.*?</h2>\s*(?:<p\b[^>]*>.*?</p>)?", updated, flags=re.IGNORECASE | re.DOTALL))
     if h2_matches:
@@ -1327,12 +1323,18 @@ def _inject_content_images(html: str, image_urls: list[str], alt_text: str, forc
         candidate_indexes = [
             idx for idx, match in enumerate(h2_matches)
             if not any(marker in _html_text(match.group(0)).lower() for marker in ["câu hỏi thường gặp", "faq", "kết luận"])
-        ] or list(range(len(h2_matches)))
-        overflow_indexes = [idx for idx in range(len(h2_matches)) if idx not in candidate_indexes]
-        selected_indexes = (candidate_indexes + overflow_indexes)[: len(image_blocks)]
+        ]
+        selected_indexes = (candidate_indexes or list(range(len(h2_matches))))[: len(selected)]
         offset = 0
-        for block, match_index in zip(image_blocks, selected_indexes):
+        used_urls: set[str] = set()
+        for ordinal, match_index in enumerate(selected_indexes, start=1):
             match = h2_matches[match_index]
+            context = _html_text(match.group(0))
+            item = _select_image_for_context(selected, context, used_urls)
+            if not item:
+                continue
+            used_urls.add(item["url"])
+            block = _image_figure_html(item, alt_text, ordinal)
             insert_pos = match.end() + offset
             insertion = f'\n<section class="content-forge-image-slot" style="margin:26px 0">{block}</section>\n'
             updated = updated[:insert_pos] + insertion + updated[insert_pos:]
@@ -1340,16 +1342,96 @@ def _inject_content_images(html: str, image_urls: list[str], alt_text: str, forc
         return updated
     paragraphs = list(re.finditer(r"</p>", updated, flags=re.IGNORECASE))
     if paragraphs:
-        step = max(1, len(paragraphs) // (len(image_blocks) + 1))
+        step = max(1, len(paragraphs) // (len(selected) + 1))
         offset = 0
-        for idx, block in enumerate(image_blocks):
+        for idx, item in enumerate(selected):
             paragraph = paragraphs[min((idx + 1) * step - 1, len(paragraphs) - 1)]
             insert_pos = paragraph.end() + offset
+            block = _image_figure_html(item, alt_text, idx + 1)
             insertion = f'\n<section class="content-forge-image-slot" style="margin:26px 0">{block}</section>\n'
             updated = updated[:insert_pos] + insertion + updated[insert_pos:]
             offset += len(insertion)
         return updated
-    return '<section class="content-forge-image-slot" style="margin:26px 0">' + image_blocks[0] + "</section>\n" + html
+    return '<section class="content-forge-image-slot" style="margin:26px 0">' + _image_figure_html(selected[0], alt_text, 1) + "</section>\n" + html
+
+
+def _normalize_image_items(image_urls: list[str], image_items: list[dict], fallback_alt: str) -> list[dict]:
+    output: list[dict] = []
+    seen: set[str] = set()
+    for item in image_items:
+        url = str(item.get("url") or "").strip()
+        if not _normalize_image_url(url) or url in seen:
+            continue
+        seen.add(url)
+        output.append({
+            "url": url,
+            "alt": str(item.get("alt") or fallback_alt or "").strip(),
+            "photographer": str(item.get("photographer") or "").strip(),
+        })
+    for url in image_urls:
+        cleaned = str(url or "").strip()
+        if not _normalize_image_url(cleaned) or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        output.append({"url": cleaned, "alt": fallback_alt, "photographer": ""})
+    return output
+
+
+def _image_match_tokens(value: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    ascii_value = normalized.encode("ascii", "ignore").decode("ascii").lower()
+    tokens = {
+        token for token in re.split(r"[^a-z0-9]+", ascii_value)
+        if len(token) >= 3 and token not in {"the", "and", "with", "photo", "image", "hinh", "anh", "minh", "hoa"}
+    }
+    phrase_tokens = {
+        "tra xanh": ["green", "tea", "matcha"],
+        "hoa cuc": ["chamomile", "daisy"],
+        "bac ha": ["mint", "peppermint"],
+        "oai huong": ["lavender"],
+        "thao moc": ["herbal", "herb"],
+        "tra den": ["black", "tea"],
+        "tra trang": ["white", "tea"],
+        "tra o long": ["oolong", "tea"],
+        "tra sen": ["lotus", "tea"],
+        "tra gung": ["ginger", "tea"],
+        "atiso": ["artichoke"],
+        "cang thang": ["stress", "relax", "calm"],
+        "thu gian": ["relax", "calm"],
+        "ngu ngon": ["sleep"],
+        "van phong": ["office", "desk", "work"],
+    }
+    for phrase, additions in phrase_tokens.items():
+        if phrase in ascii_value:
+            tokens.update(additions)
+    return tokens
+
+
+def _select_image_for_context(items: list[dict], context: str, used_urls: set[str]) -> dict | None:
+    candidates = [item for item in items if item.get("url") not in used_urls]
+    if not candidates:
+        return None
+    context_tokens = _image_match_tokens(context)
+    if not context_tokens:
+        return candidates[0]
+    scored = []
+    for index, item in enumerate(candidates):
+        image_tokens = _image_match_tokens(f"{item.get('alt', '')} {item.get('photographer', '')}")
+        score = len(context_tokens & image_tokens)
+        scored.append((score, -index, item))
+    scored.sort(reverse=True, key=lambda pair: (pair[0], pair[1]))
+    return scored[0][2]
+
+
+def _image_figure_html(item: dict, fallback_alt: str, index: int) -> str:
+    url = str(item.get("url") or "").strip()
+    alt = str(item.get("alt") or fallback_alt or "").strip()
+    caption = alt or f"{fallback_alt} - hình minh họa {index}"
+    return (
+        f'<figure><img src="{escape(url, quote=True)}" alt="{escape(alt or fallback_alt, quote=True)}" loading="lazy" '
+        'style="width:100%;height:auto;border-radius:14px;display:block" />'
+        f'<figcaption>{escape(caption)}</figcaption></figure>'
+    )
 
 
 def _has_valid_content_image(html: str) -> bool:

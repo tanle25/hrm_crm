@@ -1534,88 +1534,31 @@ def _strip_editorial_meta_blocks(html: str) -> str:
     return cleaned
 
 
-def _ensure_focus_keyword_intro(html: str, focus_keyword: str) -> str:
+def _strip_website_seo_artifacts(html: str, focus_keyword: str = "") -> str:
+    cleaned = html or ""
     keyword = re.sub(r"\s+", " ", unescape(focus_keyword or "")).strip()
-    if not keyword:
-        return html
-    lowered_keyword = keyword.lower()
 
-    def update_first_paragraph(match: re.Match[str]) -> str:
+    def clean_paragraph(match: re.Match[str]) -> str:
         attrs = match.group(1) or ""
         body = match.group(2) or ""
-        body_text = _html_text(body).lower()
-        if body_text.startswith(lowered_keyword):
-            return match.group(0)
-        prefix = (
-            f"<strong>{escape(keyword)}</strong> là nội dung trọng tâm trong bài viết này, "
-            "giúp bạn nắm rõ bối cảnh, tiêu chí lựa chọn và cách áp dụng thực tế. "
-        )
-        return f"<p{attrs}>{prefix}{body}</p>"
+        patterns = [
+            r"\s*<strong>[^<]+</strong>\s*là nội dung trọng tâm trong bài viết này,\s*giúp bạn nắm rõ bối cảnh,\s*tiêu chí lựa chọn và cách áp dụng thực tế\.\s*",
+            r"\s*Với\s+<strong>[^<]+</strong>,\s*người đọc nên ưu tiên thông tin rõ ràng,\s*tiêu chí lựa chọn thực tế và cách áp dụng phù hợp nhu cầu\.\s*",
+            r"[^.!?。]*\bngười đọc nên ưu tiên thông tin rõ ràng,\s*tiêu chí lựa chọn thực tế và cách áp dụng phù hợp nhu cầu[^.!?。]*[.!?。]?\s*",
+            r"[^.!?。]*\bcần được hiểu theo nhu cầu thực tế,\s*dữ kiện đáng tin và tiêu chí lựa chọn rõ ràng[^.!?。]*[.!?。]?\s*",
+            r"[^.!?。]*\bthông tin sản phẩm\b[^.!?。]*[.!?。]?\s*",
+        ]
+        for pattern in patterns:
+            body = re.sub(pattern, " ", body, flags=re.IGNORECASE | re.DOTALL)
+        body = re.sub(r"\s{2,}", " ", body).strip()
+        if not _html_text(body):
+            return ""
+        return f"<p{attrs}>{body}</p>"
 
-    updated, count = re.subn(
-        r"<p\b([^>]*)>(.*?)</p>",
-        update_first_paragraph,
-        html or "",
-        count=1,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if count:
-        return updated
-    return (
-        f"<p><strong>{escape(keyword)}</strong> là nội dung trọng tâm trong bài viết này, "
-        "giúp bạn nắm rõ bối cảnh, tiêu chí lựa chọn và cách áp dụng thực tế.</p>\n"
-        + (html or "")
-    )
-
-
-def _boost_focus_keyword_density(html: str, focus_keyword: str) -> str:
-    keyword = re.sub(r"\s+", " ", unescape(focus_keyword or "")).strip()
-    if not keyword:
-        return html
-    word_count = len(_html_text(html).split())
-    target_count = max(4, min(14, round(word_count * 0.006)))
-    current_count = _keyword_count(html, keyword)
-    if current_count >= target_count:
-        return html
-
-    sentence = (
-        f" Với <strong>{escape(keyword)}</strong>, người đọc nên ưu tiên thông tin rõ ràng, "
-        "tiêu chí lựa chọn thực tế và cách áp dụng phù hợp nhu cầu."
-    )
-
-    remaining = target_count - current_count
-
-    def add_keyword(match: re.Match[str]) -> str:
-        nonlocal remaining
-        if remaining <= 0:
-            return match.group(0)
-        attrs = match.group(1) or ""
-        body = match.group(2) or ""
-        text = _html_text(body)
-        if len(text.split()) < 18:
-            return match.group(0)
-        remaining -= 1
-        return f"<p{attrs}>{body}{sentence}</p>"
-
-    updated = re.sub(r"<p\b([^>]*)>(.*?)</p>", add_keyword, html or "", flags=re.IGNORECASE | re.DOTALL)
-    current_count = _keyword_count(updated, keyword)
-    if current_count >= target_count:
-        return updated
-
-    missing = min(4, target_count - current_count)
-    reinforcement = " ".join(
-        f"{escape(keyword)} cần được hiểu theo nhu cầu thực tế, dữ kiện đáng tin và tiêu chí lựa chọn rõ ràng."
-        for _ in range(missing)
-    )
-    block = f"<p>{reinforcement}</p>"
-    inserted, count = re.subn(
-        r"(</p>)",
-        r"\1\n" + block,
-        updated,
-        count=1,
-        flags=re.IGNORECASE,
-    )
-    return inserted if count else block + "\n" + updated
+    cleaned = re.sub(r"<p\b([^>]*)>(.*?)</p>", clean_paragraph, cleaned, flags=re.IGNORECASE | re.DOTALL)
+    if keyword and "trà xanh" in keyword.lower():
+        cleaned = re.sub(r"\btrà\s+thương\s+hiệu\b", "trà xanh", cleaned, flags=re.IGNORECASE)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
 def _nofollow_external_links(html: str, site_url: str) -> str:
@@ -1813,8 +1756,7 @@ def _prepare_website_post_content(html: str, state: dict) -> str:
     site_url = str((state.get("site_profile") or {}).get("url") or "")
     prepared = _strip_tldr_blocks(html)
     prepared = _strip_editorial_meta_blocks(prepared)
-    prepared = _ensure_focus_keyword_intro(prepared, focus_keyword)
-    prepared = _boost_focus_keyword_density(prepared, focus_keyword)
+    prepared = _strip_website_seo_artifacts(prepared, focus_keyword)
     prepared = _nofollow_external_links(prepared, site_url)
     return _style_website_post_content(prepared, state)
 

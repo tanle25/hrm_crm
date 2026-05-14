@@ -68,7 +68,6 @@ Trả về JSON hợp lệ với một trường duy nhất: html.
 
 HTML bắt buộc đi theo template này:
 <div class="content-forge-article" style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.8;color:#333;padding:20px;border:1px solid #eee;border-radius:10px;background-color:#fff;box-sizing:border-box">
-  <h1 style="color:{{primary_color}};text-align:center;font-size:28px;margin-bottom:20px;font-weight:bold">...</h1>
   <p style="font-size:16px;margin-bottom:20px">...</p>
   <div class="content-forge-toc" style="background-color:{{soft_color}};padding:20px;border-left:5px solid {{primary_color}};margin-bottom:25px;border-radius:0 8px 8px 0">
     <p style="margin:0;font-weight:bold;color:{{primary_color}};font-size:18px">Nội dung bài viết:</p>
@@ -90,7 +89,7 @@ HTML bắt buộc đi theo template này:
 </div>
 
 Quy tắc nội dung:
-- H1 là một câu tiêu đề tự nhiên hoàn chỉnh, có từ khóa chính, không dùng dấu ":" "-" "|" để nối vế.
+- Không dùng thẻ h1 trong nội dung; tiêu đề bài viết do hệ thống đăng bài xử lý riêng.
 - Mở bài 1 đoạn, câu đầu chứa từ khóa chính và đi thẳng vào nhu cầu người đọc.
 - Mục lục có 3-5 gạch đầu dòng thật sự tương ứng với nội dung.
 - Thân bài có ít nhất 3 H2; dùng H3 cho danh sách lựa chọn hoặc các mục con.
@@ -403,7 +402,6 @@ def _website_html_valid(html_text: str) -> bool:
             "content-forge-toc",
             "content-forge-faq",
             "content-forge-cta",
-            "<h1",
             "<h2",
         ]
     )
@@ -477,13 +475,13 @@ def run(state: dict) -> dict:
     if not is_product:
         website_template_instruction = (
             "TEMPLATE HTML BẮT BUỘC CHO BÀI WEBSITE:\n"
-            "1) Mở bằng đúng 1 thẻ <h1> tự nhiên, sau đó là đúng 1 thẻ <p> mở bài; câu đầu của mở bài chứa focus keyword. Không viết 'nội dung trọng tâm', không viết 'thông tin sản phẩm'.\n"
+            "1) Mở bằng đúng 1 thẻ <p> mở bài; câu đầu của mở bài chứa focus keyword. Không viết 'nội dung trọng tâm', không viết 'thông tin sản phẩm'.\n"
             "2) Sau mở bài là <div class=\"content-forge-toc\"><p>Nội dung bài viết:</p><ul>...</ul></div> với 3-6 ý chính.\n"
             "3) Thân bài chia thành nhiều <section>, mỗi section có <h2> và 1-4 đoạn/bullet/table. H2 không dùng số thứ tự nếu không cần.\n"
             "4) Nếu có danh sách, dùng <ul><li>...</li></ul>. Nếu so sánh, dùng <table><tr><th>...</th></tr>...</table>.\n"
             "5) FAQ dùng <div class=\"content-forge-faq\"><h2>FAQ: Câu Hỏi Thường Gặp</h2><div><h3>...</h3><p>...</p></div>...</div>.\n"
             "6) Kết thúc bằng <div class=\"content-forge-cta\"><p>...</p><p>...</p><a href=\"#\">...</a></div>.\n"
-            "7) Phải có đúng 1 <h1> ở đầu template; không chèn ảnh, figure, figcaption hoặc class content-forge-image-grid.\n"
+            "7) Tuyệt đối không chèn <h1>; không chèn ảnh, figure, figcaption hoặc class content-forge-image-grid.\n"
         )
     primary_color = _site_primary_color(state)
     secondary_color = _darken_hex(primary_color)

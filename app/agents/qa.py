@@ -110,12 +110,13 @@ def _strict_blocks(state: dict, similarity: float) -> list[str]:
             "content-forge-toc",
             "content-forge-faq",
             "content-forge-cta",
-            "<h1",
             "<h2",
         ]
         missing_template = [marker for marker in required_template_markers if marker not in html_lower]
         if missing_template:
             blocks.append("Bài website chưa đi đúng template HTML bắt buộc: " + ", ".join(missing_template) + ".")
+        if "<h1" in html_lower:
+            blocks.append("Bài website không được dùng thẻ H1 trong nội dung.")
         if any(term in text_lower for term in ["geo", "ai-friendly", "ai friendly"]):
             blocks.append("Bài website còn thuật ngữ tối ưu nội bộ không cần thiết.")
     if source_type == "product":

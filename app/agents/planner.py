@@ -109,7 +109,7 @@ def _heuristic_plan(
                 else f"{focus_keyword} có quy cách {packets} đơn vị x {grams}g, thông tin rõ ràng và phù hợp nhu cầu sử dụng thực tế."
             )
             if source_type == "product"
-            else f"Tóm tắt {focus_keyword} theo nguồn gốc, cấu trúc dễ đọc và tối ưu SEO/GEO cho thị trường Việt Nam."
+            else f"{focus_keyword} được trình bày rõ ràng, dễ đọc và hữu ích cho người đang tìm hiểu chủ đề này."
         )[:155],
         "outline": outline,
         "e_e_a_t_elements": {

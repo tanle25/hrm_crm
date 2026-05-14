@@ -1606,10 +1606,8 @@ def _style_website_post_content(html: str, state: dict | None = None) -> str:
         styled_html = re.sub(r'\s*</div>\s*$', "", styled_html)
     plan = (state or {}).get("plan") or {}
     focus_keyword = str(plan.get("focus_keyword") or "").strip()
-    # WordPress already renders the post title as H1; body content must not duplicate it.
-    styled_html = re.sub(r"<h1\b[^>]*>.*?</h1>\s*", "", styled_html, flags=re.IGNORECASE | re.DOTALL)
-
     tag_styles = {
+        "h1": f"color:{accent};text-align:center;font-size:28px;margin:0 0 20px;font-weight:bold;line-height:1.35",
         "section": "margin:0 0 8px",
         "h2": f"color:{accent};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin:32px 0 18px;font-size:24px;line-height:1.35;font-weight:800",
         "h3": f"color:{_darken_hex(accent)};margin:22px 0 10px;font-size:20px;line-height:1.4;font-weight:800",

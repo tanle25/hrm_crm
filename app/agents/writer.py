@@ -54,8 +54,84 @@ HTML phải sạch, semantic, dùng các thẻ như: p, h2, h3, ul, li, table, t
 Không thêm giải thích ngoài JSON.
 """.strip()
 
+
+WEBSITE_WRITER_SYSTEM_PROMPT = """
+Bạn là biên tập viên SEO tiếng Việt.
+Nhiệm vụ: viết bài blog/website theo đúng template HTML được yêu cầu, không viết như trang bán hàng.
+Chỉ tối ưu SEO cơ bản: tiêu đề tự nhiên, mở bài rõ ý, heading dễ đọc, từ khóa chính xuất hiện tự nhiên, FAQ hữu ích.
+Không dùng thuật ngữ nội bộ như quy trình tối ưu, CTA, checklist, heading trong nội dung người đọc nhìn thấy.
+Không dùng TL;DR, không dùng "nội dung trọng tâm", không dùng "thông tin sản phẩm".
+Không chèn ảnh, figure, figcaption hoặc gallery.
+Không bịa dữ kiện ngoài input.
+
+Trả về JSON hợp lệ với một trường duy nhất: html.
+
+HTML bắt buộc đi theo template này:
+<div class="content-forge-article" style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.8;color:#333;padding:20px;border:1px solid #eee;border-radius:10px;background-color:#fff;box-sizing:border-box">
+  <h1 style="color:{{primary_color}};text-align:center;font-size:28px;margin-bottom:20px;font-weight:bold">...</h1>
+  <p style="font-size:16px;margin-bottom:20px">...</p>
+  <div class="content-forge-toc" style="background-color:{{soft_color}};padding:20px;border-left:5px solid {{primary_color}};margin-bottom:25px;border-radius:0 8px 8px 0">
+    <p style="margin:0;font-weight:bold;color:{{primary_color}};font-size:18px">Nội dung bài viết:</p>
+    <ul style="margin:10px 0 0 20px;padding:0;list-style-type:square">...</ul>
+  </div>
+  <h2 style="color:{{primary_color}};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin-top:30px">...</h2>
+  <p>...</p>
+  <ul style="padding-left:20px">...</ul>
+  <h2 style="color:{{primary_color}};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin-top:30px">...</h2>
+  <h3 style="color:{{secondary_color}};margin-top:20px;font-size:20px">...</h3>
+  <p>...</p>
+  <div class="content-forge-faq" style="margin-top:40px;padding:25px;background-color:#fdfdfd;border:1px solid #ddd;border-radius:8px">
+    <h2 style="color:{{primary_color}};text-align:center;margin-top:0;margin-bottom:25px">FAQ: Câu Hỏi Thường Gặp</h2>
+    <div style="margin-bottom:20px">...</div>
+  </div>
+  <h2 style="color:{{primary_color}};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin-top:30px">Kết luận</h2>
+  <p>...</p>
+  <div class="content-forge-cta" style="text-align:center;margin-top:40px;padding:30px 20px;background:linear-gradient(135deg,{{primary_color}} 0%,{{secondary_color}} 100%);color:white;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.1)">...</div>
+</div>
+
+Quy tắc nội dung:
+- H1 là một câu tiêu đề tự nhiên hoàn chỉnh, có từ khóa chính, không dùng dấu ":" "-" "|" để nối vế.
+- Mở bài 1 đoạn, câu đầu chứa từ khóa chính và đi thẳng vào nhu cầu người đọc.
+- Mục lục có 3-5 gạch đầu dòng thật sự tương ứng với nội dung.
+- Thân bài có ít nhất 3 H2; dùng H3 cho danh sách lựa chọn hoặc các mục con.
+- FAQ có 3-5 câu hỏi thật của người đọc.
+- Kết luận ngắn, mềm, không bán hàng lố.
+- CTA mềm, đúng chủ đề, không gọi tên là CTA.
+Không thêm giải thích ngoài JSON.
+""".strip()
+
 def _clean_phrase(value: str) -> str:
     return re.sub(r"\s+", " ", unescape(value or "")).strip(" .,:;|-")
+
+
+def _site_primary_color(state: dict) -> str:
+    color = str((state.get("site_profile") or {}).get("primary_color") or "").strip()
+    return color if re.fullmatch(r"#[0-9a-fA-F]{6}", color) else "#2c5e1a"
+
+
+def _darken_hex(hex_color: str) -> str:
+    value = (hex_color or "#2c5e1a").strip().lstrip("#")
+    if len(value) != 6:
+        return "#437d28"
+    try:
+        red, green, blue = (int(value[index:index + 2], 16) for index in (0, 2, 4))
+    except ValueError:
+        return "#437d28"
+    return "#" + "".join(f"{max(0, round(channel * 0.78)):02x}" for channel in (red, green, blue))
+
+
+def _soft_hex(hex_color: str) -> str:
+    value = (hex_color or "#2c5e1a").strip().lstrip("#")
+    if len(value) != 6:
+        return "#f0f7ed"
+    try:
+        red, green, blue = (int(value[index:index + 2], 16) for index in (0, 2, 4))
+    except ValueError:
+        return "#f0f7ed"
+    red = round(red + (255 - red) * 0.88)
+    green = round(green + (255 - green) * 0.88)
+    blue = round(blue + (255 - blue) * 0.88)
+    return f"#{red:02x}{green:02x}{blue:02x}"
 
 
 def _as_text(value: object) -> str:
@@ -298,6 +374,41 @@ def _sanitize_source_terms(html_text: str, state: dict) -> str:
     return _replace_source_terms(html_text, state, replacement="thương hiệu")
 
 
+def _sanitize_website_html(html_text: str) -> str:
+    sanitized = re.sub(r"<figure\b[^>]*>.*?</figure>\s*", "", html_text or "", flags=re.IGNORECASE | re.DOTALL)
+    sanitized = re.sub(r"<img\b[^>]*>\s*", "", sanitized, flags=re.IGNORECASE | re.DOTALL)
+    sanitized = re.sub(
+        r"<section\b[^>]*(?:content-forge-image-grid|content-forge-inline-gallery|content-forge-affiliate-gallery)[^>]*>.*?</section>\s*",
+        "",
+        sanitized,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    bad_phrases = [
+        r"[^.!?。]*\bnội dung trọng tâm\b[^.!?。]*[.!?。]?\s*",
+        r"[^.!?。]*\bthông tin sản phẩm\b[^.!?。]*[.!?。]?\s*",
+        r"[^.!?。]*\bAI[- ]?friendly\b[^.!?。]*[.!?。]?\s*",
+        r"[^.!?。]*\bGEO\b[^.!?。]*[.!?。]?\s*",
+    ]
+    for pattern in bad_phrases:
+        sanitized = re.sub(pattern, " ", sanitized, flags=re.IGNORECASE | re.DOTALL)
+    return re.sub(r"\s{2,}", " ", sanitized).strip()
+
+
+def _website_html_valid(html_text: str) -> bool:
+    lowered = (html_text or "").lower()
+    return all(
+        marker in lowered
+        for marker in [
+            "content-forge-article",
+            "content-forge-toc",
+            "content-forge-faq",
+            "content-forge-cta",
+            "<h1",
+            "<h2",
+        ]
+    )
+
+
 def _infer_product_archetype(state: dict) -> str:
     title = str(state.get("plan", {}).get("title") or state.get("fetch_result", {}).get("title") or "").lower()
     if "trà" in title and not any(token in title for token in ["bộ", "ấm", "hộp", "set", "quà", "combo"]):
@@ -355,10 +466,10 @@ def run(state: dict) -> dict:
     knowledge_facts = _clean_for_writer(raw_knowledge_facts, state) if is_product else raw_knowledge_facts
     knowledge_instruction = (
         "Với bài viết theo keyword, hãy lấy kiến thức RAG làm nguồn chính; chỉ dùng brief keyword để định hướng intent, không coi brief là nguồn dữ kiện đầy đủ.\n"
-        "Nếu knowledge facts chứa hướng dẫn SEO/GEO, hãy dùng như chỉ dẫn biên tập nội bộ, không trích nguyên văn và không đưa thuật ngữ kỹ thuật như SEO, GEO, CTA, FAQ, heading, checklist vào nội dung hiển thị.\n"
+        "Nếu knowledge facts chứa hướng dẫn tối ưu nội dung, hãy dùng như chỉ dẫn biên tập nội bộ, không trích nguyên văn và không đưa thuật ngữ kỹ thuật như CTA, FAQ, heading, checklist vào nội dung hiển thị.\n"
         if source_origin == "website_keyword"
         else "Với bài viết từ URL, hãy kết hợp dữ kiện nguồn và knowledge facts từ RAG; ưu tiên nguồn khi có xung đột.\n"
-        "Nếu knowledge facts chứa hướng dẫn SEO/GEO, hãy dùng như chỉ dẫn biên tập nội bộ, không trích nguyên văn và không đưa thuật ngữ kỹ thuật như SEO, GEO, CTA, FAQ, heading, checklist vào nội dung hiển thị.\n"
+        "Nếu knowledge facts chứa hướng dẫn tối ưu nội dung, hãy dùng như chỉ dẫn biên tập nội bộ, không trích nguyên văn và không đưa thuật ngữ kỹ thuật như CTA, FAQ, heading, checklist vào nội dung hiển thị.\n"
         if source_origin == "website_article_url"
         else ""
     )
@@ -366,14 +477,17 @@ def run(state: dict) -> dict:
     if not is_product:
         website_template_instruction = (
             "TEMPLATE HTML BẮT BUỘC CHO BÀI WEBSITE:\n"
-            "1) Mở bằng đúng 1 thẻ <p> tự nhiên, câu đầu chứa focus keyword. Không viết 'nội dung trọng tâm', không viết 'thông tin sản phẩm'.\n"
+            "1) Mở bằng đúng 1 thẻ <h1> tự nhiên, sau đó là đúng 1 thẻ <p> mở bài; câu đầu của mở bài chứa focus keyword. Không viết 'nội dung trọng tâm', không viết 'thông tin sản phẩm'.\n"
             "2) Sau mở bài là <div class=\"content-forge-toc\"><p>Nội dung bài viết:</p><ul>...</ul></div> với 3-6 ý chính.\n"
             "3) Thân bài chia thành nhiều <section>, mỗi section có <h2> và 1-4 đoạn/bullet/table. H2 không dùng số thứ tự nếu không cần.\n"
             "4) Nếu có danh sách, dùng <ul><li>...</li></ul>. Nếu so sánh, dùng <table><tr><th>...</th></tr>...</table>.\n"
             "5) FAQ dùng <div class=\"content-forge-faq\"><h2>FAQ: Câu Hỏi Thường Gặp</h2><div><h3>...</h3><p>...</p></div>...</div>.\n"
             "6) Kết thúc bằng <div class=\"content-forge-cta\"><p>...</p><p>...</p><a href=\"#\">...</a></div>.\n"
-            "7) Tuyệt đối không chèn <h1>, không chèn ảnh, không chèn figure, không chèn figcaption, không chèn class content-forge-image-grid.\n"
+            "7) Phải có đúng 1 <h1> ở đầu template; không chèn ảnh, figure, figcaption hoặc class content-forge-image-grid.\n"
         )
+    primary_color = _site_primary_color(state)
+    secondary_color = _darken_hex(primary_color)
+    soft_color = _soft_hex(primary_color)
     prompt = (
         f"Metadata: {concise_metadata}\n"
         f"Plan: {concise_plan}\n"
@@ -384,6 +498,7 @@ def run(state: dict) -> dict:
         f"Uploaded/local image library: {image_library if is_product else []}\n"
         f"Knowledge facts: {knowledge_facts}\n"
         f"Source/brief excerpt: {source_excerpt}\n"
+        f"Template colors: primary_color={primary_color}, secondary_color={secondary_color}, soft_color={soft_color}\n"
         f"{knowledge_instruction}"
         f"{website_template_instruction}"
         "Yêu cầu: tiếng Việt tự nhiên, có quan sát thực tế, không sáo rỗng, không bịa dữ kiện.\n"
@@ -400,7 +515,16 @@ def run(state: dict) -> dict:
         "Độ dài mục tiêu cho product: 1500-2500 chữ. Nếu archetype là single_tea, ưu tiên nửa dưới của khoảng này và tập trung vào hương, vị, nước trà, cánh trà, cách pha, đối tượng hợp gu, lý do chọn loại trà này.\n"
     )
     max_tokens = 2600 if archetype == "single_tea" else 3200
-    data = call_json("writer", WRITER_SYSTEM_PROMPT, prompt, fallback=fallback, max_tokens=max_tokens)
+    system_prompt = WRITER_SYSTEM_PROMPT
+    if not is_product:
+        system_prompt = (
+            WEBSITE_WRITER_SYSTEM_PROMPT
+            .replace("{{primary_color}}", primary_color)
+            .replace("{{secondary_color}}", secondary_color)
+            .replace("{{soft_color}}", soft_color)
+        )
+        max_tokens = 4200
+    data = call_json("writer", system_prompt, prompt, fallback=fallback, max_tokens=max_tokens)
     data_html = _coerce_text_field(data.get("html"))
     if not data_html:
         raise RuntimeError("Writer returned empty html.")
@@ -410,6 +534,10 @@ def run(state: dict) -> dict:
         data_html = _append_faq_if_missing(data_html, extracted.get("faq_items", []))
     data_html = _sanitize_product_terms(data_html)
     data_html = _sanitize_source_terms(data_html, state)
+    if not is_product:
+        data_html = _sanitize_website_html(data_html)
+        if not _website_html_valid(data_html):
+            raise RuntimeError("Writer returned website html that did not follow the required article template.")
     if is_product:
         validation_error = _product_html_validation_error(data_html)
         if validation_error:

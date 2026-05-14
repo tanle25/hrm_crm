@@ -11,7 +11,7 @@ from app.source_cleaner import source_terms_from_metadata
 
 
 QA_SYSTEM_PROMPT = """
-Bạn là QA editor cho nội dung SEO/GEO tiếng Việt.
+Bạn là QA editor cho nội dung SEO tiếng Việt.
 Nếu là product content, phải kiểm tra nghiêm:
 - tiêu đề là tên sản phẩm tự nhiên, không biến thành tiêu đề blog
 - không ghi website nguồn, URL nguồn, thương hiệu nguồn hoặc cụm "nguồn tham khảo"
@@ -105,6 +105,19 @@ def _strict_blocks(state: dict, similarity: float) -> list[str]:
             blocks.append("Bài website có dấu hiệu thay sai 'trà xanh' thành 'trà thương hiệu'.")
         if "content-forge-image-grid" in html_lower:
             blocks.append("Bài website còn gallery ảnh cũ, chưa dùng ảnh phân phối theo section.")
+        required_template_markers = [
+            "content-forge-article",
+            "content-forge-toc",
+            "content-forge-faq",
+            "content-forge-cta",
+            "<h1",
+            "<h2",
+        ]
+        missing_template = [marker for marker in required_template_markers if marker not in html_lower]
+        if missing_template:
+            blocks.append("Bài website chưa đi đúng template HTML bắt buộc: " + ", ".join(missing_template) + ".")
+        if any(term in text_lower for term in ["geo", "ai-friendly", "ai friendly"]):
+            blocks.append("Bài website còn thuật ngữ tối ưu nội bộ không cần thiết.")
     if source_type == "product":
         forbidden_terms = ["nguồn tham khảo", "website nguồn", "url nguồn"]
         forbidden_terms.extend(_source_terms(state))

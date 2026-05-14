@@ -1610,16 +1610,17 @@ def _style_website_post_content(html: str, state: dict | None = None) -> str:
     styled_html = re.sub(r"<h1\b[^>]*>.*?</h1>\s*", "", styled_html, flags=re.IGNORECASE | re.DOTALL)
 
     tag_styles = {
-        "h2": f"color:{accent};font-size:25px;line-height:1.35;border-bottom:2px solid {accent_soft};padding-bottom:10px;margin:34px 0 18px;font-weight:800",
-        "h3": f"color:{_darken_hex(accent)};margin:24px 0 12px;font-size:20px;line-height:1.4;font-weight:750",
-        "p": "margin:0 0 18px;color:#333",
-        "ul": f"margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-left:4px solid {accent};border-radius:0 12px 12px 0;color:#333",
-        "ol": f"margin:0 0 26px;padding:18px 22px 18px 34px;background:{accent_soft};border-left:4px solid {accent};border-radius:0 12px 12px 0;color:#333",
+        "section": "margin:0 0 8px",
+        "h2": f"color:{accent};border-bottom:2px solid #e8f5e9;padding-bottom:10px;margin:32px 0 18px;font-size:24px;line-height:1.35;font-weight:800",
+        "h3": f"color:{_darken_hex(accent)};margin:22px 0 10px;font-size:20px;line-height:1.4;font-weight:800",
+        "p": "font-size:16px;margin:0 0 20px;color:#333",
+        "ul": "margin:10px 0 24px 20px;padding:0;list-style-type:square",
+        "ol": "margin:10px 0 24px 20px;padding:0",
         "li": "margin-bottom:10px",
-        "table": f"width:100%;margin:24px 0 32px;border-collapse:separate;border-spacing:0;border:1px solid {accent_border};border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,0.04)",
-        "th": f"padding:14px 16px;background:{accent_soft};border-bottom:1px solid {_rgba(accent, 0.18)};text-align:left;color:{accent}",
+        "table": f"width:100%;margin:24px 0 32px;border-collapse:separate;border-spacing:0;border:1px solid {accent_border};border-radius:10px;overflow:hidden;background:#fff",
+        "th": f"padding:14px 16px;background:{accent_soft};border-bottom:1px solid {_rgba(accent, 0.18)};text-align:left;color:#222",
         "td": "padding:14px 16px;border-bottom:1px solid #edf0ed;vertical-align:top",
-        "figure": "margin:26px 0;text-align:center",
+        "figure": "margin:26px 0;text-align:center;background:#fff;border:1px solid #eee;border-radius:10px;padding:10px",
         "figcaption": "margin-top:10px;color:#667085;font-size:14px;font-style:italic",
     }
     for tag, style in tag_styles.items():
@@ -1646,8 +1647,7 @@ def _style_website_post_content(html: str, state: dict | None = None) -> str:
     if paragraphs:
         intro = re.sub(
             r'<p\b([^>]*)>',
-            f'<p style="font-size:17px;line-height:1.9;color:#1f2933;background:{accent_soft};'
-            f'border-left:5px solid {accent};border-radius:0 12px 12px 0;padding:18px 20px;margin:0 0 24px">',
+            '<p style="font-size:16px;margin:0 0 20px;color:#333">',
             paragraphs[0],
             count=1,
             flags=re.IGNORECASE,
@@ -1660,8 +1660,7 @@ def _style_website_post_content(html: str, state: dict | None = None) -> str:
 
     wrapper_style = (
         "font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.8;color:#333;"
-        "padding:24px;border:1px solid #eee;border-radius:14px;background:#fff;box-sizing:border-box;"
-        "box-shadow:0 12px 36px rgba(15,23,42,0.04)"
+        "padding:20px;border:1px solid #eee;border-radius:10px;background-color:#fff;box-sizing:border-box"
     )
     return f'<div class="content-forge-article" style="{wrapper_style}">\n{styled_html}\n</div>'
 
@@ -1701,9 +1700,9 @@ def _inject_article_toc(html: str, accent: str, accent_soft: str) -> str:
         return html
     toc_items = "".join(f'<li style="margin-bottom:8px">{escape(item)}</li>' for item in items)
     toc = (
-        f'<div class="content-forge-toc" style="background:{accent_soft};padding:20px;border-left:5px solid {accent};'
-        'margin:0 0 28px;border-radius:0 10px 10px 0">'
-        f'<p style="margin:0 0 10px;font-weight:800;color:{accent};font-size:18px">Nội dung bài viết</p>'
+        f'<div class="content-forge-toc" style="background-color:{accent_soft};padding:20px;border-left:5px solid {accent};'
+        'margin:0 0 25px;border-radius:0 8px 8px 0">'
+        f'<p style="margin:0;font-weight:bold;color:{accent};font-size:18px">Nội dung bài viết:</p>'
         f'<ul style="margin:0 0 0 20px;padding:0;list-style-type:square">{toc_items}</ul>'
         '</div>'
     )
@@ -1721,10 +1720,25 @@ def _style_article_faq_block(html: str, accent: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         body = match.group(2) or ""
+        faq_items = []
+        item_pattern = re.compile(
+            r"<h3\b[^>]*>(.*?)</h3>\s*(<p\b[^>]*>.*?</p>)",
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        for index, item_match in enumerate(item_pattern.finditer(body), start=1):
+            border = "" if index == 1 else "border-top:1px solid #eee;padding-top:20px;"
+            question = _html_text(item_match.group(1))
+            answer = item_match.group(2)
+            faq_items.append(
+                f'<div style="margin-bottom:20px;{border}">'
+                f'<p style="font-weight:bold;color:{_darken_hex(accent)};margin-bottom:5px;font-size:17px">{escape(question)}</p>'
+                f'{answer}</div>'
+            )
+        body = "".join(faq_items) if faq_items else body
         return (
-            f'<div class="content-forge-faq" style="margin-top:40px;padding:26px;background:#fdfdfd;'
-            f'border:1px solid #ddd;border-radius:12px;box-shadow:0 8px 26px rgba(0,0,0,0.04)">'
-            f'<h2 style="color:{accent};text-align:center;margin:0 0 24px;font-size:24px">Câu hỏi thường gặp</h2>'
+            f'<div class="content-forge-faq" style="margin-top:40px;padding:25px;background-color:#fdfdfd;'
+            f'border:1px solid #ddd;border-radius:8px">'
+            f'<h2 style="color:{accent};text-align:center;margin-top:0;margin-bottom:25px">FAQ: Câu Hỏi Thường Gặp</h2>'
             f'{body}</div>'
         )
 
@@ -1740,13 +1754,13 @@ def _append_article_cta(html: str, state: dict, accent: str, focus_keyword: str)
     link = site_url or "#"
     label = f"Tìm hiểu thêm về {topic}" if topic else "Tìm hiểu thêm"
     return html + (
-        f'\n<div class="content-forge-cta" style="text-align:center;margin-top:42px;padding:30px 22px;'
+        f'\n<div class="content-forge-cta" style="text-align:center;margin-top:40px;padding:30px 20px;'
         f'background:linear-gradient(135deg,{accent} 0%,{_darken_hex(accent)} 100%);color:white;'
-        'border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.12)">'
-        '<p style="margin:0 0 10px;font-size:21px;font-weight:800">Muốn chọn thông tin phù hợp hơn?</p>'
-        f'<p style="margin:0 0 20px;font-size:16px;color:rgba(255,255,255,0.92)">Bạn có thể xem thêm các bài liên quan để đối chiếu trước khi quyết định.</p>'
-        f'<a href="{escape(link)}" style="display:inline-block;background:#ffeb3b;color:#25310f;padding:12px 30px;'
-        'text-decoration:none;border-radius:999px;font-weight:800;text-transform:uppercase;font-size:14px">'
+        'border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.1)">'
+        '<p style="margin:0;font-size:22px;font-weight:bold">Bạn cần tư vấn thêm?</p>'
+        f'<p style="margin:10px 0 20px 0;font-size:16px;color:rgba(255,255,255,0.92)">Xem thêm nội dung liên quan để chọn hướng phù hợp hơn.</p>'
+        f'<a href="{escape(link)}" style="display:inline-block;background-color:#ffeb3b;color:#333;padding:12px 35px;'
+        'text-decoration:none;border-radius:50px;font-weight:bold;text-transform:uppercase;font-size:15px">'
         f'{escape(label)}</a></div>'
     )
 
